@@ -1,5 +1,5 @@
 // 오프라인 지원용 서비스워커: 앱 파일은 네트워크 우선(최신 유지), 끊기면 캐시 사용
-const CACHE = 'jywork-v4';
+const CACHE = 'jywork-v5';
 const ASSETS = ['./', './index.html', './css/style.css', './js/app.js', './js/store.js',
   './js/summarize.js', './js/ai.js', './js/excel.js', './js/ink.js', './js/inkdb.js', './js/sync.js',
   './js/firebase-config.js', './js/vendor/firebase.mjs', './js/vendor/xlsx.full.min.js',
@@ -17,7 +17,8 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   // 외부 요청(AI, 로그인, 동기화 서버)은 서비스워커가 건드리지 않음
   if (new URL(req.url).origin !== location.origin) return;
-  e.respondWith(fetch(req).then((res) => {
+  // no-cache: 매번 서버에 최신 여부를 확인(바뀐 게 없으면 빠르게 재사용) → 업데이트가 바로 반영됨
+  e.respondWith(fetch(req, { cache: 'no-cache' }).then((res) => {
     const copy = res.clone();
     caches.open(CACHE).then((c) => c.put(req, copy));
     return res;
