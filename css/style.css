@@ -445,3 +445,71 @@ form.sum-collapsed .ed-sum { display: none; }
   .ed-meta { grid-template-columns: 1fr 1fr; }
   .ed-meta label:first-child { grid-column: 1 / -1; }
 }
+
+/* =========================================================
+   메모장 공간 최대화 (상단 1줄 + 접히는 정보줄 + 한 줄 도구 + 전체 화면)
+   ========================================================= */
+.ed-top { gap: 6px; padding: 6px 10px; padding-top: calc(6px + env(safe-area-inset-top)); }
+.ed-top .ed-title { font-size: 17px; min-width: 80px; padding: 6px 8px; }
+.ed-top .btn.primary { padding: 8px 16px; }
+.btn.icon.tb { font-size: 19px; padding: 6px 10px; min-width: 44px; color: var(--muted); }
+.btn.icon.tb.on { color: var(--primary); background: var(--primary-soft); }
+.ed-tabs { display: inline-flex; gap: 2px; padding: 3px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; flex-shrink: 0; align-items: stretch; }
+.ed-tabs button { border: 0; border-radius: 8px; padding: 6px 12px; font-size: 15px; background: none; color: var(--muted); display: inline-flex; gap: 5px; align-items: center; min-height: 40px; position: relative; }
+.ed-tabs button.on { background: var(--panel); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(0, 0, 0, .12); }
+.ed-tabs .dot { display: none; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); position: absolute; top: 5px; right: 5px; }
+.ed-tabs .dot.on { display: block; }
+
+/* 정보줄: 평소엔 접힘 */
+.ed-meta { display: none; grid-template-columns: 150px 1.3fr 1fr 1fr auto; align-items: end; padding: 8px 12px; gap: 10px; }
+form.info-open .ed-meta { display: grid; }
+.ed-meta label { display: flex; flex-direction: column; align-items: stretch; gap: 2px; font-size: 12px; }
+.ed-meta .btn.danger { align-self: end; }
+.ed-body { border-top: 0; }
+.tabpane { padding: 0; }
+.ink-tools {
+  flex-wrap: nowrap; overflow-x: auto; margin: 0; border-radius: 0; border-width: 0 0 1px; gap: 4px 6px; padding: 4px 8px;
+  scrollbar-width: none;
+}
+.ink-tools::-webkit-scrollbar { display: none; }
+.ink-tools .tg + .tg { padding-left: 6px; }
+.ink-tools button { min-width: 42px; height: 42px; padding: 0 6px; }
+.ink-tools button span { display: none; }
+.ink-pages { padding: 6px 4px 30px; }
+.ink-page { margin-bottom: 14px; }
+textarea.paper.lined { border-radius: 0; }
+
+/* 요약창 접힘 시 메모장 전체 폭 */
+form.sum-collapsed .ed-body { grid-template-columns: 1fr; }
+
+/* 전체 화면(집중) 모드: 메모장과 필기 도구만 */
+.focus-exit { display: none; }
+form.focus .ed-top, form.focus .ed-meta, form.focus .ed-sum { display: none !important; }
+form.focus .ed-body { grid-template-columns: 1fr !important; }
+form.focus .ed-note { display: flex !important; }
+form.focus[data-tab=sum] [data-pane=ink] { display: flex; }
+form.focus .focus-exit {
+  display: block; position: fixed; right: 14px; bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 5;
+  border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 99px; padding: 10px 16px;
+  font: inherit; font-size: 14px; box-shadow: 0 4px 14px rgba(0, 0, 0, .2); cursor: pointer;
+}
+
+/* 좁은 화면: 탭 글자 숨기고 아이콘만 */
+@media (max-width: 1099px) {
+  .ed-tabs button span { display: none; }
+  .ed-tabs button { padding: 6px 10px; }
+  .ed-meta { grid-template-columns: 1fr 1fr; }
+  .ed-meta label:first-child { grid-column: auto; }
+  #sumToggle { display: none; }
+  .save-state { font-size: 0; }
+  .save-state::before { font-size: 15px; content: '•'; }
+  .save-state.saved::before { content: '✓'; }
+  .save-state.pending::before { content: '✎'; }
+  .save-state.error::before { content: '⚠'; }
+}
+@media (max-width: 600px) {
+  .ed-meta { grid-template-columns: 1fr; }
+  #focusToggle { display: none; }
+}
+.btn.tb.sum-tb { font-size: 14px; padding: 6px 10px; min-width: 64px; color: var(--muted); }
+.btn.tb.sum-tb.on { color: var(--primary); background: var(--primary-soft); }

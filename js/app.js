@@ -563,13 +563,37 @@ $('.ed-tabs').addEventListener('click', (e) => { const b = e.target.closest('[da
 /* ----- 요약창 접기/펴기 (가로 화면) ----- */
 function setSumCollapsed(v) {
   fMeeting.classList.toggle('sum-collapsed', v);
-  $('#sumToggle').textContent = v ? '◀ 요약창 펴기' : '요약창 접기 ▶';
+  $('#sumToggle').classList.toggle('on', !v);
+  $('#sumToggle').textContent = v ? '◂ 요약' : '요약 ▸';
+  $('#sumToggle').title = v ? '요약창 펴기' : '요약창 접기';
   $('#sumToggle').setAttribute('aria-expanded', String(!v));
   setPref('jy-sum-collapsed', v ? '1' : '0');
   requestAnimationFrame(() => pad.layout(true));
 }
 $('#sumToggle').onclick = () => setSumCollapsed(!fMeeting.classList.contains('sum-collapsed'));
 setSumCollapsed(pref('jy-sum-collapsed', '0') === '1');
+
+/* ----- 정보줄(날짜·노트·참석자·태그)은 필요할 때만 펼침 ----- */
+function setInfoOpen(v) {
+  fMeeting.classList.toggle('info-open', v);
+  $('#infoToggle').classList.toggle('on', v);
+  setPref('jy-info-open', v ? '1' : '0');
+  requestAnimationFrame(() => pad.layout(true));
+}
+$('#infoToggle').onclick = () => setInfoOpen(!fMeeting.classList.contains('info-open'));
+
+/* ----- 전체 화면: 위쪽 줄과 요약창을 숨기고 메모장만, 기기 상태바도 숨김 ----- */
+function setFocus(v) {
+  fMeeting.classList.toggle('focus', v);
+  try {
+    if (v && !document.fullscreenElement) document.documentElement.requestFullscreen?.({ navigationUI: 'hide' })?.catch(() => {});
+    if (!v && document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+  } catch { /* 지원 안 하는 브라우저 */ }
+  requestAnimationFrame(() => pad.layout(true));
+}
+$('#focusToggle').onclick = () => setFocus(true);
+$('#focusExit').onclick = () => setFocus(false);
+document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && fMeeting.classList.contains('focus')) setFocus(false); });
 
 /* ----- 누적 노트: 지난 기록 요약과 남은 할일을 옆에 보여줌 ----- */
 function renderPrevBox() {
@@ -612,6 +636,7 @@ async function openMeeting(id, preset = {}) {
   lastSaved = id ? JSON.stringify(read(fMeeting)) : '';
   setSaveState(id ? 'idle' : 'idle');
   renderPrevBox();
+  setInfoOpen(!id ? true : pref('jy-info-open', '0') === '1');
   setTab(id && m.content && !m.inkPages ? 'text' : pref('jy-ed-tab', 'ink'));
   dlgMeeting.showModal();
   if (id && m.inkPages) {
@@ -621,6 +646,7 @@ async function openMeeting(id, preset = {}) {
 }
 
 function closeMeeting() {
+  if (fMeeting.classList.contains('focus')) setFocus(false);
   const m = saveMeeting({ final: true });
   dlgMeeting.close();
   if (m) toast(m.actions?.length ? `저장됨 · 할일 ${m.actions.length}건` : '저장했습니다.');

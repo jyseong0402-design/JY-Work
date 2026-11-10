@@ -240,9 +240,9 @@ export class InkPad {
   }
 
   layout(force) {
-    const w = this.pagesEl.clientWidth - 24;
+    const w = this.pagesEl.clientWidth - 8;
     if (w <= 0) return;
-    const cssW = Math.min(w, 1100);
+    const cssW = Math.min(w, 1600);
     if (!force && cssW === this.cssW) return;
     this.cssW = cssW;
     this.scale = cssW / PAGE_W;

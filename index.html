@@ -252,26 +252,28 @@
       <input type="hidden" name="eventId" />
       <input type="hidden" name="summarizedBy" />
       <div class="ed-top">
-        <button type="button" class="btn ghost icon" data-cancel title="닫기">✕</button>
-        <input name="title" class="ed-title" placeholder="회의 제목 (비워두면 자동)" />
-        <input type="date" name="date" required />
+        <button type="button" class="btn ghost icon" data-cancel title="닫기 (자동 저장)">✕</button>
+        <input name="title" class="ed-title" placeholder="제목 (비워두면 자동)" />
+        <div class="ed-tabs" role="tablist">
+          <button type="button" data-tab="ink" title="펜 필기">✍️<span>필기</span></button>
+          <button type="button" data-tab="text" title="키보드 입력">⌨️<span>텍스트</span></button>
+          <button type="button" data-tab="sum" class="tab-sum" title="요약">📋<span>요약</span><i class="dot" id="sumDot"></i></button>
+        </div>
         <span class="save-state" id="saveState" aria-live="polite"></span>
-        <button type="button" class="btn danger hide-sm" data-del>삭제</button>
+        <button type="button" class="btn ghost icon tb" id="infoToggle" title="날짜·노트·참석자·태그">ⓘ</button>
+        <button type="button" class="btn ghost tb sum-tb" id="sumToggle" title="요약창 접기/펴기"></button>
+        <button type="button" class="btn ghost icon tb" id="focusToggle" title="메모장만 크게 (전체 화면)">⛶</button>
         <button class="btn primary" value="save">완료</button>
       </div>
       <div class="ed-meta">
+        <label>날짜<input type="date" name="date" required /></label>
         <label>📒 누적 노트<input name="series" list="seriesList" placeholder="이어서 쌓을 노트 (예: 주간회의, 프로젝트A)" autocomplete="off" /></label>
         <label>참석자<input name="attendees" placeholder="쉼표로 구분" /></label>
         <label>태그<input name="tags" placeholder="예: 프로젝트A, 예산" /></label>
         <datalist id="seriesList"></datalist>
+        <button type="button" class="btn danger" data-del>이 메모 삭제</button>
       </div>
-      <div class="ed-tabs" role="tablist">
-        <button type="button" data-tab="ink">✍️ 펜 필기</button>
-        <button type="button" data-tab="text">⌨️ 텍스트</button>
-        <button type="button" data-tab="sum" class="tab-sum">📋 요약<span class="dot" id="sumDot"></span></button>
-        <span class="grow"></span>
-        <button type="button" class="sum-toggle" id="sumToggle"></button>
-      </div>
+      <button type="button" class="focus-exit" id="focusExit" title="전체 화면 끝내기">⤡ 나가기</button>
       <div class="ed-body">
         <div class="ed-note">
           <div class="tabpane" data-pane="ink"><div id="inkHost" class="ink-host"></div></div>
