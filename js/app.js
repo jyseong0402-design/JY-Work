@@ -2,6 +2,7 @@ import { store, settings, todayStr } from './store.js';
 import { localSummarize } from './summarize.js';
 import { aiSummarize, aiAnswer, aiTranscribe, aiEnabled } from './ai.js';
 import { InkPad, renderInkPreview } from './ink.js';
+import { icon } from './icons.js';
 import { inkdb } from './inkdb.js';
 import { sync, loadInk, saveInk, flushInk, parseConfig, getConfig } from './sync.js';
 import { exportExcel, importExcel } from './excel.js';
@@ -488,7 +489,18 @@ $('[data-meeting]', fEvent).onclick = () => {
 const dlgMeeting = $('#dlgMeeting'), fMeeting = $('#formMeeting');
 const actionsToText = (a = []) => a.map((x) => [x.text, x.owner, x.due].filter((v, i) => v || i === 0).join(' / ')).join('\n');
 const textToActions = (s) => lines(s).map((l) => { const [text, owner = '', due = ''] = l.split(/\s*\/\s*/); return { text, owner, due }; });
-const pad = new InkPad($('#inkHost'), { onChange: () => scheduleSave() });
+// 상단 도구줄 아이콘 채우기
+$$('[data-icon]').forEach((el) => el.insertAdjacentHTML('afterbegin', icon(el.dataset.icon)));
+const pad = new InkPad($('#inkHost'), {
+  onChange: () => scheduleSave(),
+  left: $('#inkLeft'), center: $('#inkCenter'), menu: $('#moreMenu'),
+});
+// 펜·형광펜·지우개·색을 고르면 필기 화면으로
+$('#inkCenter').addEventListener('click', (e) => { if (e.target.closest('[data-tool],[data-act=palette]') && fMeeting.dataset.tab !== 'ink') setTab('ink'); });
+// 더보기 메뉴
+$('#moreBtn').onclick = (e) => { e.stopPropagation(); $('#moreMenu').classList.toggle('open'); };
+document.addEventListener('pointerdown', (e) => { if (!e.target.closest('.more')) $('#moreMenu').classList.remove('open'); });
+$('#moreMenu').addEventListener('click', (e) => { if (e.target.closest('button') && !e.target.closest('[data-act=finger]')) $('#moreMenu').classList.remove('open'); });
 let saveTimer = null;
 let lastSaved = '';
 fMeeting.addEventListener('input', (e) => { if (!e.target.closest('.ink-host')) scheduleSave(); });
@@ -555,23 +567,33 @@ window.addEventListener('pagehide', () => { if (dlgMeeting.open) { saveMeeting()
 
 function setTab(tab) {
   fMeeting.dataset.tab = tab;
-  $$('.ed-tabs [data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
+  $$('.ed-top [data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
+  $('#sumToggle').classList.toggle('on', tab === 'sum' || !fMeeting.classList.contains('sum-collapsed') && wideScreen());
   if (tab !== 'sum') setPref('jy-ed-tab', tab);
   if (tab === 'ink') requestAnimationFrame(() => pad.layout(true));
 }
-$('.ed-tabs').addEventListener('click', (e) => { const b = e.target.closest('[data-tab]'); if (b) setTab(b.dataset.tab); });
+const wideScreen = () => window.matchMedia('(min-width: 1100px)').matches;
+// T 버튼: 텍스트 ↔ 필기 전환
+$('.ed-top').addEventListener('click', (e) => {
+  const b = e.target.closest('.tbb[data-tab]'); // (폼 자체에도 data-tab이 있으므로 버튼만)
+  if (b) setTab(fMeeting.dataset.tab === b.dataset.tab ? 'ink' : b.dataset.tab);
+});
 
 /* ----- 요약창 접기/펴기 (가로 화면) ----- */
 function setSumCollapsed(v) {
   fMeeting.classList.toggle('sum-collapsed', v);
   $('#sumToggle').classList.toggle('on', !v);
-  $('#sumToggle').textContent = v ? '◂ 요약' : '요약 ▸';
-  $('#sumToggle').title = v ? '요약창 펴기' : '요약창 접기';
+  $('#sumToggle').title = v ? '요약·AI 창 펴기' : '요약·AI 창 접기';
   $('#sumToggle').setAttribute('aria-expanded', String(!v));
   setPref('jy-sum-collapsed', v ? '1' : '0');
   requestAnimationFrame(() => pad.layout(true));
 }
-$('#sumToggle').onclick = () => setSumCollapsed(!fMeeting.classList.contains('sum-collapsed'));
+let lastNoteTab = 'ink';
+$('#sumToggle').onclick = () => {
+  if (wideScreen()) return setSumCollapsed(!fMeeting.classList.contains('sum-collapsed'));
+  if (fMeeting.dataset.tab === 'sum') setTab(lastNoteTab);
+  else { lastNoteTab = fMeeting.dataset.tab; setTab('sum'); }
+};
 setSumCollapsed(pref('jy-sum-collapsed', '0') === '1');
 
 /* ----- 정보줄(날짜·노트·참석자·태그)은 필요할 때만 펼침 ----- */
@@ -592,7 +614,7 @@ function setFocus(v) {
   } catch { /* 지원 안 하는 브라우저 */ }
   requestAnimationFrame(() => pad.layout(true));
 }
-$('#focusToggle').onclick = () => setFocus(true);
+$('#focusToggle').onclick = () => setFocus(!fMeeting.classList.contains('focus'));
 $('#focusExit').onclick = () => setFocus(false);
 document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && fMeeting.classList.contains('focus')) setFocus(false); });
 

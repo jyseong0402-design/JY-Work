@@ -4,6 +4,8 @@
 // - S펜 측면 버튼을 누른 채 쓰면 지우개
 // - 좌표는 가로 1000 기준 논리 좌표로 저장 → 화면 크기/방향이 바뀌어도 그대로 유지
 
+import { icon } from './icons.js';
+
 export const PAGE_W = 1000;
 export const PAGE_H = 1300;
 export const LINE = 50; // 예전 기본 줄 간격(논리 단위) — 줄 간격 정보가 없는 기존 필기용
@@ -93,9 +95,10 @@ export function setPaperVars(el, scale, ls = LINE) {
 }
 
 export class InkPad {
-  constructor(host, { onChange } = {}) {
+  constructor(host, opts = {}) {
     this.host = host;
-    this.onChange = onChange;
+    this.opts = opts;
+    this.onChange = opts.onChange;
     this.pages = [{ strokes: [] }];
     this.undoStack = [];
     this.redoStack = [];
@@ -106,32 +109,34 @@ export class InkPad {
     this.build();
   }
 
+  // 도구는 상단 도구줄(left: 쪽추가·되돌리기, center: 펜·형광펜·지우개·색, menu: 더보기)에 그립니다.
   build() {
-    this.host.innerHTML = `
-      <div class="ink-tools" role="toolbar" aria-label="필기 도구">
-        <div class="tg">
-          <button type="button" data-tool="pen" title="펜">✒️<span>펜</span></button>
-          <button type="button" data-tool="hl" title="형광펜">🖍️<span>형광펜</span></button>
-          <button type="button" data-tool="eraser" title="지우개 (S펜 버튼 누르고 쓰기)">🧽<span>지우개</span></button>
-        </div>
-        <div class="tg colors pen-only">${COLORS.map(([c, n]) => `<button type="button" class="sw" data-color="${c}" title="${n}" style="--sw:${c}"></button>`).join('')}</div>
-        <div class="tg colors hl-only">${HL_COLORS.map(([c, n]) => `<button type="button" class="sw" data-hcolor="${c}" title="${n}" style="--sw:${c}"></button>`).join('')}</div>
-        <div class="tg pen-only">${SIZES.map(([w, n]) => `<button type="button" class="sz" data-size="${w}" title="${n}"><i style="--d:${w * 2 + 2}px"></i></button>`).join('')}</div>
-        <div class="tg">
-          <button type="button" data-act="undo" title="실행취소">↶</button>
-          <button type="button" data-act="redo" title="다시실행">↷</button>
-        </div>
-        <span class="grow"></span>
-        <div class="tg">
-          <button type="button" data-act="finger" class="finger" title="손가락으로 쓰기">☝️<span>손가락</span></button>
-          <button type="button" data-act="page" title="페이지 추가">＋<span>쪽</span></button>
-          <button type="button" data-act="clear" title="이 메모의 필기 모두 지우기">🗑️</button>
-        </div>
-      </div>
-      <div class="ink-pages"></div>`;
-    this.toolsEl = this.host.querySelector('.ink-tools');
+    const { left, center, menu } = this.opts;
+    this.host.innerHTML = '<div class="ink-pages"></div>';
     this.pagesEl = this.host.querySelector('.ink-pages');
-    this.toolsEl.addEventListener('click', (e) => this.onTool(e));
+    left.innerHTML = `
+      <button type="button" class="tbb" data-act="page" title="쪽 추가">${icon('plus')}</button>
+      <button type="button" class="tbb" data-act="undo" title="실행취소">${icon('undo')}</button>
+      <button type="button" class="tbb" data-act="redo" title="다시실행">${icon('redo')}</button>`;
+    center.innerHTML = `
+      <button type="button" class="tbb tool" data-tool="pen" title="펜">${icon('pen')}</button>
+      <button type="button" class="tbb tool" data-tool="hl" title="형광펜">${icon('hl')}</button>
+      <button type="button" class="tbb tool" data-tool="eraser" title="지우개 (S펜 버튼을 누르고 문질러도 지워짐)">${icon('eraser')}</button>
+      <span class="pal-wrap">
+        <button type="button" class="tbb cur-color" data-act="palette" title="색·굵기"><i></i></button>
+        <div class="palette" role="dialog" aria-label="색·굵기">
+          <div class="pal-row pen-only">${COLORS.map(([c, n]) => `<button type="button" class="sw" data-color="${c}" title="${n}" style="--sw:${c}"></button>`).join('')}</div>
+          <div class="pal-row pen-only">${SIZES.map(([w, n]) => `<button type="button" class="sz" data-size="${w}" title="${n}"><i style="--d:${w * 2 + 2}px"></i></button>`).join('')}</div>
+          <div class="pal-row hl-only">${HL_COLORS.map(([c, n]) => `<button type="button" class="sw" data-hcolor="${c}" title="${n}" style="--sw:${c}"></button>`).join('')}</div>
+        </div>
+      </span>`;
+    this.toolEls = [left, center, menu].filter(Boolean);
+    this.toolEls.forEach((el) => el.addEventListener('click', (e) => this.onTool(e)));
+    this.palette = center.querySelector('.palette');
+    // 팔레트 바깥을 누르면 닫기
+    document.addEventListener('pointerdown', (e) => {
+      if (!e.target.closest('.pal-wrap')) this.palette.classList.remove('open');
+    });
     this.ro = new ResizeObserver(() => this.layout());
     this.ro.observe(this.pagesEl);
     this.syncTools();
@@ -145,6 +150,10 @@ export class InkPad {
     if (d.color) { this.tool.c = d.color; this.tool.t = 'pen'; }
     if (d.hcolor) { this.tool.hc = d.hcolor; this.tool.t = 'hl'; }
     if (d.size) this.tool.w = +d.size;
+    if (d.act === 'palette') {
+      if (this.tool.t === 'eraser') this.tool.t = 'pen';
+      this.palette.classList.toggle('open');
+    }
     if (d.act === 'undo') this.undo();
     if (d.act === 'redo') this.redo();
     if (d.act === 'page') { this.addPage(true); this.pagesEl.lastElementChild?.scrollIntoView({ behavior: 'smooth' }); }
@@ -159,17 +168,21 @@ export class InkPad {
   }
 
   syncTools() {
-    const q = (s) => this.toolsEl.querySelectorAll(s);
+    const q = (sel) => this.toolEls.flatMap((el) => [...el.querySelectorAll(sel)]);
     q('[data-tool]').forEach((b) => b.classList.toggle('on', b.dataset.tool === this.tool.t));
     q('[data-color]').forEach((b) => b.classList.toggle('on', b.dataset.color === this.tool.c));
     q('[data-hcolor]').forEach((b) => b.classList.toggle('on', b.dataset.hcolor === this.tool.hc));
     q('[data-size]').forEach((b) => b.classList.toggle('on', +b.dataset.size === this.tool.w));
-    this.toolsEl.dataset.tool = this.tool.t;
-    const f = this.toolsEl.querySelector('.finger');
-    f.classList.toggle('on', this.fingerDraw);
-    f.title = this.fingerDraw ? '손가락으로 쓰기: 켜짐' : '손가락으로 쓰기: 꺼짐 (손가락은 스크롤)';
-    q('[data-act=undo]')[0].disabled = !this.undoStack.length;
-    q('[data-act=redo]')[0].disabled = !this.redoStack.length;
+    this.opts.center.dataset.tool = this.tool.t;
+    const cur = q('.cur-color i')[0];
+    if (cur) cur.style.background = this.tool.t === 'hl' ? this.tool.hc : this.tool.c;
+    q('[data-act=finger]').forEach((f) => {
+      f.classList.toggle('on', this.fingerDraw);
+      const lbl = f.querySelector('.lbl');
+      if (lbl) lbl.textContent = this.fingerDraw ? '켜짐' : '꺼짐 (손가락은 스크롤)';
+    });
+    q('[data-act=undo]').forEach((x) => { x.disabled = !this.undoStack.length; });
+    q('[data-act=redo]').forEach((x) => { x.disabled = !this.redoStack.length; });
   }
 
   /* ---- 데이터 ---- */
@@ -251,9 +264,10 @@ export class InkPad {
   }
 
   layout(force) {
-    const w = this.pagesEl.clientWidth - 8;
+    const w = this.pagesEl.clientWidth - 16;
     if (w <= 0) return;
-    const cssW = Math.min(w, 1600);
+    const landscape = window.innerWidth > window.innerHeight;
+    const cssW = Math.round(Math.min(w, window.innerWidth * (landscape ? 0.8 : 0.97), 1600));
     if (!force && cssW === this.cssW) return;
     this.cssW = cssW;
     this.scale = cssW / PAGE_W;
@@ -321,6 +335,7 @@ export class InkPad {
     };
 
     const down = (e) => {
+      this.palette?.classList.remove('open');
       if (e.pointerType === 'pen' && !this.penSeen) {
         this.penSeen = true;
         this.fingerDraw = false;

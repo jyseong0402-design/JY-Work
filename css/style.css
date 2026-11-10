@@ -532,3 +532,109 @@ form.focus .focus-exit {
 @media (min-width: 761px) and (max-width: 1099px) { .nav-ver { font-size: 11px !important; } }
 .meta-actions { grid-column: 1 / -1; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .meta-actions .spacer { flex: 1; }
+
+/* =========================================================
+   v1.5 메모 화면: 노트 앱 스타일 (어두운 상단 도구줄 + 가운데 메모지)
+   ========================================================= */
+dialog.editor { --bar: #1d1f24; --bar-fg: #e6e8ee; --bar-dim: #8d93a0; --desk: #2a2c32; background: var(--desk); }
+.ed-top {
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px;
+  background: var(--bar); color: var(--bar-fg); border-bottom: 1px solid #2f323a;
+  padding: 4px 10px; padding-top: calc(4px + env(safe-area-inset-top)); min-height: 56px;
+}
+.tb-left, .tb-right, .tb-center, .tb-group { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.tb-right { justify-content: flex-end; }
+.tb-center { justify-content: center; gap: 4px; }
+.tbb {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  width: 46px; height: 46px; border: 0; border-radius: 10px; background: none; color: var(--bar-fg);
+  cursor: pointer; flex-shrink: 0; padding: 0; font: inherit;
+}
+.tbb:hover { background: rgba(255, 255, 255, .07); }
+.tbb:disabled { color: #555a66; cursor: default; background: none; }
+.tbb .ico { width: 25px; height: 25px; }
+/* 선택된 도구: 아래 점 표시 (참고 앱처럼) */
+.tbb.tool.on::after, .tbb[data-tab].on::after, #sumToggle.on::after {
+  content: ''; position: absolute; bottom: 3px; left: 50%; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 50%; background: var(--bar-fg);
+}
+.tbb.tool.on, .tbb[data-tab].on { color: #fff; }
+form[data-tab=text] .tbb.tool.on::after { display: none; }
+form[data-tab=text] .tbb.tool { color: var(--bar-dim); }
+#sumToggle .dot { position: absolute; top: 7px; right: 7px; width: 7px; height: 7px; border-radius: 50%; background: #41c486; display: none; }
+#sumToggle .dot.on { display: block; }
+#infoToggle.on, #moreBtn[aria-expanded=true] { background: rgba(255, 255, 255, .1); }
+.ed-top .ed-title {
+  flex: 1; min-width: 60px; max-width: 260px; margin: 0 0 0 6px; padding: 6px 10px; font-size: 15px; font-weight: 600;
+  background: transparent; border: 1px solid transparent; color: var(--bar-fg); min-height: 38px;
+}
+.ed-top .ed-title::placeholder { color: var(--bar-dim); font-weight: 400; }
+.ed-top .ed-title:focus { background: rgba(255, 255, 255, .06); border-color: #3a3e48; outline: none; }
+.ed-top .save-state { color: var(--bar-dim); font-size: 12px; margin-left: 4px; }
+.ed-top .save-state.saved { color: #6fd3a0; }
+
+/* 현재 색 동그라미 + 색·굵기 팔레트 */
+.pal-wrap { position: relative; display: inline-flex; }
+.cur-color i { width: 22px; height: 22px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .4); display: block; }
+.tb-group[data-tool=eraser] .cur-color { opacity: .45; }
+.palette {
+  display: none; position: absolute; top: 52px; left: 50%; transform: translateX(-50%); z-index: 20;
+  background: #262930; border: 1px solid #3a3e48; border-radius: 14px; padding: 10px; box-shadow: 0 10px 30px rgba(0, 0, 0, .45);
+  flex-direction: column; gap: 8px;
+}
+.palette.open { display: flex; }
+.pal-row { display: flex; gap: 6px; }
+.palette button { width: 42px; height: 42px; border-radius: 10px; border: 2px solid transparent; background: none; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; color: var(--bar-fg); }
+.palette button.on { border-color: #6d8ff5; background: rgba(109, 143, 245, .15); }
+.palette .sw::after { content: ''; width: 24px; height: 24px; border-radius: 50%; background: var(--sw); }
+.palette .sz i { display: block; width: var(--d); height: var(--d); border-radius: 50%; background: currentColor; }
+.palette .hl-only { display: none; }
+.tb-group[data-tool=hl] .palette .hl-only { display: flex; }
+.tb-group[data-tool=hl] .palette .pen-only { display: none; }
+
+/* 더보기 메뉴 */
+.more { position: relative; display: inline-flex; }
+.menu {
+  display: none; position: absolute; right: 0; top: 52px; z-index: 20; min-width: 240px; padding: 6px;
+  background: #262930; border: 1px solid #3a3e48; border-radius: 12px; box-shadow: 0 10px 30px rgba(0, 0, 0, .45); flex-direction: column;
+}
+.menu.open { display: flex; }
+.menu button { text-align: left; border: 0; background: none; color: var(--bar-fg); font: inherit; font-size: 15px; padding: 11px 12px; border-radius: 8px; cursor: pointer; display: flex; flex-direction: column; gap: 1px; }
+.menu button:hover { background: rgba(255, 255, 255, .07); }
+.menu button small { color: var(--bar-dim); font-size: 12px; }
+.menu button.on small { color: #6fd3a0; }
+.menu button.danger { color: #ff8a8a; }
+.menu hr { border: 0; border-top: 1px solid #3a3e48; margin: 4px 6px; width: auto; }
+.menu [hidden] { display: none; }
+
+/* 정보줄 */
+.ed-meta { background: #24262c; border-bottom: 1px solid #2f323a; }
+.ed-meta label { color: var(--bar-dim); }
+.ed-meta input { background: #1d1f24; border-color: #3a3e48; color: var(--bar-fg); color-scheme: dark; }
+
+/* 책상(어두운 배경) 위 가운데 메모지 */
+.ed-body, .ed-note { background: var(--desk); }
+.ink-pages { padding: 14px 8px 40px; }
+.ink-page { margin: 0 auto 18px; box-shadow: 0 2px 10px rgba(0, 0, 0, .35); border-radius: 2px; }
+.tabpane[data-pane=text] { align-items: center; padding: 14px 8px 0; }
+textarea.paper.lined { width: min(100%, 80vw); max-width: 1600px; box-shadow: 0 2px 10px rgba(0, 0, 0, .35); }
+@media (orientation: portrait) { textarea.paper.lined { width: 100%; } }
+.ed-sum { background: var(--bg); }
+
+/* 세로·좁은 화면: 제목 줄이고, 저장 표시는 기호만 */
+@media (max-width: 1099px) {
+  .ed-top { grid-template-columns: auto 1fr auto; gap: 2px; padding-left: 4px; padding-right: 4px; }
+  .tbb { width: 42px; height: 44px; }
+  .ed-top .ed-title { max-width: 140px; font-size: 14px; }
+  .ed-top .save-state { font-size: 0; }
+  .ed-top .save-state::before { font-size: 14px; }
+  #sumToggle { display: inline-flex; }
+}
+@media (max-width: 700px) {
+  .ed-top { grid-template-columns: 1fr auto; }
+  .tb-center { grid-row: 2; grid-column: 1 / -1; }
+  #focusToggle { display: none; }
+}
+/* 전체 화면: 도구줄은 유지(필기 도구가 있으므로), 정보줄·요약창만 숨기고 기기 상태바 숨김 */
+form.focus .ed-top { display: grid !important; }
+form.focus .focus-exit { display: none; }
+form.focus #focusToggle { background: rgba(255, 255, 255, .12); }
