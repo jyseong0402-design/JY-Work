@@ -3,6 +3,7 @@ import { localSummarize } from './summarize.js';
 import { aiSummarize, aiAnswer, aiTranscribe, aiEnabled } from './ai.js';
 import { InkPad, renderInkPreview } from './ink.js';
 import { inkdb } from './inkdb.js';
+import { sync, loadInk, saveInk, parseConfig, getConfig } from './sync.js';
 import { exportExcel, importExcel } from './excel.js';
 
 /* ---------- 공통 도우미 ---------- */
@@ -385,7 +386,7 @@ async function openMeeting(id, preset = {}) {
   setTab(id && m.content && !m.inkPages ? 'text' : last);
   dlgMeeting.showModal();
   if (id && m.inkPages) {
-    try { pad.load(await inkdb.get(id)); } catch { toast('필기를 불러오지 못했습니다.'); }
+    try { pad.load(await loadInk(m)); } catch { toast('필기를 불러오지 못했습니다.'); }
     if (!m.content) setTab('ink');
   }
 }
@@ -460,14 +461,20 @@ fMeeting.addEventListener('submit', (ev) => {
     Object.assign(o, { summary: r.summary, decisions: r.decisions.join('\n'), actions: actionsToText(r.actions), keywords: r.keywords.join(', '), summarizedBy: '자동 요약' });
   }
   const inkPages = pad.pageCount();
+  const prev = o.id ? store.find('meetings', o.id) : null;
+  const inkChanged = pad.dirty || (prev?.inkPages && !inkPages);
+  const inkRev = inkPages ? (inkChanged || !prev?.inkRev ? new Date().toISOString() : prev.inkRev) : '';
   const m = store.upsert('meetings', {
     ...o,
     inkPages,
+    inkRev,
     decisions: lines(o.decisions),
     actions: textToActions(o.actions),
     keywords: splitList(o.keywords),
   });
-  (inkPages ? inkdb.put(m.id, pad.getData()) : inkdb.del(m.id)).catch(() => alert('필기를 저장하지 못했습니다. 저장 공간을 확인해주세요.'));
+  if (inkChanged) {
+    saveInk(m.id, inkPages ? { ...pad.getData(), rev: inkRev } : null).catch(() => alert('필기를 저장하지 못했습니다. 저장 공간을 확인해주세요.'));
+  }
   pad.dirty = false;
   formDirty = false;
   store.syncMeetingTasks(m);
@@ -477,7 +484,7 @@ $('[data-del]', fMeeting).onclick = () => {
   const id = fMeeting.elements.id.value;
   if (id && confirm('이 회의메모(필기 포함)와 연결된 할일을 삭제할까요?')) {
     store.remove('meetings', id);
-    inkdb.del(id).catch(() => {});
+    saveInk(id, null).catch(() => {});
     pad.dirty = false; formDirty = false;
     dlgMeeting.close();
     toast('삭제했습니다.');
@@ -506,7 +513,7 @@ function openMeetingView(id) {
     ${m.inkPages ? `<h3>펜 필기 (${m.inkPages}쪽)</h3><div id="viewInk" class="ink-preview"></div>` : ''}
     ${m.content ? `<h3>텍스트 메모</h3><div class="raw">${esc(m.content)}</div>` : ''}</div>`;
   dlgView.showModal();
-  if (m.inkPages) inkdb.get(id).then((d) => renderInkPreview($('#viewInk'), d)).catch(() => {});
+  if (m.inkPages) loadInk(m).then((d) => renderInkPreview($('#viewInk'), d)).catch(() => {});
 }
 $('#viewEdit').onclick = () => { dlgView.close(); openMeeting(viewId); };
 $('#viewCopy').onclick = async () => {
@@ -613,13 +620,15 @@ $('#jsonImport').onchange = async (e) => {
     if (!d.events || !d.meetings) throw new Error('백업 파일 형식이 아닙니다.');
     const { ink = {}, ...rest } = d;
     if (confirm('현재 데이터를 백업 파일 내용으로 바꿀까요? (취소 시 합치기)')) { await inkdb.clear(); store.replaceAll(rest); } else store.merge(rest);
-    for (const [id, v] of Object.entries(ink)) await inkdb.put(id, v);
+    for (const [id, v] of Object.entries(ink)) await inkdb.put(id, { ...v, synced: false });
+    sync.syncNow();
     toast('복원했습니다.');
   } catch (err) { alert('복원 실패: ' + err.message); }
   e.target.value = '';
 };
 $('#wipe').onclick = () => {
-  if (confirm('모든 일정·회의메모·할일을 삭제합니다. 먼저 백업하셨나요?') && confirm('정말 삭제할까요? 되돌릴 수 없습니다.')) {
+  const cloud = sync.signedIn() ? '\n(로그인 중이라 다른 기기와 클라우드에서도 삭제됩니다)' : '';
+  if (confirm('모든 일정·회의메모·할일을 삭제합니다. 먼저 백업하셨나요?' + cloud) && confirm('정말 삭제할까요? 되돌릴 수 없습니다.')) {
     store.replaceAll({ events: [], meetings: [], tasks: [] });
     inkdb.clear().catch(() => {});
     toast('모두 삭제했습니다.');
@@ -645,6 +654,53 @@ $('#loadSample').onclick = () => {
   ].forEach((e) => store.upsert('events', e));
   toast('예시 데이터를 넣었습니다.');
 };
+
+/* ---------- 탭·PC 동기화 ---------- */
+const timeLabel = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+sync.subscribe((s) => {
+  const label = {
+    off: '동기화 꺼짐 (이 기기에만 저장)',
+    signedout: '로그인하면 탭·PC가 동기화됩니다',
+    syncing: '동기화 중…',
+    synced: `동기화됨${s.lastSync ? ' · ' + timeLabel(s.lastSync) : ''}`,
+    error: '동기화 오류',
+  }[s.status] || '';
+  const chip = $('#syncChip');
+  chip.textContent = { off: '💾 이 기기에만 저장', signedout: '☁️ 로그인 필요', syncing: '🔄 동기화 중', synced: '☁️ 동기화됨', error: '⚠️ 동기화 오류' }[s.status];
+  chip.className = 'sync-chip ' + s.status;
+  chip.title = s.error || label;
+  $('#syncStatus').innerHTML = `<b>${esc(label)}</b>${s.email ? `<br><span class="muted sm">계정: ${esc(s.email)}</span>` : ''}${s.error ? `<br><span class="err sm">${esc(s.error)}</span>` : ''}`;
+  $('#syncLogin').hidden = s.status !== 'signedout';
+  $('#syncLogout').hidden = !s.email;
+  $('#syncNow').hidden = !s.email;
+  $('#syncSetup').open = s.status === 'off';
+});
+$('#syncChip').onclick = () => show('settings');
+$('#syncLogin').onclick = async () => {
+  try { await sync.signIn(); } catch (e) { alert(e.message); }
+};
+$('#syncLogout').onclick = async () => {
+  if (confirm('로그아웃할까요? 이 기기의 기록은 그대로 남고, 동기화만 멈춥니다.')) await sync.signOut();
+};
+$('#syncNow').onclick = async () => {
+  const r = await sync.syncNow();
+  if (r) toast(`동기화 완료 (받음 ${r.down} · 보냄 ${r.up})`);
+};
+$('#fbSave').onclick = () => {
+  const text = $('#fbConfig').value.trim();
+  const cfg = parseConfig(text);
+  if (text && !cfg) { alert('설정 형식을 인식하지 못했습니다. Firebase 콘솔의 firebaseConfig 내용을 그대로 붙여넣어주세요.'); return; }
+  settings.set({ firebase: cfg });
+  toast('저장했습니다. 다시 불러옵니다…');
+  setTimeout(() => location.reload(), 600);
+};
+const curCfg = getConfig();
+if (curCfg) $('#fbConfig').value = JSON.stringify(curCfg, null, 2);
+sync.init();
 
 /* ---------- 시작 ---------- */
 function renderAll() {

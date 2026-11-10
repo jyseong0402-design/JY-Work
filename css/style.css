@@ -349,3 +349,21 @@ form[data-tab=ink] [data-pane=ink], form[data-tab=text] [data-pane=text] { displ
 @media (min-width: 1100px) and (pointer: coarse) {
   .nav button { padding: 13px 12px; }
 }
+
+/* =========================================================
+   동기화 표시
+   ========================================================= */
+.sync-chip {
+  margin-top: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--muted);
+  border-radius: 99px; padding: 4px 12px; font: inherit; font-size: 13px; cursor: pointer;
+}
+.sync-chip.synced { color: var(--ok); border-color: rgba(31, 157, 98, .35); }
+.sync-chip.error { color: var(--danger); border-color: rgba(214, 69, 69, .4); }
+.sync-chip.signedout { color: var(--primary); border-color: var(--primary); }
+.sync-status { background: var(--bg); border-radius: 10px; padding: 10px 14px; margin-bottom: 12px; line-height: 1.6; }
+.err { color: var(--danger); }
+details { margin-top: 14px; }
+summary { cursor: pointer; color: var(--primary); font-size: 14px; padding: 6px 0; }
+code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+
+[hidden] { display: none !important; }
