@@ -187,14 +187,28 @@ export async function loadInk(meeting) {
   return local;
 }
 
-export async function saveInk(mid, ink) {
+// 자동 저장 때마다 올리면 데이터가 많아서, 필기는 기기에 바로 저장하고 클라우드에는 몇 초 모아서 올립니다.
+const inkPending = new Map(); // mid → { timer, ink }
+export async function saveInk(mid, ink, { immediate = false } = {}) {
+  const p = inkPending.get(mid);
+  if (p) { clearTimeout(p.timer); inkPending.delete(mid); }
   if (!ink) {
     await inkdb.del(mid);
     if (user) track(fb.getDocs(fb.query(inkCol(), fb.where('mid', '==', mid))).then((s) => writeMany(s.docs.map((d) => ({ ref: d.ref, delete: true })))));
     return;
   }
   await inkdb.put(mid, { ...ink, synced: false });
-  if (user) track(pushInk(mid, ink));
+  if (!user) return;
+  const run = () => { inkPending.delete(mid); track(pushInk(mid, ink)); };
+  if (immediate) run();
+  else inkPending.set(mid, { ink, timer: setTimeout(run, 4000) });
+}
+export function flushInk() {
+  for (const [mid, p] of [...inkPending]) {
+    clearTimeout(p.timer);
+    inkPending.delete(mid);
+    if (user) track(pushInk(mid, p.ink));
+  }
 }
 
 /* ---------- 시작 · 로그인 ---------- */

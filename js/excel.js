@@ -27,7 +27,7 @@ const COLS = {
     ['장소', 'place'], ['참석자', 'attendees'], ['메모', 'note'], ['완료', 'done'],
   ],
   meetings: [
-    ['ID', 'id'], ['날짜', 'date'], ['제목', 'title'], ['참석자', 'attendees'], ['태그', 'tags'], ['요약', 'summary'],
+    ['ID', 'id'], ['날짜', 'date'], ['노트', 'series'], ['제목', 'title'], ['참석자', 'attendees'], ['태그', 'tags'], ['요약', 'summary'],
     ['결정사항', 'decisions'], ['할일', 'actions'], ['키워드', 'keywords'], ['요약방식', 'summarizedBy'], ['필기(쪽)', 'inkPages'], ['원문', 'content'],
   ],
   tasks: [

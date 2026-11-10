@@ -71,12 +71,24 @@
       <section id="view-meetings" class="view">
         <header class="vh">
           <h1>회의메모</h1>
-          <div class="actions"><button class="btn primary" data-new="meeting">+ 새 회의메모</button></div>
+          <div class="actions">
+            <button class="btn" data-new="series">📒 누적 노트 만들기</button>
+            <button class="btn primary" data-new="meeting">+ 새 회의메모</button>
+          </div>
         </header>
-        <div class="toolbar">
+        <div class="toolbar mtool">
+          <div class="seg" id="mFilter">
+            <button type="button" data-mf="all" class="on">전체</button>
+            <button type="button" data-mf="series">누적 노트</button>
+            <button type="button" data-mf="single">낱장 메모</button>
+          </div>
           <input type="search" id="meetingFilter" placeholder="제목·참석자·태그·내용 검색" />
+          <div class="seg" id="mView">
+            <button type="button" data-mv="grid" class="on" title="노트 표지로 보기">▦</button>
+            <button type="button" data-mv="list" title="목록으로 보기">☰</button>
+          </div>
         </div>
-        <div id="meetingList" class="list"></div>
+        <div id="meetingList"></div>
       </section>
 
       <!-- 할일 -->
@@ -241,19 +253,24 @@
       <input type="hidden" name="summarizedBy" />
       <div class="ed-top">
         <button type="button" class="btn ghost icon" data-cancel title="닫기">✕</button>
-        <input name="title" class="ed-title" placeholder="회의 제목" required />
+        <input name="title" class="ed-title" placeholder="회의 제목 (비워두면 자동)" />
         <input type="date" name="date" required />
+        <span class="save-state" id="saveState" aria-live="polite"></span>
         <button type="button" class="btn danger hide-sm" data-del>삭제</button>
-        <button class="btn primary" value="save">저장</button>
+        <button class="btn primary" value="save">완료</button>
       </div>
       <div class="ed-meta">
+        <label>📒 누적 노트<input name="series" list="seriesList" placeholder="이어서 쌓을 노트 (예: 주간회의, 프로젝트A)" autocomplete="off" /></label>
         <label>참석자<input name="attendees" placeholder="쉼표로 구분" /></label>
-        <label>태그<input name="tags" placeholder="예: 프로젝트A, 예산, 주간회의" /></label>
+        <label>태그<input name="tags" placeholder="예: 프로젝트A, 예산" /></label>
+        <datalist id="seriesList"></datalist>
       </div>
       <div class="ed-tabs" role="tablist">
         <button type="button" data-tab="ink">✍️ 펜 필기</button>
         <button type="button" data-tab="text">⌨️ 텍스트</button>
         <button type="button" data-tab="sum" class="tab-sum">📋 요약<span class="dot" id="sumDot"></span></button>
+        <span class="grow"></span>
+        <button type="button" class="sum-toggle" id="sumToggle"></button>
       </div>
       <div class="ed-body">
         <div class="ed-note">
@@ -263,6 +280,10 @@
           </div>
         </div>
         <aside class="ed-sum">
+          <details class="prev-box" id="prevBox" open hidden>
+            <summary id="prevTitle">📚 이 노트의 지난 기록</summary>
+            <div id="prevList"></div>
+          </details>
           <div class="sum-bar">
             <button type="button" class="btn" id="btnLocalSum">⚡ 자동 요약</button>
             <button type="button" class="btn primary" id="btnAiSum">✨ AI 요약</button>
@@ -276,6 +297,18 @@
         </aside>
       </div>
     </form>
+  </dialog>
+
+  <!-- 누적 노트 -->
+  <dialog id="dlgSeries" class="wide">
+    <div id="seriesBody"></div>
+    <div class="row-end">
+      <button class="btn" id="seriesExport">엑셀로 저장</button>
+      <button class="btn" id="seriesRename">이름 바꾸기</button>
+      <span class="spacer"></span>
+      <button class="btn" data-close>닫기</button>
+      <button class="btn primary" id="seriesStart">+ 오늘 기록 추가</button>
+    </div>
   </dialog>
 
   <!-- 할일 폼 -->
@@ -304,6 +337,7 @@
     <div class="row-end">
       <button class="btn" id="viewEdit">수정</button>
       <button class="btn" id="viewCopy">요약 복사</button>
+      <button class="btn" id="viewAppend" title="이 메모를 누적 노트로 만들고 오늘 기록을 이어서 씁니다">➕ 이어서 기록</button>
       <button class="btn primary" data-close>닫기</button>
     </div>
   </dialog>

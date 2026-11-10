@@ -3,7 +3,7 @@ import { localSummarize } from './summarize.js';
 import { aiSummarize, aiAnswer, aiTranscribe, aiEnabled } from './ai.js';
 import { InkPad, renderInkPreview } from './ink.js';
 import { inkdb } from './inkdb.js';
-import { sync, loadInk, saveInk, parseConfig, getConfig } from './sync.js';
+import { sync, loadInk, saveInk, flushInk, parseConfig, getConfig } from './sync.js';
 import { exportExcel, importExcel } from './excel.js';
 
 /* ---------- 공통 도우미 ---------- */
@@ -69,10 +69,44 @@ function meetingItem(m, q) {
   const sum = m.summary || (m.content || '').slice(0, 140) || (m.inkPages ? '필기 메모' : '');
   return `<div class="item" data-open="meetingView" data-id="${m.id}">
     <div class="when">${fmt(m.date)}</div>
-    <div class="body"><div class="title">${highlight(m.title, q)}</div>
+    <div class="body"><div class="title">${m.series ? `<span class="tag series" style="--c:${seriesColor(m.series)}">📒 ${esc(m.series)}</span> ` : ''}${highlight(m.title, q)}</div>
       <div class="sub">${highlight(sum, q)}</div>
       <div>${tags}${m.decisions?.length ? `<span class="tag green">결정 ${m.decisions.length}</span>` : ''}${m.actions?.length ? `<span class="tag red">할일 ${m.actions.length}</span>` : ''}${m.inkPages ? `<span class="tag yellow">✍️ 필기 ${m.inkPages}쪽</span>` : ''}${m.summary ? '' : '<span class="tag gray">요약 전</span>'}</div>
     </div></div>`;
+}
+
+/* 누적 노트(시리즈): 같은 노트 이름의 기록을 한 권처럼 묶어서 날짜별로 쌓음 (정기회의, 프로젝트 등) */
+const PALETTE = ['#3f8fb5', '#c9b51a', '#d0663f', '#4f9a62', '#8a63c7', '#c2577a', '#3d7bd1', '#9a8a3a', '#2f9e9e', '#b5653f'];
+function seriesColor(name) {
+  let h = 2166136261; // FNV-1a: 이름마다 고르게 다른 색
+  for (const ch of String(name)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619) >>> 0; }
+  return PALETTE[h % PALETTE.length];
+}
+function seriesList() {
+  const map = new Map();
+  for (const m of store.get().meetings) {
+    if (!m.series) continue;
+    const g = map.get(m.series) || { name: m.series, items: [] };
+    g.items.push(m);
+    map.set(m.series, g);
+  }
+  const tasks = store.get().tasks;
+  return [...map.values()].map((g) => {
+    g.items.sort((x, y) => y.date.localeCompare(x.date));
+    const ids = new Set(g.items.map((x) => x.id));
+    g.open = tasks.filter((t) => !t.done && ids.has(t.meetingId));
+    g.last = g.items[0];
+    return g;
+  }).sort((x, y) => y.last.date.localeCompare(x.last.date));
+}
+function coverHTML({ color, title, sub, foot, attrs, ink }) {
+  return `<div class="nb" ${attrs}>
+    <div class="nb-cover" style="--c:${color}">
+      <div class="nb-paper paper">${ink ? '<span class="nb-ink">✍️</span>' : ''}</div>
+      <div class="nb-band"><b>${esc(title)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</div>
+    </div>
+    <div class="nb-foot">${foot}</div>
+  </div>`;
 }
 
 function taskItem(t, q) {
@@ -149,15 +183,109 @@ $('#calPrev').onclick = () => { calMonth.setMonth(calMonth.getMonth() - 1); rend
 $('#calNext').onclick = () => { calMonth.setMonth(calMonth.getMonth() + 1); renderCalendar(); };
 $('#calToday').onclick = () => { calMonth = new Date(); calMonth.setDate(1); selDate = todayStr(); renderCalendar(); };
 
-/* ---------- 회의메모 목록 ---------- */
-const meetingText = (m) => [m.title, m.attendees, m.tags, m.content, m.summary, (m.decisions || []).join(' '), (m.keywords || []).join(' ')].join(' ').toLowerCase();
+/* ---------- 회의메모 목록 (노트 표지 / 목록) ---------- */
+const meetingText = (m) => [m.series, m.title, m.attendees, m.tags, m.content, m.summary, (m.decisions || []).join(' '), (m.keywords || []).join(' ')].join(' ').toLowerCase();
+const pref = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
+const setPref = (k, v) => { try { localStorage.setItem(k, v); } catch { /* 무시 */ } };
+let mFilter = pref('jy-mfilter', 'all');
+let mView = pref('jy-mview', 'grid');
+
 function renderMeetings() {
+  $$('#mFilter [data-mf]').forEach((b) => b.classList.toggle('on', b.dataset.mf === mFilter));
+  $$('#mView [data-mv]').forEach((b) => b.classList.toggle('on', b.dataset.mv === mView));
   const q = $('#meetingFilter').value.trim();
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-  const list = store.get().meetings.filter((m) => words.every((w) => meetingText(m).includes(w))).sort((a, b) => b.date.localeCompare(a.date));
-  $('#meetingList').innerHTML = listHTML(list, meetingItem, q, q ? '검색 결과가 없습니다.' : '아직 회의메모가 없습니다.');
+  const all = store.get().meetings;
+  const pick = (m) => (mFilter === 'all' || (mFilter === 'series' ? !!m.series : !m.series));
+  // 검색 중이거나 목록 보기면 회차까지 펼친 목록
+  if (words.length || mView === 'list') {
+    const list = all.filter((m) => pick(m) && words.every((w) => meetingText(m).includes(w))).sort((a, b) => b.date.localeCompare(a.date));
+    $('#meetingList').className = 'list';
+    $('#meetingList').innerHTML = listHTML(list, meetingItem, q, q ? '검색 결과가 없습니다.' : '아직 회의메모가 없습니다.');
+    return;
+  }
+  const cards = [`<button type="button" class="nb nb-new" data-new="${mFilter === 'series' ? 'series' : 'meeting'}"><span>＋</span><small>${mFilter === 'series' ? '누적 노트' : '새 회의메모'}</small></button>`];
+  if (mFilter !== 'single') {
+    for (const g of seriesList()) {
+      cards.push(coverHTML({
+        color: seriesColor(g.name), title: g.name, sub: `기록 ${g.items.length}개`,
+        attrs: `data-series="${esc(g.name)}"`, ink: g.items.some((x) => x.inkPages),
+        foot: `<b>📒 누적 노트</b><span>최근 ${fmt(g.last.date)}${g.open.length ? ` · <em>할일 ${g.open.length}</em>` : ''}</span>`,
+      }));
+    }
+  }
+  if (mFilter !== 'series') {
+    for (const m of all.filter((x) => !x.series).sort((a, b) => b.date.localeCompare(a.date))) {
+      cards.push(coverHTML({
+        color: '#7d8597', title: m.title || '제목 없음', sub: '',
+        attrs: `data-open="meetingView" data-id="${m.id}"`, ink: !!m.inkPages,
+        foot: `<b>${m.summary ? '요약됨' : '낱장 메모'}</b><span>${fmt(m.date)}</span>`,
+      }));
+    }
+  }
+  $('#meetingList').className = 'nb-grid';
+  $('#meetingList').innerHTML = cards.join('') + (cards.length === 1 ? '<div class="empty nb-empty">정기회의나 계속 이어지는 업무는 “📒 누적 노트”로 만들면 날짜별 기록이 한 권에 계속 쌓입니다.</div>' : '');
 }
 $('#meetingFilter').addEventListener('input', renderMeetings);
+$('#mFilter').addEventListener('click', (e) => { const b = e.target.closest('[data-mf]'); if (b) { mFilter = b.dataset.mf; setPref('jy-mfilter', mFilter); renderMeetings(); } });
+$('#mView').addEventListener('click', (e) => { const b = e.target.closest('[data-mv]'); if (b) { mView = b.dataset.mv; setPref('jy-mview', mView); renderMeetings(); } });
+
+/* ---------- 누적 노트 (날짜별 기록) ---------- */
+const dlgSeries = $('#dlgSeries');
+let curSeries = null;
+function openSeries(name) {
+  const g = seriesList().find((x) => x.name === name);
+  if (!g) return;
+  curSeries = name;
+  const first = g.items[g.items.length - 1];
+  const n = g.items.length;
+  $('#seriesBody').innerHTML = `<div class="detail series-detail">
+    <div class="series-head" style="--c:${seriesColor(name)}"><span>📒</span><div><h2>${esc(name)}</h2>
+      <div class="muted sm">기록 ${n}개 · ${fmt(first.date)} ~ ${fmt(g.last.date)}${g.last.attendees ? ' · ' + esc(g.last.attendees) : ''}</div></div></div>
+    <h3>아직 안 끝난 할일 (${g.open.length})</h3>
+    ${g.open.length ? g.open.sort(byDue).map((t) => taskItem(t)).join('') : '<div class="muted">모두 완료했습니다 🎉</div>'}
+    <h3>날짜별 기록</h3>
+    <div class="timeline">${g.items.map((m, i) => `<div class="tl" data-open="meetingView" data-id="${m.id}">
+      <div class="tl-no">#${n - i}<br><span>${fmt(m.date)}</span></div>
+      <div class="tl-body"><b>${esc(m.title || name)}</b>${m.inkPages ? ` <span class="tag yellow">✍️ ${m.inkPages}쪽</span>` : ''}
+        <div class="sub">${esc(m.summary || (m.content || '').slice(0, 160) || (m.inkPages ? '필기 메모' : '내용 없음'))}</div>
+        ${m.decisions?.length ? `<ul class="dec">${m.decisions.map((d) => `<li>✔ ${esc(d)}</li>`).join('')}</ul>` : ''}
+      </div></div>`).join('')}</div></div>`;
+  if (!dlgSeries.open) dlgSeries.showModal();
+}
+// 오늘 회차 시작: 오늘 기록이 이미 있으면 이어서 쓰고, 없으면 지난 회차의 참석자·태그를 가져와 새로 시작
+function startSeriesMeeting(name) {
+  const items = store.get().meetings.filter((m) => m.series === name).sort((a, b) => b.date.localeCompare(a.date));
+  const today = items.find((m) => m.date === todayStr());
+  if (today) return openMeeting(today.id);
+  const last = items[0];
+  return openMeeting(null, { series: name, title: name, attendees: last?.attendees || '', tags: last?.tags || '' });
+}
+$('#seriesStart').onclick = () => { dlgSeries.close(); startSeriesMeeting(curSeries); };
+$('#seriesExport').onclick = async () => {
+  const ms = store.get().meetings.filter((m) => m.series === curSeries);
+  const ids = new Set(ms.map((m) => m.id));
+  try {
+    await exportExcel({ meetings: ms, tasks: store.get().tasks.filter((t) => ids.has(t.meetingId)) }, `${curSeries}_${todayStr()}.xlsx`, ['meetings', 'tasks']);
+    toast('엑셀로 저장했습니다.');
+  } catch (e) { alert(e.message); }
+};
+$('#seriesRename').onclick = () => {
+  const next = (prompt('노트 새 이름', curSeries) || '').trim();
+  if (!next || next === curSeries) return;
+  for (const m of store.get().meetings.filter((x) => x.series === curSeries)) {
+    store.upsert('meetings', { id: m.id, series: next, title: m.title === curSeries ? next : m.title });
+  }
+  curSeries = next;
+  openSeries(next);
+  toast('이름을 바꿨습니다.');
+};
+function newSeries() {
+  const name = (prompt('누적 노트 이름을 입력하세요 (예: 주간업무회의, 프로젝트A, 고객사B)') || '').trim();
+  if (!name) return;
+  if (seriesList().some((g) => g.name === name)) return openSeries(name);
+  openMeeting(null, { series: name, title: name });
+}
 
 /* ---------- 할일 ---------- */
 function renderTasks() {
@@ -274,7 +402,7 @@ function buildContext(question) {
   const words = question.toLowerCase().match(/[가-힣a-z0-9]{2,}/g) || [];
   const score = (t) => words.reduce((s, w) => s + (t.toLowerCase().includes(w.replace(/(은|는|이|가|을|를|에|의|와|과|도|로)$/, '')) ? 1 : 0), 0);
   const recs = [
-    ...data.meetings.map((m) => ({ d: m.date, t: `[회의메모] ${m.date} | ${m.title} | 참석: ${m.attendees || '-'} | 태그: ${m.tags || '-'}\n요약: ${m.summary || '-'}\n결정: ${(m.decisions || []).join(' / ') || '-'}\n할일: ${(m.actions || []).map((a) => `${a.text}(${a.owner || '담당 미정'}, ${a.due || '기한 없음'})`).join(' / ') || '-'}\n원문: ${(m.content || '').slice(0, 3000)}` })),
+    ...data.meetings.map((m) => ({ d: m.date, t: `[회의메모] ${m.date} | ${m.series ? '노트: ' + m.series + ' | ' : ''}${m.title} | 참석: ${m.attendees || '-'} | 태그: ${m.tags || '-'}\n요약: ${m.summary || '-'}\n결정: ${(m.decisions || []).join(' / ') || '-'}\n할일: ${(m.actions || []).map((a) => `${a.text}(${a.owner || '담당 미정'}, ${a.due || '기한 없음'})`).join(' / ') || '-'}\n원문: ${(m.content || '').slice(0, 3000)}` })),
     ...data.events.map((e) => ({ d: e.date, t: `[일정] ${e.date} ${e.start || ''}${e.end ? '~' + e.end : ''} | ${e.title} | ${e.category || ''} | 장소: ${e.place || '-'} | 참석: ${e.attendees || '-'} | ${e.done ? '완료' : ''} ${e.note || ''}` })),
     ...data.tasks.map((t) => ({ d: t.due || '', t: `[할일] ${t.text} | 담당: ${t.owner || '-'} | 마감: ${t.due || '-'} | ${t.done ? '완료' : '미완료'} | 출처: ${t.source || '-'}` })),
   ].map((r) => ({ ...r, s: score(r.t) }))
@@ -359,31 +487,132 @@ $('[data-meeting]', fEvent).onclick = () => {
 const dlgMeeting = $('#dlgMeeting'), fMeeting = $('#formMeeting');
 const actionsToText = (a = []) => a.map((x) => [x.text, x.owner, x.due].filter((v, i) => v || i === 0).join(' / ')).join('\n');
 const textToActions = (s) => lines(s).map((l) => { const [text, owner = '', due = ''] = l.split(/\s*\/\s*/); return { text, owner, due }; });
-const pad = new InkPad($('#inkHost'));
-let formDirty = false;
-fMeeting.addEventListener('input', () => { formDirty = true; });
+const pad = new InkPad($('#inkHost'), { onChange: () => scheduleSave() });
+let saveTimer = null;
+let lastSaved = '';
+fMeeting.addEventListener('input', (e) => { if (!e.target.closest('.ink-host')) scheduleSave(); });
+
+/* ----- 자동 저장: 쓰는 동안 1.2초 쉬면 저장, 닫을 때·앱을 내릴 때도 저장 ----- */
+function setSaveState(state) {
+  const el = $('#saveState');
+  const t = new Date();
+  const hm = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
+  el.className = 'save-state ' + state;
+  el.textContent = { pending: '✎ 입력 중…', saved: `✓ 자동 저장됨 ${hm}`, idle: '자동 저장', error: '⚠ 저장 실패' }[state] || '';
+}
+function scheduleSave(delay = 1200) {
+  if (!dlgMeeting.open) return;
+  setSaveState('pending');
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => saveMeeting(), delay);
+}
+const autoTitle = (o) => o.series || `회의메모 ${fmt(o.date)}`;
+
+function saveMeeting({ final = false } = {}) {
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  const o = read(fMeeting);
+  const empty = !o.content && pad.isEmpty() && !o.summary && !o.decisions && !o.actions && !o.title;
+  if (!o.id && empty) { setSaveState('idle'); return null; } // 아무것도 안 쓴 새 메모는 저장하지 않음
+  if (!o.id) delete o.id;
+  if (!o.title) o.title = autoTitle(o);
+  // 직접 요약하지 않았으면, 회의를 마칠 때 최신 내용으로 자동 요약을 다시 만듦
+  if (final && o.content && (!o.summary || o.summarizedBy === '자동')) {
+    const r = localSummarize(o.content, o.date);
+    Object.assign(o, { summary: r.summary, decisions: r.decisions.join('\n'), actions: actionsToText(r.actions), keywords: r.keywords.join(', '), summarizedBy: '자동' });
+  }
+  const prev = o.id ? store.find('meetings', o.id) : null;
+  // 필기는 이번에 실제로 바뀌었을 때만 저장 (불러오는 중이거나 못 불러왔을 때 지우는 일 방지)
+  const inkChanged = pad.dirty;
+  const inkPages = inkChanged ? pad.pageCount() : (prev?.inkPages || 0);
+  const inkRev = inkChanged ? (inkPages ? new Date().toISOString() : '') : (prev?.inkRev || '');
+  const item = { ...o, inkPages, inkRev, decisions: lines(o.decisions), actions: textToActions(o.actions), keywords: splitList(o.keywords) };
+  const sig = JSON.stringify(item);
+  let m = prev;
+  if (sig !== lastSaved || inkChanged) {
+    m = store.upsert('meetings', item);
+    lastSaved = JSON.stringify({ ...item, id: m.id });
+    if (!fMeeting.elements.id.value) {
+      fMeeting.elements.id.value = m.id;
+      $('[data-del]', fMeeting).style.display = '';
+    }
+    store.syncMeetingTasks(m);
+  }
+  if (inkChanged && m) {
+    pad.dirty = false;
+    saveInk(m.id, inkPages ? { ...pad.getData(), rev: inkRev } : null, { immediate: final })
+      .catch(() => { setSaveState('error'); alert('필기를 저장하지 못했습니다. 저장 공간을 확인해주세요.'); });
+  }
+  if (final) flushInk();
+  if (o.title !== fMeeting.elements.title.value && final) fMeeting.elements.title.value = o.title;
+  setSaveState('saved');
+  return m;
+}
+// 앱을 내리거나 다른 앱으로 전환할 때도 저장
+document.addEventListener('visibilitychange', () => { if (document.hidden && dlgMeeting.open) { saveMeeting(); flushInk(); } });
+window.addEventListener('pagehide', () => { if (dlgMeeting.open) { saveMeeting(); flushInk(); } });
 
 function setTab(tab) {
   fMeeting.dataset.tab = tab;
   $$('.ed-tabs [data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
-  if (tab !== 'sum') { try { localStorage.setItem('jy-ed-tab', tab); } catch { /* 무시 */ } }
+  if (tab !== 'sum') setPref('jy-ed-tab', tab);
   if (tab === 'ink') requestAnimationFrame(() => pad.layout(true));
 }
 $('.ed-tabs').addEventListener('click', (e) => { const b = e.target.closest('[data-tab]'); if (b) setTab(b.dataset.tab); });
 
+/* ----- 요약창 접기/펴기 (가로 화면) ----- */
+function setSumCollapsed(v) {
+  fMeeting.classList.toggle('sum-collapsed', v);
+  $('#sumToggle').textContent = v ? '◀ 요약창 펴기' : '요약창 접기 ▶';
+  $('#sumToggle').setAttribute('aria-expanded', String(!v));
+  setPref('jy-sum-collapsed', v ? '1' : '0');
+  requestAnimationFrame(() => pad.layout(true));
+}
+$('#sumToggle').onclick = () => setSumCollapsed(!fMeeting.classList.contains('sum-collapsed'));
+setSumCollapsed(pref('jy-sum-collapsed', '0') === '1');
+
+/* ----- 누적 노트: 지난 기록 요약과 남은 할일을 옆에 보여줌 ----- */
+function renderPrevBox() {
+  const name = fMeeting.elements.series.value.trim();
+  const box = $('#prevBox');
+  const curId = fMeeting.elements.id.value;
+  const items = name ? store.get().meetings.filter((m) => m.series === name && m.id !== curId).sort((a, b) => b.date.localeCompare(a.date)) : [];
+  box.hidden = !items.length;
+  if (!items.length) return;
+  const ids = new Set(items.map((m) => m.id));
+  const open = store.get().tasks.filter((t) => !t.done && ids.has(t.meetingId)).sort(byDue);
+  $('#prevTitle').textContent = `📚 이 노트의 지난 기록 · ${name} (${items.length}개)`;
+  $('#prevList').innerHTML =
+    (open.length ? `<div class="group-title">남은 할일 ${open.length}건</div>${open.map((t) => taskItem(t)).join('')}` : '') +
+    `<div class="group-title">최근 기록</div>` +
+    items.slice(0, 4).map((m) => `<div class="prev-item" data-open="meetingView" data-id="${m.id}"><b>${fmt(m.date)}</b> ${esc(m.summary || (m.content || '').slice(0, 100) || (m.inkPages ? '필기 메모' : '-'))}
+      ${m.decisions?.length ? `<ul>${m.decisions.slice(0, 3).map((d) => `<li>${esc(d)}</li>`).join('')}</ul>` : ''}</div>`).join('') +
+    (items.length > 4 ? `<button type="button" class="btn sm" data-series="${esc(name)}">전체 ${items.length}개 기록 보기</button>` : '');
+}
+fMeeting.elements.series.addEventListener('change', () => {
+  const name = fMeeting.elements.series.value.trim();
+  const last = store.get().meetings.filter((m) => m.series === name).sort((a, b) => b.date.localeCompare(a.date))[0];
+  if (last) { // 같은 노트의 지난 참석자·태그를 비어 있을 때만 채움
+    if (!fMeeting.elements.attendees.value) fMeeting.elements.attendees.value = last.attendees || '';
+    if (!fMeeting.elements.tags.value) fMeeting.elements.tags.value = last.tags || '';
+  }
+  renderPrevBox();
+});
+
 async function openMeeting(id, preset = {}) {
+  if (dlgMeeting.open) saveMeeting({ final: true });
   const m = id ? store.find('meetings', id) : { date: todayStr(), ...preset };
   fill(fMeeting, { ...m, decisions: (m.decisions || []).join('\n'), actions: actionsToText(m.actions), keywords: (m.keywords || []).join(', ') });
+  $('#seriesList').innerHTML = seriesList().map((g) => `<option value="${esc(g.name)}"></option>`).join('');
   $('[data-del]', fMeeting).style.display = id ? '' : 'none';
   $('#sumStatus').textContent = m.summarizedBy ? `${m.summarizedBy}으로 요약됨` : '';
   $('#sumDot').classList.toggle('on', !!m.summary);
   $('#btnAiSum').title = aiEnabled() ? '' : '설정에서 API 키를 넣으면 사용할 수 있습니다';
   pad.load(null);
-  formDirty = false;
-  // 기존 메모가 텍스트만 있으면 텍스트 탭, 아니면 마지막에 쓰던 탭
-  let last = 'ink';
-  try { last = localStorage.getItem('jy-ed-tab') || 'ink'; } catch { /* 무시 */ }
-  setTab(id && m.content && !m.inkPages ? 'text' : last);
+  lastSaved = id ? JSON.stringify(read(fMeeting)) : '';
+  setSaveState(id ? 'idle' : 'idle');
+  renderPrevBox();
+  setTab(id && m.content && !m.inkPages ? 'text' : pref('jy-ed-tab', 'ink'));
   dlgMeeting.showModal();
   if (id && m.inkPages) {
     try { pad.load(await loadInk(m)); } catch { toast('필기를 불러오지 못했습니다.'); }
@@ -392,8 +621,9 @@ async function openMeeting(id, preset = {}) {
 }
 
 function closeMeeting() {
-  if ((pad.dirty || formDirty) && !confirm('저장하지 않은 내용이 있습니다. 닫을까요?')) return false;
+  const m = saveMeeting({ final: true });
   dlgMeeting.close();
+  if (m) toast(m.actions?.length ? `저장됨 · 할일 ${m.actions.length}건` : '저장했습니다.');
   return true;
 }
 $('[data-cancel]', fMeeting).onclick = closeMeeting;
@@ -405,10 +635,11 @@ function applySummary(r, by) {
   fMeeting.elements.actions.value = actionsToText(r.actions);
   fMeeting.elements.keywords.value = (r.keywords || []).join(', ');
   fMeeting.elements.summarizedBy.value = by;
-  formDirty = true;
   $('#sumDot').classList.add('on');
-  $('#sumStatus').textContent = `${by}으로 요약했습니다. 확인 후 수정하고 저장하세요.`;
+  $('#sumStatus').textContent = `${by}으로 요약했습니다. 필요하면 고치세요. (자동 저장됩니다)`;
+  if (fMeeting.classList.contains('sum-collapsed')) setSumCollapsed(false);
   if (window.matchMedia('(max-width: 1099px)').matches) setTab('sum');
+  scheduleSave(300);
 }
 $('#btnLocalSum').onclick = () => {
   const content = fMeeting.elements.content.value;
@@ -445,47 +676,23 @@ $('#btnTranscribe').onclick = () => {
     const text = (await aiTranscribe(pad.toImages())).trim();
     const ta = fMeeting.elements.content;
     ta.value = ta.value.trim() ? `${ta.value.trim()}\n\n[필기 변환]\n${text}` : text;
-    formDirty = true;
+    scheduleSave(300);
     $('#sumStatus').textContent = '필기를 텍스트로 옮겼습니다. 텍스트 탭에서 확인하세요. (필기 원본도 그대로 보관됩니다)';
     setTab('text');
   });
 };
 
 fMeeting.addEventListener('submit', (ev) => {
-  if (ev.submitter?.value !== 'save') { ev.preventDefault(); return; }
-  const o = read(fMeeting);
-  if (!o.id) delete o.id;
-  // 요약을 안 했으면 저장할 때 자동 요약을 채워 데이터가 항상 쌓이도록 함
-  if (!o.summary && o.content) {
-    const r = localSummarize(o.content, o.date);
-    Object.assign(o, { summary: r.summary, decisions: r.decisions.join('\n'), actions: actionsToText(r.actions), keywords: r.keywords.join(', '), summarizedBy: '자동 요약' });
-  }
-  const inkPages = pad.pageCount();
-  const prev = o.id ? store.find('meetings', o.id) : null;
-  const inkChanged = pad.dirty || (prev?.inkPages && !inkPages);
-  const inkRev = inkPages ? (inkChanged || !prev?.inkRev ? new Date().toISOString() : prev.inkRev) : '';
-  const m = store.upsert('meetings', {
-    ...o,
-    inkPages,
-    inkRev,
-    decisions: lines(o.decisions),
-    actions: textToActions(o.actions),
-    keywords: splitList(o.keywords),
-  });
-  if (inkChanged) {
-    saveInk(m.id, inkPages ? { ...pad.getData(), rev: inkRev } : null).catch(() => alert('필기를 저장하지 못했습니다. 저장 공간을 확인해주세요.'));
-  }
-  pad.dirty = false;
-  formDirty = false;
-  store.syncMeetingTasks(m);
-  toast(m.actions.length ? `회의메모 저장 · 할일 ${m.actions.length}건 등록` : '회의메모를 저장했습니다.');
+  ev.preventDefault();
+  closeMeeting();
 });
 $('[data-del]', fMeeting).onclick = () => {
   const id = fMeeting.elements.id.value;
   if (id && confirm('이 회의메모(필기 포함)와 연결된 할일을 삭제할까요?')) {
+    clearTimeout(saveTimer);
     store.remove('meetings', id);
     saveInk(id, null).catch(() => {});
-    pad.dirty = false; formDirty = false;
+    pad.dirty = false;
     dlgMeeting.close();
     toast('삭제했습니다.');
   }
@@ -504,6 +711,7 @@ function openMeetingView(id) {
   if (!m) return;
   viewId = id;
   $('#viewBody').innerHTML = `<div class="detail">
+    ${m.series ? `<button type="button" class="tag series" style="--c:${seriesColor(m.series)}" data-series="${esc(m.series)}">📒 ${esc(m.series)} 노트 열기</button>` : ''}
     <h2>${esc(m.title)}</h2>
     <div class="muted sm">${fmt(m.date)} · ${esc(m.attendees || '참석자 미기재')} ${m.summarizedBy ? `· <span class="tag gray">${esc(m.summarizedBy)}</span>` : ''}</div>
     <div>${splitList(m.tags).map((t) => `<span class="tag">${esc(t)}</span>`).join('')}${(m.keywords || []).map((k) => `<span class="tag gray">#${esc(k)}</span>`).join('')}</div>
@@ -516,6 +724,19 @@ function openMeetingView(id) {
   if (m.inkPages) loadInk(m).then((d) => renderInkPreview($('#viewInk'), d)).catch(() => {});
 }
 $('#viewEdit').onclick = () => { dlgView.close(); openMeeting(viewId); };
+// 아무 메모나 누적 노트로: 이 메모를 노트의 첫 기록으로 묶고, 오늘 기록을 이어서 씀
+$('#viewAppend').onclick = () => {
+  const m = store.find('meetings', viewId);
+  if (!m) return;
+  let name = m.series;
+  if (!name) {
+    name = m.title || `회의메모 ${fmt(m.date)}`;
+    store.upsert('meetings', { id: m.id, series: name });
+    toast(`“${name}” 누적 노트로 묶었습니다.`);
+  }
+  dlgView.close();
+  startSeriesMeeting(name);
+};
 $('#viewCopy').onclick = async () => {
   try { await navigator.clipboard.writeText(summaryText(store.find('meetings', viewId))); toast('요약을 복사했습니다. 메일·메신저에 붙여넣으세요.'); } catch { toast('복사할 수 없습니다.'); }
 };
@@ -556,9 +777,12 @@ document.addEventListener('click', (e) => {
     const k = nw.dataset.new;
     if (k === 'event') openEvent(null, nw.dataset.date);
     if (k === 'meeting') openMeeting(null);
+    if (k === 'series') newSeries();
     if (k === 'task') openTask(null);
     return;
   }
+  const sr = e.target.closest('[data-series]');
+  if (sr) { if (dlgMeeting.open) saveMeeting(); if (dlgView.open) dlgView.close(); openSeries(sr.dataset.series); return; }
   const op = e.target.closest('[data-open]');
   if (op) {
     const { open, id } = op.dataset;
@@ -704,6 +928,8 @@ sync.init();
 
 /* ---------- 시작 ---------- */
 function renderAll() {
+  if (dlgSeries.open && curSeries) openSeries(curSeries);
+  if (dlgMeeting.open) renderPrevBox();
   renderDashboard();
   renderCalendar();
   renderMeetings();
