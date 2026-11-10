@@ -28,7 +28,7 @@ const COLS = {
   ],
   meetings: [
     ['ID', 'id'], ['날짜', 'date'], ['제목', 'title'], ['참석자', 'attendees'], ['태그', 'tags'], ['요약', 'summary'],
-    ['결정사항', 'decisions'], ['할일', 'actions'], ['키워드', 'keywords'], ['요약방식', 'summarizedBy'], ['원문', 'content'],
+    ['결정사항', 'decisions'], ['할일', 'actions'], ['키워드', 'keywords'], ['요약방식', 'summarizedBy'], ['필기(쪽)', 'inkPages'], ['원문', 'content'],
   ],
   tasks: [
     ['ID', 'id'], ['할일', 'text'], ['담당', 'owner'], ['마감', 'due'], ['완료', 'done'], ['출처회의', 'source'], ['회의ID', 'meetingId'],
@@ -53,7 +53,8 @@ function fromRow(kind, row) {
   for (const [label, key] of COLS[kind]) {
     let v = row[label];
     if (v === undefined) continue;
-    if (key === 'done') v = v === true || String(v).trim().toUpperCase() === 'O' || v === 'TRUE';
+    if (key === 'inkPages') v = Number(v) || 0;
+    else if (key === 'done') v = v === true || String(v).trim().toUpperCase() === 'O' || v === 'TRUE';
     else if (key === 'decisions' || key === 'keywords') v = split(v);
     else if (key === 'actions') v = split(v).map((line) => {
       const [text, owner = '', due = ''] = line.split(' / ');

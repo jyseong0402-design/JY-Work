@@ -1,6 +1,8 @@
 import { store, settings, todayStr } from './store.js';
 import { localSummarize } from './summarize.js';
-import { aiSummarize, aiAnswer, aiEnabled } from './ai.js';
+import { aiSummarize, aiAnswer, aiTranscribe, aiEnabled } from './ai.js';
+import { InkPad, renderInkPreview } from './ink.js';
+import { inkdb } from './inkdb.js';
 import { exportExcel, importExcel } from './excel.js';
 
 /* ---------- 공통 도우미 ---------- */
@@ -63,12 +65,12 @@ function eventItem(e, q) {
 
 function meetingItem(m, q) {
   const tags = splitList(m.tags).map((t) => `<span class="tag">${esc(t)}</span>`).join('');
-  const sum = m.summary || (m.content || '').slice(0, 140);
+  const sum = m.summary || (m.content || '').slice(0, 140) || (m.inkPages ? '필기 메모' : '');
   return `<div class="item" data-open="meetingView" data-id="${m.id}">
     <div class="when">${fmt(m.date)}</div>
     <div class="body"><div class="title">${highlight(m.title, q)}</div>
       <div class="sub">${highlight(sum, q)}</div>
-      <div>${tags}${m.decisions?.length ? `<span class="tag green">결정 ${m.decisions.length}</span>` : ''}${m.actions?.length ? `<span class="tag red">할일 ${m.actions.length}</span>` : ''}${m.summary ? '' : '<span class="tag gray">요약 전</span>'}</div>
+      <div>${tags}${m.decisions?.length ? `<span class="tag green">결정 ${m.decisions.length}</span>` : ''}${m.actions?.length ? `<span class="tag red">할일 ${m.actions.length}</span>` : ''}${m.inkPages ? `<span class="tag yellow">✍️ 필기 ${m.inkPages}쪽</span>` : ''}${m.summary ? '' : '<span class="tag gray">요약 전</span>'}</div>
     </div></div>`;
 }
 
@@ -352,53 +354,104 @@ $('[data-meeting]', fEvent).onclick = () => {
   openMeeting(existing?.id, { title: saved.title, date: saved.date, attendees: saved.attendees, tags: saved.category, eventId: saved.id });
 };
 
-/* ---------- 폼: 회의메모 ---------- */
+/* ---------- 회의메모 편집기 (펜 필기 + 텍스트 + 요약) ---------- */
 const dlgMeeting = $('#dlgMeeting'), fMeeting = $('#formMeeting');
 const actionsToText = (a = []) => a.map((x) => [x.text, x.owner, x.due].filter((v, i) => v || i === 0).join(' / ')).join('\n');
 const textToActions = (s) => lines(s).map((l) => { const [text, owner = '', due = ''] = l.split(/\s*\/\s*/); return { text, owner, due }; });
+const pad = new InkPad($('#inkHost'));
+let formDirty = false;
+fMeeting.addEventListener('input', () => { formDirty = true; });
 
-function openMeeting(id, preset = {}) {
+function setTab(tab) {
+  fMeeting.dataset.tab = tab;
+  $$('.ed-tabs [data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
+  if (tab !== 'sum') { try { localStorage.setItem('jy-ed-tab', tab); } catch { /* 무시 */ } }
+  if (tab === 'ink') requestAnimationFrame(() => pad.layout(true));
+}
+$('.ed-tabs').addEventListener('click', (e) => { const b = e.target.closest('[data-tab]'); if (b) setTab(b.dataset.tab); });
+
+async function openMeeting(id, preset = {}) {
   const m = id ? store.find('meetings', id) : { date: todayStr(), ...preset };
   fill(fMeeting, { ...m, decisions: (m.decisions || []).join('\n'), actions: actionsToText(m.actions), keywords: (m.keywords || []).join(', ') });
   $('[data-del]', fMeeting).style.display = id ? '' : 'none';
   $('#sumStatus').textContent = m.summarizedBy ? `${m.summarizedBy}으로 요약됨` : '';
+  $('#sumDot').classList.toggle('on', !!m.summary);
   $('#btnAiSum').title = aiEnabled() ? '' : '설정에서 API 키를 넣으면 사용할 수 있습니다';
+  pad.load(null);
+  formDirty = false;
+  // 기존 메모가 텍스트만 있으면 텍스트 탭, 아니면 마지막에 쓰던 탭
+  let last = 'ink';
+  try { last = localStorage.getItem('jy-ed-tab') || 'ink'; } catch { /* 무시 */ }
+  setTab(id && m.content && !m.inkPages ? 'text' : last);
   dlgMeeting.showModal();
+  if (id && m.inkPages) {
+    try { pad.load(await inkdb.get(id)); } catch { toast('필기를 불러오지 못했습니다.'); }
+    if (!m.content) setTab('ink');
+  }
 }
+
+function closeMeeting() {
+  if ((pad.dirty || formDirty) && !confirm('저장하지 않은 내용이 있습니다. 닫을까요?')) return false;
+  dlgMeeting.close();
+  return true;
+}
+$('[data-cancel]', fMeeting).onclick = closeMeeting;
+dlgMeeting.addEventListener('cancel', (e) => { e.preventDefault(); closeMeeting(); });
+
 function applySummary(r, by) {
   fMeeting.elements.summary.value = r.summary || '';
   fMeeting.elements.decisions.value = (r.decisions || []).join('\n');
   fMeeting.elements.actions.value = actionsToText(r.actions);
   fMeeting.elements.keywords.value = (r.keywords || []).join(', ');
   fMeeting.elements.summarizedBy.value = by;
+  formDirty = true;
+  $('#sumDot').classList.add('on');
   $('#sumStatus').textContent = `${by}으로 요약했습니다. 확인 후 수정하고 저장하세요.`;
+  if (window.matchMedia('(max-width: 1099px)').matches) setTab('sum');
 }
 $('#btnLocalSum').onclick = () => {
   const content = fMeeting.elements.content.value;
-  if (!content.trim()) { toast('메모 내용을 먼저 입력해주세요.'); return; }
-  applySummary(localSummarize(content, fMeeting.elements.date.value), '자동 요약');
-};
-$('#btnAiSum').onclick = async () => {
-  const o = read(fMeeting);
-  if (!o.content) { toast('메모 내용을 먼저 입력해주세요.'); return; }
-  if (!aiEnabled()) {
-    applySummary(localSummarize(o.content, o.date), '자동 요약');
-    $('#sumStatus').textContent = 'API 키가 없어 자동 요약을 사용했습니다. (설정에서 키 입력 시 AI 요약)';
+  if (!content.trim()) {
+    $('#sumStatus').textContent = pad.isEmpty() ? '메모 내용을 먼저 입력해주세요.' : '자동 요약은 텍스트만 읽습니다. 펜 필기는 “✨ AI 요약” 또는 “필기 텍스트 변환”을 사용하세요.';
     return;
   }
-  const btn = $('#btnAiSum');
-  btn.disabled = true;
-  $('#sumStatus').textContent = 'AI가 요약하는 중…';
-  try {
-    applySummary(await aiSummarize(o), 'AI 요약');
-  } catch (e) {
-    $('#sumStatus').textContent = e.message;
-  } finally {
-    btn.disabled = false;
-  }
+  applySummary(localSummarize(content, fMeeting.elements.date.value), '자동 요약');
 };
+
+async function busy(btn, msg, fn) {
+  btn.disabled = true;
+  $('#sumStatus').textContent = msg;
+  try { await fn(); } catch (e) { $('#sumStatus').textContent = e.message; } finally { btn.disabled = false; }
+}
+$('#btnAiSum').onclick = () => {
+  const o = read(fMeeting);
+  if (!o.content && pad.isEmpty()) { $('#sumStatus').textContent = '메모 내용을 먼저 입력해주세요.'; return; }
+  if (!aiEnabled()) {
+    if (o.content) {
+      applySummary(localSummarize(o.content, o.date), '자동 요약');
+      $('#sumStatus').textContent = 'API 키가 없어 자동 요약을 사용했습니다. (필기 인식·AI 요약은 설정에서 키 입력 후 사용)';
+    } else {
+      $('#sumStatus').textContent = '펜 필기를 요약하려면 설정에서 Claude API 키를 입력해주세요.';
+    }
+    return;
+  }
+  busy($('#btnAiSum'), 'AI가 메모와 필기를 읽고 요약하는 중…', async () => applySummary(await aiSummarize(o, pad.toImages()), 'AI 요약'));
+};
+$('#btnTranscribe').onclick = () => {
+  if (pad.isEmpty()) { $('#sumStatus').textContent = '변환할 펜 필기가 없습니다.'; return; }
+  if (!aiEnabled()) { $('#sumStatus').textContent = '필기 텍스트 변환은 설정에서 Claude API 키를 입력하면 사용할 수 있습니다.'; return; }
+  busy($('#btnTranscribe'), '필기를 읽는 중…', async () => {
+    const text = (await aiTranscribe(pad.toImages())).trim();
+    const ta = fMeeting.elements.content;
+    ta.value = ta.value.trim() ? `${ta.value.trim()}\n\n[필기 변환]\n${text}` : text;
+    formDirty = true;
+    $('#sumStatus').textContent = '필기를 텍스트로 옮겼습니다. 텍스트 탭에서 확인하세요. (필기 원본도 그대로 보관됩니다)';
+    setTab('text');
+  });
+};
+
 fMeeting.addEventListener('submit', (ev) => {
-  if (ev.submitter?.value !== 'save') return;
+  if (ev.submitter?.value !== 'save') { ev.preventDefault(); return; }
   const o = read(fMeeting);
   if (!o.id) delete o.id;
   // 요약을 안 했으면 저장할 때 자동 요약을 채워 데이터가 항상 쌓이도록 함
@@ -406,18 +459,29 @@ fMeeting.addEventListener('submit', (ev) => {
     const r = localSummarize(o.content, o.date);
     Object.assign(o, { summary: r.summary, decisions: r.decisions.join('\n'), actions: actionsToText(r.actions), keywords: r.keywords.join(', '), summarizedBy: '자동 요약' });
   }
+  const inkPages = pad.pageCount();
   const m = store.upsert('meetings', {
     ...o,
+    inkPages,
     decisions: lines(o.decisions),
     actions: textToActions(o.actions),
     keywords: splitList(o.keywords),
   });
+  (inkPages ? inkdb.put(m.id, pad.getData()) : inkdb.del(m.id)).catch(() => alert('필기를 저장하지 못했습니다. 저장 공간을 확인해주세요.'));
+  pad.dirty = false;
+  formDirty = false;
   store.syncMeetingTasks(m);
   toast(m.actions.length ? `회의메모 저장 · 할일 ${m.actions.length}건 등록` : '회의메모를 저장했습니다.');
 });
 $('[data-del]', fMeeting).onclick = () => {
   const id = fMeeting.elements.id.value;
-  if (id && confirm('이 회의메모와 연결된 할일을 삭제할까요?')) { store.remove('meetings', id); dlgMeeting.close(); toast('삭제했습니다.'); }
+  if (id && confirm('이 회의메모(필기 포함)와 연결된 할일을 삭제할까요?')) {
+    store.remove('meetings', id);
+    inkdb.del(id).catch(() => {});
+    pad.dirty = false; formDirty = false;
+    dlgMeeting.close();
+    toast('삭제했습니다.');
+  }
 };
 
 /* ---------- 회의 상세 ---------- */
@@ -439,8 +503,10 @@ function openMeetingView(id) {
     <h3>요약</h3><div>${esc(m.summary || '요약 없음')}</div>
     <h3>결정사항</h3>${m.decisions?.length ? `<ul>${m.decisions.map((d) => `<li>${esc(d)}</li>`).join('')}</ul>` : '<div class="muted">없음</div>'}
     <h3>할일</h3>${m.actions?.length ? `<ul>${m.actions.map((a) => `<li>${esc(a.text)} ${a.owner ? `<span class="tag">${esc(a.owner)}</span>` : ''}${a.due ? `<span class="tag gray">~${fmt(a.due)}</span>` : ''}</li>`).join('')}</ul>` : '<div class="muted">없음</div>'}
-    <h3>원문</h3><div class="raw">${esc(m.content || '')}</div></div>`;
+    ${m.inkPages ? `<h3>펜 필기 (${m.inkPages}쪽)</h3><div id="viewInk" class="ink-preview"></div>` : ''}
+    ${m.content ? `<h3>텍스트 메모</h3><div class="raw">${esc(m.content)}</div>` : ''}</div>`;
   dlgView.showModal();
+  if (m.inkPages) inkdb.get(id).then((d) => renderInkPreview($('#viewInk'), d)).catch(() => {});
 }
 $('#viewEdit').onclick = () => { dlgView.close(); openMeeting(viewId); };
 $('#viewCopy').onclick = async () => {
@@ -529,8 +595,10 @@ $('#xlsxImport').onchange = async (e) => {
   } catch (err) { alert('가져오기 실패: ' + err.message); }
   e.target.value = '';
 };
-$('#jsonExport').onclick = () => {
-  const blob = new Blob([JSON.stringify(store.get(), null, 2)], { type: 'application/json' });
+$('#jsonExport').onclick = async () => {
+  let ink = {};
+  try { ink = await inkdb.all(); } catch { /* 필기 없음 */ }
+  const blob = new Blob([JSON.stringify({ ...store.get(), ink })], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = `업무노트_백업_${todayStr()}.json`;
@@ -543,7 +611,9 @@ $('#jsonImport').onchange = async (e) => {
   try {
     const d = JSON.parse(await f.text());
     if (!d.events || !d.meetings) throw new Error('백업 파일 형식이 아닙니다.');
-    if (confirm('현재 데이터를 백업 파일 내용으로 바꿀까요? (취소 시 합치기)')) store.replaceAll(d); else store.merge(d);
+    const { ink = {}, ...rest } = d;
+    if (confirm('현재 데이터를 백업 파일 내용으로 바꿀까요? (취소 시 합치기)')) { await inkdb.clear(); store.replaceAll(rest); } else store.merge(rest);
+    for (const [id, v] of Object.entries(ink)) await inkdb.put(id, v);
     toast('복원했습니다.');
   } catch (err) { alert('복원 실패: ' + err.message); }
   e.target.value = '';
@@ -551,6 +621,7 @@ $('#jsonImport').onchange = async (e) => {
 $('#wipe').onclick = () => {
   if (confirm('모든 일정·회의메모·할일을 삭제합니다. 먼저 백업하셨나요?') && confirm('정말 삭제할까요? 되돌릴 수 없습니다.')) {
     store.replaceAll({ events: [], meetings: [], tasks: [] });
+    inkdb.clear().catch(() => {});
     toast('모두 삭제했습니다.');
   }
 };

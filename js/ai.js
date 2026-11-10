@@ -18,7 +18,7 @@ async function getClient() {
 
 export const aiEnabled = () => !!settings.get().apiKey;
 
-async function ask({ system, prompt, schema, maxTokens = 16000 }) {
+async function ask({ system, prompt, images = [], schema, maxTokens = 16000 }) {
   const client = await getClient();
   const { model } = settings.get();
   const params = {
@@ -29,7 +29,12 @@ async function ask({ system, prompt, schema, maxTokens = 16000 }) {
     // 안전 정책으로 거절될 경우 서버가 자동으로 대체 모델로 재시도
     betas: ['server-side-fallback-2026-07-01'],
     fallbacks: 'default',
-    messages: [{ role: 'user', content: prompt }],
+    messages: [{
+      role: 'user',
+      content: images.length
+        ? [...images.map((data) => ({ type: 'image', source: { type: 'base64', media_type: 'image/png', data } })), { type: 'text', text: prompt }]
+        : prompt,
+    }],
   };
   let res;
   try {
@@ -70,15 +75,18 @@ const SUMMARY_SCHEMA = {
   },
 };
 
-export async function aiSummarize(meeting) {
+// images: 펜 필기 페이지 이미지(base64 PNG). 필기 내용도 함께 읽고 요약합니다.
+export async function aiSummarize(meeting, images = []) {
   return ask({
+    images,
     system:
       '당신은 회사 회의록을 정리하는 비서입니다. 회의 메모를 읽고 한국어로 정리합니다. ' +
       'summary는 3~5문장의 핵심 요약, decisions는 확정된 결정사항, actions는 후속 할일(담당자 owner, 마감일 due는 YYYY-MM-DD, 모르면 빈 문자열), ' +
       'keywords는 나중에 검색에 쓸 핵심 키워드 3~6개입니다. 메모에 없는 내용은 지어내지 마세요.',
     prompt:
       `회의 날짜: ${meeting.date}\n회의 제목: ${meeting.title}\n참석자: ${meeting.attendees || '-'}\n\n` +
-      `<memo>\n${meeting.content}\n</memo>`,
+      `<memo>\n${meeting.content || '(텍스트 메모 없음)'}\n</memo>` +
+      (images.length ? `\n\n첨부된 이미지 ${images.length}장은 손글씨 필기 메모입니다. 필기 내용도 함께 읽어서 정리하세요.` : ''),
     schema: SUMMARY_SCHEMA,
   });
 }
@@ -90,5 +98,17 @@ export async function aiAnswer(question, contextText) {
       '제공된 기록에 근거해서만 한국어로 간결하게 답하고, 관련 날짜와 회의 제목을 함께 알려주세요. ' +
       '표로 정리하면 좋은 내용은 마크다운 표로 작성하세요. 기록에 없으면 없다고 말하세요.',
     prompt: `<records>\n${contextText}\n</records>\n\n질문: ${question}`,
+  });
+}
+
+// 손글씨 필기 → 텍스트 변환
+export async function aiTranscribe(images) {
+  return ask({
+    images,
+    system:
+      '당신은 손글씨 필기를 정확하게 텍스트로 옮기는 비서입니다. 이미지에 적힌 내용만 그대로 옮기고, ' +
+      '줄바꿈과 목록 구조를 유지하세요. 읽기 어려운 글자는 [?]로 표시하고, 그림·도형·화살표는 [그림: 짧은 설명]으로 적으세요. ' +
+      '설명이나 머리말 없이 옮긴 텍스트만 출력하세요.',
+    prompt: `손글씨 필기 ${images.length}쪽을 순서대로 텍스트로 옮겨주세요.`,
   });
 }

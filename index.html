@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
   <title>JY 업무노트</title>
   <meta name="description" content="일정 기록, 회의 메모, 자동 요약, 업무 데이터 조회" />
   <meta name="theme-color" content="#2b5ce6" />
@@ -216,38 +216,47 @@
     </form>
   </dialog>
 
-  <!-- 회의메모 폼 -->
-  <dialog id="dlgMeeting" class="wide">
-    <form method="dialog" id="formMeeting">
-      <h2>회의메모</h2>
+  <!-- 회의메모 편집기 (전체 화면 노트) -->
+  <dialog id="dlgMeeting" class="editor">
+    <form method="dialog" id="formMeeting" data-tab="ink">
       <input type="hidden" name="id" />
       <input type="hidden" name="eventId" />
-      <div class="form-grid">
-        <label class="full">회의 제목<input name="title" required /></label>
-        <label>날짜<input type="date" name="date" required /></label>
-        <label>참석자<input name="attendees" placeholder="쉼표로 구분" /></label>
-        <label class="full">태그<input name="tags" placeholder="예: 프로젝트A, 예산, 주간회의" /></label>
-        <label class="full">메모 내용
-          <textarea name="content" rows="10" placeholder="자유롭게 적으세요. 팁: '결정', '확정' → 결정사항 / '@이름', '담당', '~까지' → 할일로 자동 인식"></textarea>
-        </label>
-      </div>
-      <div class="sum-bar">
-        <button type="button" class="btn" id="btnLocalSum">⚡ 자동 요약</button>
-        <button type="button" class="btn primary" id="btnAiSum">✨ AI 요약</button>
-        <span class="muted sm" id="sumStatus"></span>
-      </div>
-      <div class="sum-box">
-        <label>요약<textarea name="summary" rows="3"></textarea></label>
-        <label>결정사항 <span class="muted sm">(한 줄에 하나)</span><textarea name="decisions" rows="3"></textarea></label>
-        <label>할일 <span class="muted sm">(한 줄에 하나: 내용 / 담당 / 마감일)</span><textarea name="actions" rows="3"></textarea></label>
-        <label>키워드<input name="keywords" /></label>
-        <input type="hidden" name="summarizedBy" />
-      </div>
-      <div class="row-end">
-        <button type="button" class="btn danger" data-del>삭제</button>
-        <span class="spacer"></span>
-        <button type="button" class="btn" data-close>취소</button>
+      <input type="hidden" name="summarizedBy" />
+      <div class="ed-top">
+        <button type="button" class="btn ghost icon" data-cancel title="닫기">✕</button>
+        <input name="title" class="ed-title" placeholder="회의 제목" required />
+        <input type="date" name="date" required />
+        <button type="button" class="btn danger hide-sm" data-del>삭제</button>
         <button class="btn primary" value="save">저장</button>
+      </div>
+      <div class="ed-meta">
+        <label>참석자<input name="attendees" placeholder="쉼표로 구분" /></label>
+        <label>태그<input name="tags" placeholder="예: 프로젝트A, 예산, 주간회의" /></label>
+      </div>
+      <div class="ed-tabs" role="tablist">
+        <button type="button" data-tab="ink">✍️ 펜 필기</button>
+        <button type="button" data-tab="text">⌨️ 텍스트</button>
+        <button type="button" data-tab="sum" class="tab-sum">📋 요약<span class="dot" id="sumDot"></span></button>
+      </div>
+      <div class="ed-body">
+        <div class="ed-note">
+          <div class="tabpane" data-pane="ink"><div id="inkHost" class="ink-host"></div></div>
+          <div class="tabpane" data-pane="text">
+            <textarea name="content" class="paper lined" placeholder="자유롭게 적으세요.&#10;'결정', '확정' → 결정사항&#10;'@이름', '담당', '~까지' → 할일로 자동 인식"></textarea>
+          </div>
+        </div>
+        <aside class="ed-sum">
+          <div class="sum-bar">
+            <button type="button" class="btn" id="btnLocalSum">⚡ 자동 요약</button>
+            <button type="button" class="btn primary" id="btnAiSum">✨ AI 요약</button>
+            <button type="button" class="btn" id="btnTranscribe">✍️→⌨️ 필기 텍스트 변환</button>
+          </div>
+          <p class="muted sm" id="sumStatus"></p>
+          <label>요약<textarea name="summary" rows="4"></textarea></label>
+          <label>결정사항 <span class="muted sm">(한 줄에 하나)</span><textarea name="decisions" rows="4"></textarea></label>
+          <label>할일 <span class="muted sm">(한 줄에 하나: 내용 / 담당 / 마감일)</span><textarea name="actions" rows="4"></textarea></label>
+          <label>키워드<input name="keywords" /></label>
+        </aside>
       </div>
     </form>
   </dialog>
