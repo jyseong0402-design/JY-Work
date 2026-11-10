@@ -1,0 +1,14 @@
+{
+  "name": "JY 업무노트",
+  "short_name": "업무노트",
+  "description": "일정 기록, 회의 메모, 요약, 데이터 조회를 한 곳에서",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f5f7fb",
+  "theme_color": "#2b5ce6",
+  "lang": "ko",
+  "icons": [
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

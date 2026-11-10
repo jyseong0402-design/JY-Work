@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>JY 업무노트</title>
+  <meta name="description" content="일정 기록, 회의 메모, 자동 요약, 업무 데이터 조회" />
+  <meta name="theme-color" content="#2b5ce6" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icons/icon.svg" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div class="app">
+    <nav class="nav" aria-label="메뉴">
+      <div class="brand"><img src="icons/icon.svg" alt="" /><span>업무노트</span></div>
+      <button data-view="dashboard" class="active"><span class="ic">🏠</span><span>홈</span></button>
+      <button data-view="calendar"><span class="ic">📅</span><span>일정</span></button>
+      <button data-view="meetings"><span class="ic">📝</span><span>회의메모</span></button>
+      <button data-view="tasks"><span class="ic">✅</span><span>할일</span></button>
+      <button data-view="search"><span class="ic">🔎</span><span>조회</span></button>
+      <button data-view="settings"><span class="ic">⚙️</span><span>설정</span></button>
+    </nav>
+
+    <main class="main">
+      <!-- 홈 -->
+      <section id="view-dashboard" class="view active">
+        <header class="vh">
+          <div>
+            <h1 id="greet">오늘의 업무</h1>
+            <p class="muted" id="todayLabel"></p>
+          </div>
+          <div class="actions">
+            <button class="btn" data-new="event">+ 일정</button>
+            <button class="btn primary" data-new="meeting">+ 회의메모</button>
+          </div>
+        </header>
+        <div class="stats" id="stats"></div>
+        <div class="grid2">
+          <div class="card"><h2>오늘 · 이번 주 일정</h2><div id="dashEvents"></div></div>
+          <div class="card"><h2>마감 임박 할일</h2><div id="dashTasks"></div></div>
+        </div>
+        <div class="card"><h2>최근 회의 요약</h2><div id="dashMeetings"></div></div>
+      </section>
+
+      <!-- 일정 -->
+      <section id="view-calendar" class="view">
+        <header class="vh">
+          <h1>일정</h1>
+          <div class="actions"><button class="btn primary" data-new="event">+ 일정 추가</button></div>
+        </header>
+        <div class="card">
+          <div class="cal-head">
+            <button class="btn ghost" id="calPrev" aria-label="이전 달">‹</button>
+            <strong id="calTitle"></strong>
+            <button class="btn ghost" id="calNext" aria-label="다음 달">›</button>
+            <button class="btn ghost sm" id="calToday">오늘</button>
+          </div>
+          <div class="cal" id="cal"></div>
+        </div>
+        <div class="card">
+          <h2 id="dayTitle"></h2>
+          <div id="dayEvents"></div>
+        </div>
+      </section>
+
+      <!-- 회의메모 -->
+      <section id="view-meetings" class="view">
+        <header class="vh">
+          <h1>회의메모</h1>
+          <div class="actions"><button class="btn primary" data-new="meeting">+ 새 회의메모</button></div>
+        </header>
+        <div class="toolbar">
+          <input type="search" id="meetingFilter" placeholder="제목·참석자·태그·내용 검색" />
+        </div>
+        <div id="meetingList" class="list"></div>
+      </section>
+
+      <!-- 할일 -->
+      <section id="view-tasks" class="view">
+        <header class="vh">
+          <h1>할일</h1>
+          <div class="actions"><button class="btn primary" data-new="task">+ 할일 추가</button></div>
+        </header>
+        <div class="toolbar">
+          <select id="taskFilter">
+            <option value="open">미완료</option>
+            <option value="overdue">기한 지남</option>
+            <option value="done">완료</option>
+            <option value="all">전체</option>
+          </select>
+          <input type="search" id="taskOwner" placeholder="담당자로 거르기" />
+        </div>
+        <div id="taskList" class="list"></div>
+      </section>
+
+      <!-- 조회 · 리포트 -->
+      <section id="view-search" class="view">
+        <header class="vh"><h1>조회 · 리포트</h1></header>
+        <div class="card">
+          <h2>빠른 리포트</h2>
+          <div class="chips" id="presets">
+            <button class="chip" data-preset="week">이번 주 일정</button>
+            <button class="chip" data-preset="nextweek">다음 주 일정</button>
+            <button class="chip" data-preset="open">미완료 할일</button>
+            <button class="chip" data-preset="overdue">기한 지난 할일</button>
+            <button class="chip" data-preset="monthMeetings">이번 달 회의 요약</button>
+            <button class="chip" data-preset="decisions">최근 결정사항</button>
+          </div>
+        </div>
+        <div class="card">
+          <h2>상세 검색</h2>
+          <div class="form-grid">
+            <label>키워드<input type="search" id="q" placeholder="예: 예산, 김대리, 신규 프로젝트" /></label>
+            <label>종류
+              <select id="qKind">
+                <option value="all">전체</option>
+                <option value="events">일정</option>
+                <option value="meetings">회의메모</option>
+                <option value="tasks">할일</option>
+              </select>
+            </label>
+            <label>시작일<input type="date" id="qFrom" /></label>
+            <label>종료일<input type="date" id="qTo" /></label>
+          </div>
+          <div class="row-end">
+            <button class="btn" id="qReset">초기화</button>
+            <button class="btn" id="qExport">결과 엑셀 저장</button>
+            <button class="btn primary" id="qRun">검색</button>
+          </div>
+        </div>
+        <div class="card ai-card">
+          <h2>AI에게 물어보기 <span class="badge" id="aiBadge"></span></h2>
+          <p class="muted sm">쌓인 일정·회의·할일 기록을 근거로 답합니다. 예: “지난달 A프로젝트 관련 결정사항 정리해줘”, “김대리 담당 할일 알려줘”</p>
+          <div class="ask">
+            <input type="text" id="aiQ" placeholder="궁금한 내용을 입력하세요" />
+            <button class="btn primary" id="aiAsk">질문</button>
+          </div>
+          <div id="aiOut" class="ai-out"></div>
+        </div>
+        <div class="card">
+          <div class="result-head"><h2 id="resultTitle">결과</h2><span class="muted sm" id="resultCount"></span></div>
+          <div id="results"></div>
+        </div>
+      </section>
+
+      <!-- 설정 -->
+      <section id="view-settings" class="view">
+        <header class="vh"><h1>설정 · 데이터</h1></header>
+        <div class="card">
+          <h2>엑셀</h2>
+          <p class="muted sm">일정·회의메모·할일이 시트별로 저장됩니다. 엑셀에서 수정한 뒤 다시 가져올 수 있습니다(같은 ID는 덮어쓰기).</p>
+          <div class="row">
+            <button class="btn primary" id="xlsxExport">전체 엑셀 내보내기</button>
+            <label class="btn">엑셀 가져오기<input type="file" id="xlsxImport" accept=".xlsx,.xls" hidden /></label>
+          </div>
+        </div>
+        <div class="card">
+          <h2>AI 요약 (선택)</h2>
+          <p class="muted sm">API 키가 없으면 기기 안에서 동작하는 <b>자동 요약</b>을 사용합니다. Claude API 키를 넣으면 더 정확한 <b>AI 요약</b>과 <b>AI 질문</b>을 쓸 수 있습니다. 키는 이 기기의 브라우저에만 저장됩니다.</p>
+          <div class="form-grid">
+            <label>Claude API 키<input type="password" id="apiKey" placeholder="sk-ant-..." autocomplete="off" /></label>
+            <label>모델
+              <select id="model">
+                <option value="claude-opus-5-5">Claude Opus 5.5 (기본, 가장 정확)</option>
+                <option value="claude-sonnet-5-5">Claude Sonnet 5.5 (빠르고 저렴)</option>
+                <option value="claude-haiku-5-5">Claude Haiku 5.5 (가장 저렴)</option>
+              </select>
+            </label>
+          </div>
+          <div class="row-end"><button class="btn primary" id="saveSettings">저장</button></div>
+        </div>
+        <div class="card">
+          <h2>백업 · 복원</h2>
+          <p class="muted sm">데이터는 이 기기(브라우저)에 저장됩니다. 다른 기기로 옮기거나 보관하려면 백업 파일을 저장하세요.</p>
+          <div class="row">
+            <button class="btn" id="jsonExport">백업 파일 저장(JSON)</button>
+            <label class="btn">백업 복원<input type="file" id="jsonImport" accept=".json" hidden /></label>
+            <button class="btn" id="loadSample">예시 데이터 넣기</button>
+            <button class="btn danger" id="wipe">전체 삭제</button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- 일정 폼 -->
+  <dialog id="dlgEvent">
+    <form method="dialog" id="formEvent">
+      <h2>일정</h2>
+      <input type="hidden" name="id" />
+      <div class="form-grid">
+        <label class="full">제목<input name="title" required /></label>
+        <label>날짜<input type="date" name="date" required /></label>
+        <label>분류
+          <select name="category">
+            <option>회의</option><option>외근</option><option>보고</option><option>마감</option><option>개인</option><option>기타</option>
+          </select>
+        </label>
+        <label>시작<input type="time" name="start" /></label>
+        <label>종료<input type="time" name="end" /></label>
+        <label>장소<input name="place" /></label>
+        <label>참석자<input name="attendees" placeholder="쉼표로 구분" /></label>
+        <label class="full">메모<textarea name="note" rows="3"></textarea></label>
+        <label class="check"><input type="checkbox" name="done" /> 완료</label>
+      </div>
+      <div class="row-end">
+        <button type="button" class="btn danger" data-del>삭제</button>
+        <button type="button" class="btn" data-meeting>회의메모 작성</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn" value="cancel" data-close>취소</button>
+        <button class="btn primary" value="save">저장</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 회의메모 폼 -->
+  <dialog id="dlgMeeting" class="wide">
+    <form method="dialog" id="formMeeting">
+      <h2>회의메모</h2>
+      <input type="hidden" name="id" />
+      <input type="hidden" name="eventId" />
+      <div class="form-grid">
+        <label class="full">회의 제목<input name="title" required /></label>
+        <label>날짜<input type="date" name="date" required /></label>
+        <label>참석자<input name="attendees" placeholder="쉼표로 구분" /></label>
+        <label class="full">태그<input name="tags" placeholder="예: 프로젝트A, 예산, 주간회의" /></label>
+        <label class="full">메모 내용
+          <textarea name="content" rows="10" placeholder="자유롭게 적으세요. 팁: '결정', '확정' → 결정사항 / '@이름', '담당', '~까지' → 할일로 자동 인식"></textarea>
+        </label>
+      </div>
+      <div class="sum-bar">
+        <button type="button" class="btn" id="btnLocalSum">⚡ 자동 요약</button>
+        <button type="button" class="btn primary" id="btnAiSum">✨ AI 요약</button>
+        <span class="muted sm" id="sumStatus"></span>
+      </div>
+      <div class="sum-box">
+        <label>요약<textarea name="summary" rows="3"></textarea></label>
+        <label>결정사항 <span class="muted sm">(한 줄에 하나)</span><textarea name="decisions" rows="3"></textarea></label>
+        <label>할일 <span class="muted sm">(한 줄에 하나: 내용 / 담당 / 마감일)</span><textarea name="actions" rows="3"></textarea></label>
+        <label>키워드<input name="keywords" /></label>
+        <input type="hidden" name="summarizedBy" />
+      </div>
+      <div class="row-end">
+        <button type="button" class="btn danger" data-del>삭제</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn" data-close>취소</button>
+        <button class="btn primary" value="save">저장</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 할일 폼 -->
+  <dialog id="dlgTask">
+    <form method="dialog" id="formTask">
+      <h2>할일</h2>
+      <input type="hidden" name="id" />
+      <div class="form-grid">
+        <label class="full">내용<input name="text" required /></label>
+        <label>담당<input name="owner" /></label>
+        <label>마감<input type="date" name="due" /></label>
+        <label class="check"><input type="checkbox" name="done" /> 완료</label>
+      </div>
+      <div class="row-end">
+        <button type="button" class="btn danger" data-del>삭제</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn" data-close>취소</button>
+        <button class="btn primary" value="save">저장</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 회의 상세 -->
+  <dialog id="dlgView" class="wide">
+    <div id="viewBody"></div>
+    <div class="row-end">
+      <button class="btn" id="viewEdit">수정</button>
+      <button class="btn" id="viewCopy">요약 복사</button>
+      <button class="btn primary" data-close>닫기</button>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
