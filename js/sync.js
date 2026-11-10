@@ -147,7 +147,7 @@ export async function pushInk(mid, ink) {
   const pages = ink?.pages || [];
   const ops = pages.map((p, i) => ({
     ref: fb.doc(inkCol(), `${mid}_${i}`),
-    data: { mid, i, n: pages.length, rev: ink.rev || '', strokes: JSON.stringify(p.strokes) },
+    data: { mid, i, n: pages.length, rev: ink.rev || '', ls: p.ls || 0, strokes: JSON.stringify(p.strokes) },
   }));
   const existing = await fb.getDocs(fb.query(inkCol(), fb.where('mid', '==', mid)));
   existing.forEach((d) => { if (d.data().i >= pages.length) ops.push({ ref: d.ref, delete: true }); });
@@ -163,7 +163,7 @@ export async function fetchInk(mid) {
   let rev = '';
   snap.forEach((d) => {
     const x = d.data();
-    pages[x.i] = { strokes: JSON.parse(x.strokes || '[]') };
+    pages[x.i] = { strokes: JSON.parse(x.strokes || '[]'), ls: x.ls || 0 };
     rev = x.rev;
   });
   const ink = { pages: pages.filter(Boolean), rev, synced: true };

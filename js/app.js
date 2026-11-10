@@ -5,6 +5,7 @@ import { InkPad, renderInkPreview } from './ink.js';
 import { inkdb } from './inkdb.js';
 import { sync, loadInk, saveInk, flushInk, parseConfig, getConfig } from './sync.js';
 import { exportExcel, importExcel } from './excel.js';
+import { APP_VERSION, CHANGES, cmpVersion } from './version.js';
 
 /* ---------- 공통 도우미 ---------- */
 const $ = (s, el = document) => el.querySelector(s);
@@ -951,6 +952,48 @@ $('#fbSave').onclick = () => {
 const curCfg = getConfig();
 if (curCfg) $('#fbConfig').value = JSON.stringify(curCfg, null, 2);
 sync.init();
+
+/* ---------- 버전 표시 · 업데이트 알림 ---------- */
+$('#appVer').textContent = `v${APP_VERSION}`;
+$('#setVer').textContent = `버전 v${APP_VERSION} · 업데이트 내역`;
+function showChanges(list, title) {
+  $('#updateBody').innerHTML = `<div class="detail"><h2>${title}</h2>` + list.map((c) => `
+    <h3>v${esc(c.v)} <span class="muted sm">${esc(c.date)}</span></h3>
+    <ul>${c.items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>`).join('') + '</div>';
+  const d = $('#dlgUpdate');
+  if (!d.open) d.showModal();
+}
+$('#appVer').onclick = $('#setVer').onclick = () => showChanges(CHANGES.slice(0, 5), '업데이트 내역');
+// 접속 시: 지난번에 본 버전보다 새 버전이면 바뀐 내용을 알려줌
+(() => {
+  const seen = pref('jy-seen-version', '');
+  setPref('jy-seen-version', APP_VERSION);
+  if (seen === APP_VERSION) return;
+  const news = seen ? CHANGES.filter((c) => cmpVersion(c.v, seen) > 0) : CHANGES.slice(0, 1);
+  if (news.length) setTimeout(() => showChanges(news, `🎉 새 버전 v${APP_VERSION}이 적용되었습니다`), 500);
+})();
+// 앱을 켜둔 동안 새 버전이 올라오면 '지금 적용' 안내
+let latestRemote = APP_VERSION;
+async function checkUpdate() {
+  try {
+    const res = await fetch('js/version.js', { cache: 'no-store' });
+    const v = ((await res.text()).match(/APP_VERSION\s*=\s*'([^']+)'/) || [])[1];
+    if (v && cmpVersion(v, APP_VERSION) > 0 && v !== latestRemote) {
+      latestRemote = v;
+      $('#updateBarText').textContent = `새 버전 v${v}이 있습니다`;
+      $('#updateBar').hidden = false;
+    }
+  } catch { /* 오프라인 */ }
+}
+$('#updateApply').onclick = () => {
+  if (dlgMeeting.open) saveMeeting({ final: true });
+  flushInk();
+  setTimeout(() => location.reload(), 400);
+};
+$('#updateLater').onclick = () => { $('#updateBar').hidden = true; };
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
+setInterval(checkUpdate, 30 * 60 * 1000);
+setTimeout(checkUpdate, 5000);
 
 /* ---------- 시작 ---------- */
 function renderAll() {

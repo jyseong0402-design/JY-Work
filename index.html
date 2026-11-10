@@ -22,6 +22,7 @@
       <button data-view="tasks"><span class="ic">✅</span><span>할일</span></button>
       <button data-view="search"><span class="ic">🔎</span><span>조회</span></button>
       <button data-view="settings"><span class="ic">⚙️</span><span>설정</span></button>
+      <button type="button" class="nav-ver" id="appVer" title="업데이트 내역 보기"></button>
     </nav>
 
     <main class="main">
@@ -161,7 +162,7 @@
 
       <!-- 설정 -->
       <section id="view-settings" class="view">
-        <header class="vh"><h1>설정 · 데이터</h1></header>
+        <header class="vh"><h1>설정 · 데이터</h1><button type="button" class="btn sm" id="setVer"></button></header>
         <div class="card">
           <h2>🔄 탭·PC 동기화</h2>
           <p class="muted sm">구글 계정으로 로그인하면 갤럭시 탭과 PC에서 같은 기록(일정·회의메모·펜 필기·할일)을 볼 수 있습니다. 인터넷이 끊겨도 기기에 먼저 저장되고, 연결되면 자동으로 맞춰집니다. 내 계정으로 로그인한 사람만 내 기록을 볼 수 있습니다.</p>
@@ -343,6 +344,17 @@
       <button class="btn primary" data-close>닫기</button>
     </div>
   </dialog>
+
+  <!-- 업데이트 알림 -->
+  <dialog id="dlgUpdate">
+    <div id="updateBody"></div>
+    <div class="row-end"><button class="btn primary" data-close>확인</button></div>
+  </dialog>
+  <div class="update-bar" id="updateBar" hidden>
+    <span id="updateBarText">새 버전이 있습니다</span>
+    <button type="button" class="btn sm primary" id="updateApply">지금 적용</button>
+    <button type="button" class="btn sm ghost" id="updateLater" title="나중에">✕</button>
+  </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 

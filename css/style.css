@@ -513,3 +513,20 @@ form.focus .focus-exit {
 }
 .btn.tb.sum-tb { font-size: 14px; padding: 6px 10px; min-width: 64px; color: var(--muted); }
 .btn.tb.sum-tb.on { color: var(--primary); background: var(--primary-soft); }
+
+/* =========================================================
+   버전 표시 · 업데이트 알림
+   ========================================================= */
+.nav-ver {
+  margin-top: auto; font-size: 12px !important; color: var(--muted) !important; justify-content: center;
+  padding: 8px !important; opacity: .8;
+}
+.nav-ver:hover { opacity: 1; color: var(--primary) !important; }
+.update-bar {
+  position: fixed; left: 50%; top: calc(12px + env(safe-area-inset-top)); transform: translateX(-50%); z-index: 50;
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 16px; border-radius: 12px;
+  background: var(--panel); border: 1px solid var(--primary); box-shadow: 0 6px 24px rgba(0, 0, 0, .2); font-size: 14px;
+}
+#dlgUpdate ul { margin: 0 0 4px; padding-left: 20px; line-height: 1.7; }
+@media (max-width: 760px) { .nav-ver { display: none !important; } }
+@media (min-width: 761px) and (max-width: 1099px) { .nav-ver { font-size: 11px !important; } }

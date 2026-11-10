@@ -6,8 +6,19 @@
 
 export const PAGE_W = 1000;
 export const PAGE_H = 1300;
-export const LINE = 50; // 줄 간격(논리 단위)
-export const MARGIN = 110; // 왼쪽 빨간 여백선 위치(논리 단위)
+export const LINE = 50; // 예전 기본 줄 간격(논리 단위) — 줄 간격 정보가 없는 기존 필기용
+export const TARGET_LS_PX = 34; // 화면에서 보이는 줄 간격 목표(px): 메모장이 넓어져도 줄이 벌어지지 않음
+
+// 쪽마다 줄 간격(ls, 논리 단위)을 기억합니다.
+// - 빈 쪽: 지금 화면 폭에 맞춰 약 34px 간격이 되도록 계산
+// - 글씨가 있는 쪽: 처음 정해진 간격을 유지 → 다른 기기·화면 방향에서도 글씨와 줄이 어긋나지 않음
+export function pageLs(page, scale) {
+  if (!page.strokes.length || !page.ls) {
+    if (!page.strokes.length) page.ls = Math.round((TARGET_LS_PX / scale) * 10) / 10;
+    else page.ls = LINE;
+  }
+  return page.ls;
+}
 
 const COLORS = [
   ['#1d2433', '검정'], ['#1f4fd1', '파랑'], ['#d23b3b', '빨강'], ['#1d8a4e', '초록'],
@@ -65,7 +76,7 @@ export function renderInkPreview(container, data) {
       const scale = w / PAGE_W;
       const dpr = window.devicePixelRatio || 1;
       wrap.style.height = PAGE_H * scale + 'px';
-      setPaperVars(wrap, scale);
+      setPaperVars(wrap, scale, page.ls || LINE);
       cv.width = Math.round(w * dpr);
       cv.height = Math.round(PAGE_H * scale * dpr);
       const ctx = cv.getContext('2d');
@@ -76,9 +87,9 @@ export function renderInkPreview(container, data) {
   }
 }
 
-export function setPaperVars(el, scale) {
-  el.style.setProperty('--ls', LINE * scale + 'px');
-  el.style.setProperty('--mg', MARGIN * scale + 'px');
+export function setPaperVars(el, scale, ls = LINE) {
+  el.style.setProperty('--ls', ls * scale + 'px');
+  el.style.setProperty('--mg', ls * 2.2 * scale + 'px'); // 빨간 여백선도 줄 간격에 비례
 }
 
 export class InkPad {
@@ -163,7 +174,7 @@ export class InkPad {
 
   /* ---- 데이터 ---- */
   load(data) {
-    this.pages = data?.pages?.length ? data.pages.map((p) => ({ strokes: [...p.strokes] })) : [{ strokes: [] }];
+    this.pages = data?.pages?.length ? data.pages.map((p) => ({ strokes: [...p.strokes], ls: p.ls || (p.strokes.length ? LINE : 0) })) : [{ strokes: [] }];
     this.undoStack = [];
     this.redoStack = [];
     this.dirty = false;
@@ -173,7 +184,7 @@ export class InkPad {
   }
   getData() {
     // 뒤쪽의 빈 페이지는 저장하지 않음
-    const pages = this.pages.map((p) => ({ strokes: p.strokes }));
+    const pages = this.pages.map((p) => ({ strokes: p.strokes, ls: p.ls }));
     while (pages.length > 1 && !pages[pages.length - 1].strokes.length) pages.pop();
     return { pages };
   }
@@ -250,7 +261,7 @@ export class InkPad {
     [...this.pagesEl.children].forEach((el, i) => {
       el.style.width = cssW + 'px';
       el.style.height = PAGE_H * this.scale + 'px';
-      setPaperVars(el, this.scale);
+      setPaperVars(el, this.scale, pageLs(this.pages[i], this.scale));
       el.querySelectorAll('canvas').forEach((cv) => {
         cv.width = Math.round(cssW * this.dpr);
         cv.height = Math.round(PAGE_H * this.scale * this.dpr);

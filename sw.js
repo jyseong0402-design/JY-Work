@@ -1,7 +1,7 @@
 // 오프라인 지원용 서비스워커: 앱 파일은 네트워크 우선(최신 유지), 끊기면 캐시 사용
-const CACHE = 'jywork-v7';
+const CACHE = 'jywork-v8';
 const ASSETS = ['./', './index.html', './css/style.css', './js/app.js', './js/store.js',
-  './js/summarize.js', './js/ai.js', './js/excel.js', './js/ink.js', './js/inkdb.js', './js/sync.js',
+  './js/summarize.js', './js/ai.js', './js/excel.js', './js/ink.js', './js/inkdb.js', './js/sync.js', './js/version.js',
   './js/firebase-config.js', './js/vendor/firebase.mjs', './js/vendor/xlsx.full.min.js',
   './js/vendor/anthropic-sdk.mjs', './manifest.webmanifest', './icons/icon.svg'];
 
