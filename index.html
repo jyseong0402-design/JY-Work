@@ -272,7 +272,13 @@
         <label>참석자<input name="attendees" placeholder="쉼표로 구분" /></label>
         <label>태그<input name="tags" placeholder="예: 프로젝트A, 예산" /></label>
         <datalist id="seriesList"></datalist>
-        <button type="button" class="btn danger" data-del>이 메모 삭제</button>
+        <div class="meta-actions">
+          <button type="button" class="btn sm" id="edAppend" title="이 메모를 누적 노트로 묶고 다음 기록을 이어서 씁니다">➕ 이어서 기록</button>
+          <button type="button" class="btn sm" id="edSeries" hidden>📒 노트 전체 보기</button>
+          <button type="button" class="btn sm" id="edCopy">📋 요약 복사</button>
+          <span class="spacer"></span>
+          <button type="button" class="btn sm danger" data-del>이 메모 삭제</button>
+        </div>
       </div>
       <button type="button" class="focus-exit" id="focusExit" title="전체 화면 끝내기">⤡ 나가기</button>
       <div class="ed-body">

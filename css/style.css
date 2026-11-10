@@ -530,3 +530,5 @@ form.focus .focus-exit {
 #dlgUpdate ul { margin: 0 0 4px; padding-left: 20px; line-height: 1.7; }
 @media (max-width: 760px) { .nav-ver { display: none !important; } }
 @media (min-width: 761px) and (max-width: 1099px) { .nav-ver { font-size: 11px !important; } }
+.meta-actions { grid-column: 1 / -1; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.meta-actions .spacer { flex: 1; }

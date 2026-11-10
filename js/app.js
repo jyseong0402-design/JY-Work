@@ -596,6 +596,31 @@ $('#focusToggle').onclick = () => setFocus(true);
 $('#focusExit').onclick = () => setFocus(false);
 document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && fMeeting.classList.contains('focus')) setFocus(false); });
 
+/* ----- 편집기 안에서: 요약 복사, 이어서 기록 ----- */
+$('#edCopy').onclick = async () => {
+  const m = saveMeeting();
+  if (!m) { toast('먼저 내용을 적어주세요.'); return; }
+  try { await navigator.clipboard.writeText(summaryText(m)); toast('요약을 복사했습니다. 메일·메신저에 붙여넣으세요.'); } catch { toast('복사할 수 없습니다.'); }
+};
+$('#edAppend').onclick = () => {
+  const m = saveMeeting({ final: true });
+  if (!m) { toast('먼저 내용을 적어주세요.'); return; }
+  let name = m.series;
+  if (!name) {
+    name = m.title;
+    store.upsert('meetings', { id: m.id, series: name });
+    fMeeting.elements.series.value = name;
+    toast(`“${name}” 누적 노트로 묶었습니다.`);
+  }
+  const today = store.get().meetings.find((x) => x.series === name && x.date === todayStr());
+  if (today && today.id === m.id) {
+    renderPrevBox();
+    toast('오늘 기록은 지금 이 메모에 이어서 쓰면 됩니다. 다른 날 다시 누르면 새 기록이 추가됩니다.');
+    return;
+  }
+  startSeriesMeeting(name);
+};
+
 /* ----- 누적 노트: 지난 기록 요약과 남은 할일을 옆에 보여줌 ----- */
 function renderPrevBox() {
   const name = fMeeting.elements.series.value.trim();
@@ -603,6 +628,8 @@ function renderPrevBox() {
   const curId = fMeeting.elements.id.value;
   const items = name ? store.get().meetings.filter((m) => m.series === name && m.id !== curId).sort((a, b) => b.date.localeCompare(a.date)) : [];
   box.hidden = !items.length;
+  $('#edSeries').hidden = !name || !items.length;
+  $('#edSeries').dataset.series = name;
   if (!items.length) return;
   const ids = new Set(items.map((m) => m.id));
   const open = store.get().tasks.filter((t) => !t.done && ids.has(t.meetingId)).sort(byDue);
@@ -809,12 +836,12 @@ document.addEventListener('click', (e) => {
     return;
   }
   const sr = e.target.closest('[data-series]');
-  if (sr) { if (dlgMeeting.open) saveMeeting(); if (dlgView.open) dlgView.close(); openSeries(sr.dataset.series); return; }
+  if (sr) { if (dlgMeeting.open) closeMeeting(); if (dlgView.open) dlgView.close(); openSeries(sr.dataset.series); return; }
   const op = e.target.closest('[data-open]');
   if (op) {
     const { open, id } = op.dataset;
     if (open === 'event') openEvent(id);
-    if (open === 'meetingView') openMeetingView(id);
+    if (open === 'meetingView') openMeeting(id); // 요약 창 없이 바로 메모장으로
     if (open === 'task') openTask(id);
     return;
   }
