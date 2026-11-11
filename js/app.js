@@ -287,7 +287,7 @@ $('#seriesRename').onclick = () => {
 function newSeries() {
   const name = (prompt('누적 노트 이름을 입력하세요 (예: 주간업무회의, 프로젝트A, 고객사B)') || '').trim();
   if (!name) return;
-  if (seriesList().some((g) => g.name === name)) return openSeries(name);
+  if (seriesList().some((g) => g.name === name)) return startSeriesMeeting(name);
   openMeeting(null, { series: name, title: name });
 }
 
@@ -904,6 +904,8 @@ document.addEventListener('click', (e) => {
     return;
   }
   const sr = e.target.closest('[data-series]');
+  // 노트 표지를 누르면 창 없이 바로 오늘 기록(메모장)으로
+  if (sr && sr.classList.contains('nb')) { startSeriesMeeting(sr.dataset.series); return; }
   if (sr) { if (dlgMeeting.open) closeMeeting(); if (dlgView.open) dlgView.close(); openSeries(sr.dataset.series); return; }
   const op = e.target.closest('[data-open]');
   if (op) {
