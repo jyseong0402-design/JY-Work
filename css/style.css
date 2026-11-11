@@ -638,3 +638,10 @@ textarea.paper.lined { width: min(100%, 80vw); max-width: 1600px; box-shadow: 0 
 form.focus .ed-top { display: grid !important; }
 form.focus .focus-exit { display: none; }
 form.focus #focusToggle { background: rgba(255, 255, 255, .12); }
+
+/* 반복 일정 */
+.tag.rep { background: rgba(109, 143, 245, .15); color: var(--primary); font-weight: 500; }
+.cal .ev.done { opacity: .5; text-decoration: line-through; }
+#formEvent .repeat-only { display: none; }
+#formEvent.has-repeat .repeat-only { display: block; }
+.occ-note { background: var(--primary-soft); color: var(--primary); padding: 8px 12px; border-radius: 8px; margin: -4px 0 12px; }

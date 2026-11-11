@@ -7,6 +7,7 @@ import { inkdb } from './inkdb.js';
 import { sync, loadInk, saveInk, flushInk, parseConfig, getConfig } from './sync.js';
 import { exportExcel, importExcel } from './excel.js';
 import { APP_VERSION, CHANGES, cmpVersion } from './version.js';
+import { expandEvents, repeatLabel } from './recur.js';
 
 /* ---------- 공통 도우미 ---------- */
 const $ = (s, el = document) => el.querySelector(s);
@@ -58,9 +59,9 @@ $$('.nav button').forEach((b) => b.addEventListener('click', () => show(b.datase
 /* ---------- 항목 렌더링 ---------- */
 function eventItem(e, q) {
   const time = e.start ? `${e.start}${e.end ? '~' + e.end : ''}` : '종일';
-  return `<div class="item ${e.done ? 'done' : ''}" data-open="event" data-id="${e.id}">
+  return `<div class="item ${e.done ? 'done' : ''}" data-open="event" data-id="${e.id}" data-occ="${e.occ || ''}">
     <div class="when">${fmt(e.date)}<br>${esc(time)}</div>
-    <div class="body"><div class="title">${highlight(e.title, q)}</div>
+    <div class="body"><div class="title">${highlight(e.title, q)}${e.repeat ? ` <span class="tag rep">🔁 ${esc(repeatLabel(e.startDate ? { ...e, date: e.startDate } : e))}</span>` : ''}</div>
       <div class="sub">${[e.category && `<span class="tag gray">${esc(e.category)}</span>`, e.place && '📍' + highlight(e.place, q), e.attendees && '👥 ' + highlight(e.attendees, q)].filter(Boolean).join(' ')}</div>
       ${e.note ? `<div class="sub">${highlight(e.note, q)}</div>` : ''}
     </div></div>`;
@@ -132,13 +133,13 @@ function renderDashboard() {
   const d = new Date();
   $('#todayLabel').textContent = `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일 ${DOW[d.getDay()]}요일`;
   const [wf, wt] = weekRange();
-  const todayEv = events.filter((e) => e.date === today);
-  const weekEv = events.filter((e) => inRange(e.date, today, wt) || (e.date === today)).sort(byDate);
+  const todayEv = expandEvents(events, today, today);
+  const weekEv = expandEvents(events, today, wt < today ? today : wt).sort(byDate);
   const open = tasks.filter((t) => !t.done);
   const overdue = open.filter((t) => t.due && t.due < today);
   $('#stats').innerHTML = `
     <div class="stat" data-go="calendar"><b>${todayEv.length}</b><span>오늘 일정</span></div>
-    <div class="stat" data-preset="week"><b>${events.filter((e) => inRange(e.date, wf, wt)).length}</b><span>이번 주 일정</span></div>
+    <div class="stat" data-preset="week"><b>${expandEvents(events, wf, wt).length}</b><span>이번 주 일정</span></div>
     <div class="stat" data-go="tasks"><b>${open.length}</b><span>미완료 할일</span></div>
     <div class="stat ${overdue.length ? 'warn' : ''}" data-preset="overdue"><b>${overdue.length}</b><span>기한 지난 할일</span></div>`;
   $('#dashEvents').innerHTML = listHTML(weekEv.slice(0, 8), eventItem, '', '이번 주 남은 일정이 없습니다.');
@@ -158,21 +159,22 @@ function renderCalendar() {
   const today = todayStr();
   let html = DOW.map((d) => `<div class="dow">${d}</div>`).join('');
   const cells = Math.ceil((new Date(y, m, 1).getDay() + new Date(y, m + 1, 0).getDate()) / 7) * 7;
+  const last = new Date(start); last.setDate(start.getDate() + cells - 1);
+  const monthEv = expandEvents(events, todayStr(start), todayStr(last));
   for (let i = 0; i < cells; i++) {
     const day = new Date(start); day.setDate(start.getDate() + i);
     const ds = todayStr(day);
-    const evs = events.filter((e) => e.date === ds).sort(byDate);
-    const ms = meetings.filter((x) => x.date === ds && !evs.some((e) => e.id === x.eventId));
-    const items = [...evs.map((e) => `<div class="ev">${esc(e.start ? e.start + ' ' : '')}${esc(e.title)}</div>`), ...ms.map((x) => `<div class="ev m">📝 ${esc(x.title)}</div>`)];
+    const evs = monthEv.filter((e) => e.date === ds).sort(byDate);
+    const items = evs.map((e) => `<div class="ev ${e.done ? 'done' : ''}">${e.repeat ? '🔁' : ''}${esc(e.start ? e.start + ' ' : '')}${esc(e.title)}</div>`);
     html += `<div class="d ${day.getMonth() !== m ? 'other' : ''} ${ds === today ? 'today' : ''} ${ds === selDate ? 'sel' : ''} ${day.getDay() === 0 ? 'sun' : ''}" data-date="${ds}">
       <span class="n">${day.getDate()}</span>${items.slice(0, 3).join('')}${items.length > 3 ? `<div class="more">+${items.length - 3}</div>` : ''}</div>`;
   }
   $('#cal').innerHTML = html;
   $('#dayTitle').innerHTML = `${fmt(selDate)} 일정 <button class="btn sm" data-new="event" data-date="${selDate}">+ 추가</button>`;
-  const dayEv = events.filter((e) => e.date === selDate).sort(byDate);
+  const dayEv = expandEvents(events, selDate, selDate).sort(byDate);
   const dayMt = meetings.filter((x) => x.date === selDate);
   $('#dayEvents').innerHTML = listHTML(dayEv, eventItem, '', '이 날은 일정이 없습니다.') +
-    (dayMt.length ? `<div class="group-title">이 날의 회의메모</div>${dayMt.map((x) => meetingItem(x)).join('')}` : '');
+    (dayMt.length ? `<div class="group-title">이 날 작성한 메모 (달력에는 표시 안 됨)</div>${dayMt.map((x) => meetingItem(x)).join('')}` : '');
 }
 $('#cal').addEventListener('click', (e) => {
   const d = e.target.closest('[data-date]');
@@ -319,7 +321,8 @@ function query({ q = '', kind = 'all', from = '', to = '' }) {
   const out = { events: [], meetings: [], tasks: [] };
   for (const k of Object.keys(out)) {
     if (kind !== 'all' && kind !== k) continue;
-    out[k] = data[k].filter((x) => {
+    const src = k === 'events' && from && to ? expandEvents(data.events, from, to) : data[k];
+    out[k] = src.filter((x) => {
       const d = k === 'tasks' ? x.due || (x.createdAt || '').slice(0, 10) : x.date;
       if ((from || to) && !inRange(d, from, to)) return false;
       const t = itemText(k, x).toLowerCase();
@@ -405,7 +408,7 @@ function buildContext(question) {
   const score = (t) => words.reduce((s, w) => s + (t.toLowerCase().includes(w.replace(/(은|는|이|가|을|를|에|의|와|과|도|로)$/, '')) ? 1 : 0), 0);
   const recs = [
     ...data.meetings.map((m) => ({ d: m.date, t: `[회의메모] ${m.date} | ${m.series ? '노트: ' + m.series + ' | ' : ''}${m.title} | 참석: ${m.attendees || '-'} | 태그: ${m.tags || '-'}\n요약: ${m.summary || '-'}\n결정: ${(m.decisions || []).join(' / ') || '-'}\n할일: ${(m.actions || []).map((a) => `${a.text}(${a.owner || '담당 미정'}, ${a.due || '기한 없음'})`).join(' / ') || '-'}\n원문: ${(m.content || '').slice(0, 3000)}` })),
-    ...data.events.map((e) => ({ d: e.date, t: `[일정] ${e.date} ${e.start || ''}${e.end ? '~' + e.end : ''} | ${e.title} | ${e.category || ''} | 장소: ${e.place || '-'} | 참석: ${e.attendees || '-'} | ${e.done ? '완료' : ''} ${e.note || ''}` })),
+    ...data.events.map((e) => ({ d: e.date, t: `[일정] ${e.date} ${e.start || ''}${e.end ? '~' + e.end : ''}${e.repeat ? ` (${repeatLabel(e)} 반복${e.repeatUntil ? ', ' + e.repeatUntil + '까지' : ''})` : ''} | ${e.title} | ${e.category || ''} | 장소: ${e.place || '-'} | 참석: ${e.attendees || '-'} | ${e.done ? '완료' : ''} ${e.note || ''}` })),
     ...data.tasks.map((t) => ({ d: t.due || '', t: `[할일] ${t.text} | 담당: ${t.owner || '-'} | 마감: ${t.due || '-'} | ${t.done ? '완료' : '미완료'} | 출처: ${t.source || '-'}` })),
   ].map((r) => ({ ...r, s: score(r.t) }))
     .sort((a, b) => b.s - a.s || (b.d || '').localeCompare(a.d || ''));
@@ -458,31 +461,74 @@ function read(form) {
   return o;
 }
 
-function openEvent(id, date) {
+function syncRepeatUI() {
+  const rep = fEvent.elements.repeat.value;
+  const occ = fEvent.elements.occ.value;
+  fEvent.classList.toggle('has-repeat', !!rep);
+  $('#dateLabel').textContent = rep ? '시작 날짜' : '날짜';
+  $('#doneLabel').textContent = rep && occ ? `${fmt(occ)} 완료` : '완료';
+  $('[data-del-one]', fEvent).hidden = !(rep && occ && fEvent.elements.id.value);
+  $('[data-del]', fEvent).textContent = rep && fEvent.elements.id.value ? '반복 전체 삭제' : '삭제';
+}
+function openEvent(id, date, occ) {
   const e = id ? store.find('events', id) : { date: date || selDate || todayStr(), category: '회의' };
-  fill(fEvent, e);
+  fill(fEvent, { ...e, occ: occ || '', done: e.repeat ? (e.doneDates || []).includes(occ) : e.done });
   $('[data-del]', fEvent).style.display = id ? '' : 'none';
+  $('#occNote').hidden = !(e.repeat && occ);
+  $('#occNote').textContent = e.repeat && occ ? `🔁 ${repeatLabel(e)} 반복 일정 · 선택한 날짜 ${fmt(occ)} (내용을 고치면 반복 전체에 적용됩니다)` : '';
+  syncRepeatUI();
   dlgEvent.showModal();
+}
+fEvent.elements.repeat.addEventListener('change', syncRepeatUI);
+function eventFromForm() {
+  const o = read(fEvent);
+  const occ = o.occ;
+  delete o.occ;
+  if (!o.id) delete o.id;
+  if (!o.repeat) o.repeatUntil = '';
+  const prev = o.id ? store.find('events', o.id) : null;
+  if (o.repeat) {
+    // 반복 일정의 '완료'는 그 날짜만
+    const set = new Set(prev?.doneDates || []);
+    const day = occ || o.date;
+    if (o.done) set.add(day); else set.delete(day);
+    o.doneDates = [...set].sort();
+    o.done = false;
+  }
+  return { o, occ };
 }
 fEvent.addEventListener('submit', (ev) => {
   if (ev.submitter?.value !== 'save') return;
-  const o = read(fEvent);
-  if (!o.id) delete o.id;
-  store.upsert('events', o);
+  store.upsert('events', eventFromForm().o);
   toast('일정을 저장했습니다.');
 });
 $('[data-del]', fEvent).onclick = () => {
   const id = fEvent.elements.id.value;
-  if (id && confirm('이 일정을 삭제할까요?')) { store.remove('events', id); dlgEvent.close(); toast('삭제했습니다.'); }
+  const e = store.find('events', id);
+  const msg = e?.repeat ? '이 반복 일정을 모든 날짜에서 삭제할까요?' : '이 일정을 삭제할까요?';
+  if (id && confirm(msg)) { store.remove('events', id); dlgEvent.close(); toast('삭제했습니다.'); }
+};
+$('[data-del-one]', fEvent).onclick = () => {
+  const id = fEvent.elements.id.value;
+  const occ = fEvent.elements.occ.value;
+  const e = store.find('events', id);
+  if (!e || !occ) return;
+  store.upsert('events', { id, skip: [...new Set([...(e.skip || []), occ])].sort() });
+  dlgEvent.close();
+  toast(`${fmt(occ)} 일정만 삭제했습니다.`);
 };
 $('[data-meeting]', fEvent).onclick = () => {
-  const o = read(fEvent);
+  const { o, occ } = eventFromForm();
   if (!o.title) { fEvent.reportValidity(); return; }
-  if (!o.id) delete o.id;
   const saved = store.upsert('events', o);
   dlgEvent.close();
-  const existing = store.get().meetings.find((m) => m.eventId === saved.id);
-  openMeeting(existing?.id, { title: saved.title, date: saved.date, attendees: saved.attendees, tags: saved.category, eventId: saved.id });
+  const day = occ || saved.date;
+  // 반복 회의는 같은 이름의 누적 노트에 날짜별로 쌓이게
+  const existing = store.get().meetings.find((m) => m.eventId === saved.id && m.date === day);
+  openMeeting(existing?.id, {
+    title: saved.title, date: day, attendees: saved.attendees, tags: saved.category, eventId: saved.id,
+    ...(saved.repeat ? { series: saved.title } : {}),
+  });
 };
 
 /* ---------- 회의메모 편집기 (펜 필기 + 텍스트 + 요약) ---------- */
@@ -862,7 +908,7 @@ document.addEventListener('click', (e) => {
   const op = e.target.closest('[data-open]');
   if (op) {
     const { open, id } = op.dataset;
-    if (open === 'event') openEvent(id);
+    if (open === 'event') openEvent(id, null, op.dataset.occ);
     if (open === 'meetingView') openMeeting(id); // 요약 창 없이 바로 메모장으로
     if (open === 'task') openTask(id);
     return;

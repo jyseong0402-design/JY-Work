@@ -221,9 +221,11 @@
     <form method="dialog" id="formEvent">
       <h2>일정</h2>
       <input type="hidden" name="id" />
+      <input type="hidden" name="occ" />
+      <p class="muted sm occ-note" id="occNote" hidden></p>
       <div class="form-grid">
         <label class="full">제목<input name="title" required /></label>
-        <label>날짜<input type="date" name="date" required /></label>
+        <label><span id="dateLabel">날짜</span><input type="date" name="date" required /></label>
         <label>분류
           <select name="category">
             <option>회의</option><option>외근</option><option>보고</option><option>마감</option><option>개인</option><option>기타</option>
@@ -233,10 +235,19 @@
         <label>종료<input type="time" name="end" /></label>
         <label>장소<input name="place" /></label>
         <label>참석자<input name="attendees" placeholder="쉼표로 구분" /></label>
+        <label>🔁 반복
+          <select name="repeat">
+            <option value="">반복 안 함</option><option value="daily">매일</option><option value="weekly">매주</option>
+            <option value="biweekly">격주 (2주마다)</option><option value="monthly">매월</option>
+            <option value="quarterly">분기 (3개월마다)</option><option value="yearly">매년</option>
+          </select>
+        </label>
+        <label class="repeat-only">반복 끝나는 날 <span class="muted">(비우면 계속)</span><input type="date" name="repeatUntil" /></label>
         <label class="full">메모<textarea name="note" rows="3"></textarea></label>
-        <label class="check"><input type="checkbox" name="done" /> 완료</label>
+        <label class="check"><input type="checkbox" name="done" /> <span id="doneLabel">완료</span></label>
       </div>
       <div class="row-end">
+        <button type="button" class="btn danger" data-del-one hidden>이 날만 삭제</button>
         <button type="button" class="btn danger" data-del>삭제</button>
         <button type="button" class="btn" data-meeting>회의메모 작성</button>
         <span class="spacer"></span>

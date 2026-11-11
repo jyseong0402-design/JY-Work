@@ -24,7 +24,7 @@ const split = (s) => String(s || '').split(/\n/).map((x) => x.trim()).filter(Boo
 const COLS = {
   events: [
     ['ID', 'id'], ['날짜', 'date'], ['시작', 'start'], ['종료', 'end'], ['제목', 'title'], ['분류', 'category'],
-    ['장소', 'place'], ['참석자', 'attendees'], ['메모', 'note'], ['완료', 'done'],
+    ['장소', 'place'], ['참석자', 'attendees'], ['반복', 'repeat'], ['반복종료', 'repeatUntil'], ['메모', 'note'], ['완료', 'done'],
   ],
   meetings: [
     ['ID', 'id'], ['날짜', 'date'], ['노트', 'series'], ['제목', 'title'], ['참석자', 'attendees'], ['태그', 'tags'], ['요약', 'summary'],
