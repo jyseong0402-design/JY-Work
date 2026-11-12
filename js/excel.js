@@ -4,7 +4,7 @@ import { uid } from './store.js';
 const XLSX_URL = new URL('./vendor/xlsx.full.min.js', import.meta.url).href; // SheetJS 0.18.5 (Apache-2.0)
 let loading = null;
 
-function loadXLSX() {
+export function loadXLSX() {
   if (window.XLSX) return Promise.resolve(window.XLSX);
   if (!loading) {
     loading = new Promise((resolve, reject) => {

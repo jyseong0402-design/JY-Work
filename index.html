@@ -21,6 +21,7 @@
       <button data-view="meetings"><span class="ic">📝</span><span>회의메모</span></button>
       <button data-view="tasks"><span class="ic">✅</span><span>할일</span></button>
       <button data-view="search"><span class="ic">🔎</span><span>조회</span></button>
+      <button data-view="freight"><span class="ic">🚚</span><span>운반비 검증</span></button>
       <button data-view="settings"><span class="ic">⚙️</span><span>설정</span></button>
       <button type="button" class="nav-ver" id="appVer" title="업데이트 내역 보기"></button>
     </nav>
@@ -161,6 +162,47 @@
       </section>
 
       <!-- 설정 -->
+      <!-- 운반비 검증 -->
+      <section id="view-freight" class="view">
+        <header class="vh">
+          <div>
+            <h1>🚚 운반비 검증</h1>
+            <p class="muted sm">집계파일 · 계정별원장 · 지난 검증파일을 넣으면 이번 달 검증 시트(현황·운반비)를 붙인 검증파일이 만들어집니다. 파일은 이 기기 안에서만 처리됩니다.</p>
+          </div>
+        </header>
+        <div class="fr-drops">
+          <div class="fr-drop" id="frAgg" tabindex="0">
+            <b>① 운반비 집계파일</b><small>타부서에서 받은 파일 ('현황' 시트)</small>
+            <div class="fr-name" id="frAggName"></div>
+            <input type="file" id="frAggIn" accept=".xlsx,.xlsm" hidden />
+          </div>
+          <div class="fr-drop" id="frLed" tabindex="0">
+            <b>② ERP 계정별원장</b><small>전체계정 원장 그대로 OK · 회사별로 여러 개</small>
+            <div class="fr-name" id="frLedName"></div>
+            <input type="file" id="frLedIn" accept=".xlsx,.xls" multiple hidden />
+          </div>
+          <div class="fr-drop" id="frPrev" tabindex="0">
+            <b>③ 지난 검증파일</b><small>지난달까지 작업한 검증파일</small>
+            <div class="fr-name" id="frPrevName"></div>
+            <button type="button" class="btn sm" id="frUseLast" hidden></button>
+            <input type="file" id="frPrevIn" accept=".xlsx,.xlsm" hidden />
+          </div>
+        </div>
+        <div class="row-end"><button class="btn primary" id="frRun" disabled>검증파일 만들기</button></div>
+        <details class="card fr-rules">
+          <summary>검증 규칙 보기</summary>
+          <ul class="sm">
+            <li>원장: 운반보관비 3개 계정(선행·후행·기타)만, <b>차변만</b> 사용 (결산전표 등 대변 행 제외)</li>
+            <li>오아시스 후행물류비 차감(차변 음수)은 매출차감 항목이라 <b>0원</b> 처리</li>
+            <li>운반비N월 시트는 지난달 시트를 그대로 복사하고, 납품처 금액(H열)만 집계파일 '현황' Total 값으로 바꿈 (회사·납품처·운송사 이름으로 맞춤)</li>
+            <li>운송사·납품처 이름이 바뀐 행은 그 자리에서 고치고, 새 납품처는 빈 행에 추가 — 화면에 목록으로 알려줌</li>
+            <li>차이 나는 지급처는 U열 사유에 '제안)'으로 지난달 사유·원장 적요를 적어 둠</li>
+            <li>같은 달을 다시 만들면 그 달 시트·원장 행을 새로 바꿈</li>
+          </ul>
+        </details>
+        <div id="frResult"></div>
+      </section>
+
       <section id="view-settings" class="view">
         <header class="vh"><h1>설정 · 데이터</h1><button type="button" class="btn sm" id="setVer"></button></header>
         <div class="card">

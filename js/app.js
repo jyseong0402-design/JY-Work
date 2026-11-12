@@ -3,6 +3,7 @@ import { localSummarize } from './summarize.js';
 import { aiSummarize, aiAnswer, aiTranscribe, aiEnabled } from './ai.js';
 import { InkPad, renderInkPreview } from './ink.js';
 import { icon } from './icons.js';
+import { initFreight } from './freight-ui.js';
 import { inkdb } from './inkdb.js';
 import { sync, loadInk, saveInk, flushInk, parseConfig, getConfig } from './sync.js';
 import { exportExcel, importExcel } from './excel.js';
@@ -1091,6 +1092,8 @@ $('#updateLater').onclick = () => { $('#updateBar').hidden = true; };
 document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
 setInterval(checkUpdate, 30 * 60 * 1000);
 setTimeout(checkUpdate, 5000);
+
+initFreight();
 
 /* ---------- 시작 ---------- */
 function renderAll() {
