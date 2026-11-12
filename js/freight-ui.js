@@ -122,6 +122,11 @@ function showResult(out) {
     html.push(`<div class="card"><h2>납품처 목록 변경 (지난달 대비)</h2><p class="muted sm">운반비${r.month}월 시트 C~J열에 반영했습니다. 지급처(I열)가 맞는지 확인하세요.</p>
       <ul class="fr-notes">${r.listChanges.map((c) => `<li>${icon[c.type] || '•'} ${esc(c.text)}</li>`).join('')}</ul></div>`);
   }
+  if (r.channelChanges && r.channelChanges.length) {
+    html.push(`<div class="card"><h2>채널 구분 변경 (G·J열)</h2><p class="muted sm">집계파일 '납품처' 시트 기준으로 G열(채널)·J열(요약표 분류)을 고쳤습니다. 간선_외부매입 → 매입운반비, 그 밖의 간선_* → 간선으로 묶여 채널별 요약표에 들어갑니다.</p>
+      <table class="fr-table"><tr><th>행</th><th>회사</th><th>납품처 · 운송사</th><th>지난달</th><th>이번 달</th></tr>
+      ${r.channelChanges.map((c) => `<tr><td>${c.row}</td><td>${esc(c.co)}</td><td>${esc(c.place)} · ${esc(c.carrier)}</td><td class="sm">${esc(c.from || '(빈칸)')}</td><td class="sm"><b>${esc(c.to)}</b>${c.sure ? '' : ' ⚠'}</td></tr>`).join('')}</table></div>`);
+  }
   html.push(`<div class="card"><h2>넣은 원장</h2><table class="fr-table"><tr><th>파일</th><th>사업장</th><th class="r">${r.month}월 차변 행</th><th class="r">제외(대변·결산)</th><th class="r">매출차감 0처리</th></tr>
     ${r.ledgerFiles.map((f) => `<tr><td>${esc(f.name)}</td><td class="sm">${esc((f.sites || []).join(', ') || f.error || '')}</td><td class="r">${f.taken ?? '-'}</td><td class="r">${f.credit ?? '-'}</td><td class="r">${f.deduct ?? '-'}</td></tr>`).join('')}</table></div>`);
   $('#frResult').innerHTML = html.join('');

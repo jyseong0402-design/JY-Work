@@ -59,7 +59,101 @@ export function readAggregate(XLSX, buf) {
   const firstDate = grid.slice(hr + 1).map((r) => r?.[1]).find(isDate);
   if (!firstDate) throw new Error('현황 시트에서 날짜를 찾지 못했습니다.');
   for (const col of cols) col.total = num(grid[totalRow]?.[col.c]);
-  return { sheetName: name, ws, grid, hr, totalRow, cols, year: firstDate.getFullYear(), month: firstDate.getMonth() + 1, merges: ws['!merges'] || [] };
+  return { wb, sheetName: name, ws, grid, hr, totalRow, cols, year: firstDate.getFullYear(), month: firstDate.getMonth() + 1, merges: ws['!merges'] || [] };
+}
+
+/* ---------------- 1-2. 집계파일 '납품처' 시트 (채널 구분의 기준) ---------------- */
+// 채널(새 구분) → 운반비 시트 J열(요약표 분류)
+export const channelGroup = (ch) => (ch === '간선_외부매입' ? '매입운반비' : String(ch).startsWith('간선') ? '간선' : ch);
+
+export function readDeliverySheet(XLSX, wb, month) {
+  const ws = wb.Sheets['납품처'];
+  if (!ws) return null;
+  const g = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+  const hr = g.findIndex((r) => r && r.some((x) => norm(x) === '채널'));
+  if (hr < 0) return null;
+  const cB = g[hr].findIndex((x) => norm(x) === '채널');
+  const org = XLSX.utils.decode_range(ws['!ref'] || 'A1').s;
+  const monthCol = (m) => {
+    const lab = `${String(m).padStart(2, '0')}월`;
+    const c = (g[hr] || []).findIndex((x) => norm(x) === lab || norm(x) === `${m}월`);
+    if (c < 0) return null;
+    const sub = (g[hr + 1] || []).map(norm);
+    let amt = c, plt = null;
+    for (let k = c; k < c + 6; k++) { if (sub[k] === '운반비') { amt = k; break; } }
+    for (let k = amt + 1; k < amt + 4; k++) { if (sub[k] === 'PLT') { plt = k; break; } }
+    return { amt, plt };
+  };
+  const cur = monthCol(month), prev = monthCol(month === 1 ? 12 : month - 1);
+  const rows = [];
+  for (let i = hr + 2; i < g.length; i++) {
+    const r = g[i];
+    if (!r || !r.slice(cB, cB + 3).some((x) => norm(x))) continue;
+    const ch = norm(r[cB]);
+    const ref = XLSX.utils.encode_cell({ r: i + org.r, c: (cur ? cur.amt : 0) + org.c });
+    const f = cur && ws[ref] && ws[ref].f ? String(ws[ref].f) : '';
+    rows.push({
+      i, ch, client: norm(r[cB + 1]), place: norm(r[cB + 2]), clientRaw: r[cB + 1] ?? '', placeRaw: r[cB + 2] ?? '',
+      kind: /요약$/.test(ch) ? 'sum' : ch === '총합계' ? 'total' : /^[A-Z]+\d+(\+[A-Z]+\d+)+$/.test(f.replace(/\$/g, '')) ? 'group' : 'row',
+      cur: cur ? num(r[cur.amt]) : 0, curPlt: cur && cur.plt !== null ? num(r[cur.plt]) : 0,
+      prev: prev ? num(r[prev.amt]) : 0, prevPlt: prev && prev.plt !== null ? num(r[prev.plt]) : 0,
+    });
+  }
+  return { rows, hasCur: !!cur, hasPrev: !!prev };
+}
+
+// 현황 열(회사·납품처·운송사, Total) → 납품처 시트의 채널. 금액이 같은 행(또는 같은 거래처 행들의 합)을 찾고, 이름이 비슷한 쪽을 고름
+function tokens(s) { return new Set(String(s).replace(/[()\[\]_,\-\->\/·]/g, ' ').split(/\s+/).map((t) => t.trim()).filter((t) => t.length >= 2)); }
+export function matchChannels(cols, dv) {
+  const out = new Map();
+  if (!dv) return out;
+  const det = dv.rows.filter((r) => r.kind === 'row' || r.kind === 'group');
+  const groups = new Map();
+  for (const r of dv.rows.filter((x) => x.kind === 'row')) {
+    const k = `${r.ch}|${r.client}`;
+    if (!groups.has(k)) groups.set(k, { ch: r.ch, client: r.client, place: '', cur: 0, rows: [] });
+    const gg = groups.get(k); gg.cur += r.cur; gg.rows.push(r);
+  }
+  const rest = [];
+  const kOf = (col) => `${norm(col.sajang)}|${norm(col.place)}|${norm(col.carrier)}`;
+  for (const col of cols) {
+    if (!col.total || col.carrier === '합계') continue;
+    const T = col.total;
+    let cands = det.filter((r) => Math.abs(r.cur - T) <= 1).map((r) => ({ ch: r.ch, text: `${r.client} ${r.place}`, row: r }));
+    if (!cands.length) cands = [...groups.values()].filter((gq) => gq.rows.length > 1 && Math.abs(gq.cur - T) <= 1).map((gq) => ({ ch: gq.ch, text: gq.client, group: gq }));
+    if (!cands.length) { rest.push(col); continue; }
+    const mine = tokens(`${col.place} ${col.carrier} ${col.company}`);
+    const score = (c) => [...tokens(c.text)].filter((t) => [...mine].some((m) => m.includes(t) || t.includes(m))).length;
+    cands.sort((a, b) => score(b) - score(a));
+    const best = cands[0];
+    const sure = cands.length === 1 || score(best) > score(cands[1]) || cands.every((c) => c.ch === best.ch);
+    out.set(kOf(col), { ch: best.ch, sure, row: best.row || null, group: best.group || null });
+  }
+  // 2차: 같은 회사의 남은 열 2~3개를 합친 금액이 한 행과 같으면 (예: GS 네트웍스 + GS 신미래 = GS리테일 피킹비)
+  const used = new Set([...out.values()].map((m) => m.row && m.row.i));
+  const free = det.filter((r) => r.kind === 'row' && r.cur && !used.has(r.i));
+  const left = new Set(rest);
+  for (const r of free) {
+    const pool = rest.filter((c) => left.has(c));
+    let hit = null;
+    for (let x = 0; x < pool.length && !hit; x++) for (let y = x + 1; y < pool.length && !hit; y++) {
+      if (pool[x].company !== pool[y].company) continue;
+      if (Math.abs(pool[x].total + pool[y].total - r.cur) <= 1) hit = [pool[x], pool[y]];
+      for (let z = y + 1; z < pool.length && !hit; z++) if (pool[z].company === pool[x].company && Math.abs(pool[x].total + pool[y].total + pool[z].total - r.cur) <= 1) hit = [pool[x], pool[y], pool[z]];
+    }
+    if (hit) for (const c of hit) { left.delete(c); out.set(kOf(c), { ch: r.ch, sure: true, row: null, group: { rows: [r] }, combined: true }); }
+  }
+  // 3차: 금액이 안 맞으면 이름으로 (운송사 = 납품처 칸, 지역명 겹침). 확실하지 않음 표시
+  for (const c of rest.filter((q) => left.has(q))) {
+    const mine = tokens(`${c.place} ${c.carrier}`);
+    let best = null, bs = 0;
+    for (const r of det) {
+      const sc = [...tokens(`${r.client} ${r.place}`)].filter((t) => [...mine].some((m) => m.includes(t) || t.includes(m))).length + (norm(r.place) === norm(c.carrier) ? 1 : 0);
+      if (sc > bs) { bs = sc; best = r; }
+    }
+    if (best && bs >= 2) out.set(kOf(c), { ch: best.ch, sure: false, row: null, byName: `${best.client} ${best.place}` });
+  }
+  return out;
 }
 
 /* ---------------- 2. ERP 계정별원장 읽기 (여러 파일) ---------------- */
@@ -466,6 +560,33 @@ export async function buildVerification({ XLSX, JSZip, aggBuf, ledgerBufs, prevB
     if (tc[ref] && !tc[ref].f && num(tc[ref].v) >= 2000 && num(tc[ref].v) !== Y) setNum(ref, Y);
   }
 
+  /* --- 채널 구분(G열: 집계파일 납품처 시트 기준, J열: 요약표 분류) --- */
+  const dv = readDeliverySheet(XLSX, agg.wb, M);
+  const chMap = matchChannels(agg.cols, dv);
+  report.channelChanges = [];
+  if (!dv) report.warnings.push("집계파일에 '납품처' 시트가 없어 채널 구분은 지난달 그대로 두었습니다.");
+  else {
+    let unmatched = [];
+    for (const x of listRows) {
+      if (x.blank || !x.carrier || x.carrier === '합계' || x.hasFormula && !x.key) continue;
+      const k = x.key || key(x.co, x.place, x.carrier);
+      const m = chMap.get(k);
+      const oldG = norm(T(`G${x.n}`)), oldJ = norm(T(`J${x.n}`)) || oldG;
+      if (!m) { if ((x.amount || 0) !== 0) unmatched.push(`${x.co} · ${x.place} · ${x.carrier}`); continue; }
+      const newG = m.ch, newJ = channelGroup(m.ch);
+      x.channel = newG; x.group = newJ;
+      if (newG !== oldG) setCell(fr, `G${x.n}`, textCell(`G${x.n}`, styleOf(fr, `G${x.n}`) || styleOf(fr, `G${x.n - 1}`), newG));
+      if (newJ !== oldJ || tc[`J${x.n}`]?.f === undefined) setCell(fr, `J${x.n}`, textCell(`J${x.n}`, styleOf(fr, `J${x.n}`) || styleOf(fr, `J${x.n - 1}`), newJ));
+      if (newG !== oldG || newJ !== oldJ) report.channelChanges.push({ row: x.n, co: x.co, place: x.place, carrier: x.carrier, from: oldG + (oldJ !== oldG ? ` / ${oldJ}` : ''), to: newG + (newJ !== newG ? ` / ${newJ}` : ''), sure: m.sure });
+    }
+    const byName = [...chMap.entries()].filter(([, m]) => m.byName);
+    if (byName.length) report.warnings.push(`납품처 시트 금액과 맞지 않아 이름으로 채널을 정한 곳(확인 필요): ${byName.map(([k, m]) => `${k.split('|').slice(1).join(' · ')} → ${m.ch} (${m.byName})`).join(', ')}`);
+    const tot = dv.rows.find((r) => r.kind === 'total');
+    const aggSum = agg.cols.filter((c) => c.carrier !== '합계' && !ZERO_PLACES.some((z) => norm(c.place).includes(z))).reduce((t, c) => t + (c.total || 0), 0);
+    if (tot && Math.abs(tot.cur - aggSum) > 1) report.warnings.push(`집계파일 안에서 '납품처' 시트 총합계(${Math.round(tot.cur).toLocaleString()})와 '현황' 합계(${Math.round(aggSum).toLocaleString()})가 ${Math.round(aggSum - tot.cur).toLocaleString()}원 다릅니다. 집계 담당 부서 확인이 필요할 수 있습니다.`);
+    if (unmatched.length) report.warnings.push(`집계파일 납품처 시트에서 채널을 찾지 못해 지난달 구분을 그대로 둔 곳: ${unmatched.join(', ')}`);
+  }
+
   /* --- 대사 계산 (엑셀 수식과 같은 방식) --- */
   const allLedger = [
     ...existing.map((e) => ({ ...e, co: coOf(e.site), lead: accToLead.get(e.acc) || '', payee: vendorToPayee.get(e.m1) ?? '' })),
@@ -587,6 +708,97 @@ export async function buildVerification({ XLSX, JSZip, aggBuf, ledgerBufs, prevB
     .replace(/<(drawing|legacyDrawing|tableParts)\b[^>]*\/>/g, '')
     .replace(/<conditionalFormatting[\s\S]*?<\/conditionalFormatting>/g, '');
   if (mergeXml) newStatusXml = newStatusXml.replace('</sheetData>', `</sheetData>${mergeXml}`);
+
+  /* --- '납품처' 시트: 전월 vs 당월 비교 (집계파일 납품처 시트 기준, 검증에서 고친 금액 반영) --- */
+  const dlv = byName('납품처');
+  if (dlv && dv && dv.hasCur) {
+    const dXml = await zip.file(dlv.path).async('string');
+    const dr = parseRows(dXml);
+    const dc = parseCells(dXml);
+    const DT = (ref) => norm(cellText(dc[ref], sst));
+    // 본보기 서식: 채널별 상세행, 묶음행, 요약행, 총합계행
+    const styleRow = (rn) => { const r0 = dr.get(rn); const st = {}; if (r0) for (const [c, x] of r0.cells) st[c] = (x.match(/\ss="(\d+)"/) || [])[1]; return st; };
+    const tplRows = [...dr.keys()].filter((n) => n >= 5).sort((a, b) => a - b);
+    const roleRow = {};
+    for (const n of tplRows) {
+      const b = DT(`B${n}`);
+      if (!b) continue;
+      const isGroup = /^=?SUM\(|^SUM\(/.test(unesc(dc[`E${n}`]?.f || '')) && !/요약|합계/.test(b);
+      const k = /요약$/.test(b) ? `sum:${b}` : b === '총합계' ? 'total' : isGroup ? `group:${b}` : `row:${b}`;
+      if (!roleRow[k]) roleRow[k] = n;
+      if (/요약$/.test(b) && !roleRow.sumAny) roleRow.sumAny = n;
+      if (!/요약|합계/.test(b) && !isGroup && !roleRow.rowAny) roleRow.rowAny = n;
+      if (isGroup && !roleRow.groupAny) roleRow.groupAny = n;
+    }
+    const baseCh = (ch) => (String(ch).startsWith('간선') ? '간선' : ch);
+    const pickStyle = (r) => {
+      const n = r.kind === 'total' ? roleRow.total
+        : r.kind === 'sum' ? (roleRow[`sum:${r.ch}`] || roleRow[`sum:${baseCh(r.ch.replace(/ 요약$/, ''))} 요약`] || roleRow.sumAny)
+        : r.kind === 'group' ? (roleRow[`group:${r.ch}`] || roleRow.groupAny || roleRow[`row:${r.ch}`])
+        : (roleRow[`row:${r.ch}`] || roleRow[`row:${baseCh(r.ch)}`] || roleRow.rowAny);
+      return styleRow(n || 6);
+    };
+    // 검증에서 고친 금액(수기 수정·0 처리)을 당월에 반영: 한 행에 맞춰진 경우만
+    const delta = new Map();
+    for (const x of listRows) {
+      if (!x.key || x.agg === undefined || x.agg === null) continue;
+      const d = (x.amount || 0) - x.agg;
+      if (Math.abs(d) < 1) continue;
+      const m = chMap.get(x.key);
+      const tgt = m && (m.row || (m.combined && m.group.rows[0]));
+      if (tgt) delta.set(tgt.i, (delta.get(tgt.i) || 0) + d);
+      else if (m) report.warnings.push(`'납품처' 시트: ${x.place}/${x.carrier}의 수정 금액(${Math.round(d).toLocaleString()})을 넣을 행을 특정하지 못해 집계 값 그대로 두었습니다.`);
+    }
+    const chDelta = new Map(); let totDelta = 0;
+    for (const r of dv.rows) if (delta.has(r.i)) { chDelta.set(baseCh(r.ch), (chDelta.get(baseCh(r.ch)) || 0) + delta.get(r.i)); totDelta += delta.get(r.i); }
+    const out = new Map();
+    for (const n of [...dr.keys()].filter((k) => k < 5)) out.set(n, dr.get(n));
+    const pm = M === 1 ? 12 : M - 1;
+    const setHdr = (ref, text) => setCell(out, ref, textCell(ref, styleOf(dr, ref), text));
+    setHdr('E3', `${pm}월`); setHdr('H3', `${M}월`);
+    let n = 4;
+    const cols = 'ABCDEFGHIJKLM'.split('');
+    for (const r of dv.rows) {
+      n++;
+      const st = pickStyle(r);
+      const cells = new Map();
+      const put = (col, xml) => cells.set(colNum(col), xml);
+      const S = (col) => st[colNum(col)];
+      if (S('A')) put('A', blankCell(`A${n}`, S('A')));
+      put('B', r.ch ? textCell(`B${n}`, S('B'), r.ch) : blankCell(`B${n}`, S('B')));
+      put('C', r.clientRaw !== '' ? textCell(`C${n}`, S('C'), r.clientRaw) : blankCell(`C${n}`, S('C')));
+      put('D', r.placeRaw !== '' ? textCell(`D${n}`, S('D'), r.placeRaw) : blankCell(`D${n}`, S('D')));
+      const d = r.kind === 'total' ? totDelta : r.kind === 'sum' ? (chDelta.get(baseCh(r.ch.replace(/ 요약$/, ''))) || 0) : (delta.get(r.i) || 0);
+      const v = (x) => (x ? numCell : (ref, s2) => blankCell(ref, s2));
+      put('E', r.prev ? numCell(`E${n}`, S('E'), r.prev) : blankCell(`E${n}`, S('E')));
+      put('F', r.prevPlt ? numCell(`F${n}`, S('F'), r.prevPlt) : blankCell(`F${n}`, S('F')));
+      put('G', fCell(`G${n}`, S('G'), `IFERROR(E${n}/F${n},0)`));
+      put('H', (r.cur + d) ? numCell(`H${n}`, S('H'), r.cur + d) : blankCell(`H${n}`, S('H')));
+      put('I', r.curPlt ? numCell(`I${n}`, S('I'), r.curPlt) : blankCell(`I${n}`, S('I')));
+      put('J', fCell(`J${n}`, S('J'), `IFERROR(H${n}/I${n},0)`));
+      put('K', fCell(`K${n}`, S('K'), `H${n}-E${n}`));
+      put('L', fCell(`L${n}`, S('L'), `I${n}-F${n}`));
+      put('M', fCell(`M${n}`, S('M'), `J${n}-G${n}`));
+      void v; void cols;
+      const tplAttrs = dr.get(roleRow.rowAny)?.attrs || '';
+      const ht = (tplAttrs.match(/\s(ht="[^"]+"|customHeight="1")/g) || []).join('');
+      out.set(n, { attrs: ` r="${n}"${ht}`, cells });
+    }
+    let newD = dXml.replace(/<sheetData>[\s\S]*?<\/sheetData>/, buildSheetData(out))
+      .replace(/<dimension ref="[^"]*"\/>/, `<dimension ref="B3:M${n}"/>`)
+      .replace(/<conditionalFormatting[\s\S]*?<\/conditionalFormatting>/g, '')
+      .replace(/<sheetView\b([^>]*?)(\/?)>/, (m0, a, sl) => `<sheetView showGridLines="0"${a.replace(/\s(showGridLines|tabSelected)="[^"]*"/g, '')}${sl}>`);
+    // 머리글(3~4행) 병합만 남김
+    newD = newD.replace(/<mergeCells[^>]*>([\s\S]*?)<\/mergeCells>/, (m0, body) => {
+      const keep = [...body.matchAll(/<mergeCell ref="([A-Z]+)(\d+):([A-Z]+)(\d+)"\/>/g)].filter((mm) => +mm[4] <= 4).map((mm) => mm[0]);
+      return keep.length ? `<mergeCells count="${keep.length}">${keep.join('')}</mergeCells>` : '';
+    });
+    zip.file(dlv.path, newD);
+    report.deliverySheet = { rows: dv.rows.length, prev: pm, cur: M, adjusted: delta.size };
+    report.info.push(`'납품처' 시트를 ${pm}월 vs ${M}월 비교로 새로 만들었습니다 (${dv.rows.length}행${delta.size ? `, 검증에서 고친 금액 ${delta.size}곳 반영` : ''}).`);
+  } else if (dlv && !dv) {
+    report.warnings.push("집계파일 '납품처' 시트를 읽지 못해 검증파일 '납품처' 시트는 그대로 두었습니다.");
+  }
 
   /* --- 시트 추가/교체 --- */
   const ctPath = '[Content_Types].xml';
