@@ -560,6 +560,58 @@ export async function buildVerification({ XLSX, JSZip, aggBuf, ledgerBufs, prevB
     if (tc[ref] && !tc[ref].f && num(tc[ref].v) >= 2000 && num(tc[ref].v) !== Y) setNum(ref, Y);
   }
 
+  for (let c = colNum('Y'); c <= colNum('AE'); c++) {
+    const ref = `${colLet(c)}7`;
+    if (tc[ref] && !tc[ref].f && num(tc[ref].v) === prevM) setNum(ref, M);
+  }
+
+  /* --- 오른쪽 월별 표: 채널별 후행물류비(1월~당월 열)에 당월 열 추가, 채널별 선행물류비는 당월 열로 옮김 --- */
+  {
+    const mCol = (m) => colLet(colNum('Y') + m - 1);
+    const pc = mCol(prevM), cc = mCol(M);
+    const sortedRows = [...fr.keys()].sort((a, b) => a - b);
+    const titleRow = (txt) => sortedRows.find((n) => norm(T(`W${n}`)) === txt);
+    const leadTitle = titleRow('채널별 선행물류비');
+    const lagTitle = titleRow('채널별 후행물류비');
+    const lastRow = sortedRows[sortedRows.length - 1];
+    const tok = (f, from, to) => f.replace(new RegExp(`(^|[^A-Z$!])(\\$?)${from}(?=\\$?\\d)`, 'g'), (m0, p1, p2) => p1 + p2 + to);
+    // 후행: 머리글(1..지난달) 다음 칸에 당월 번호, 각 행은 지난달 열 수식을 복사(월 번호 칸만 당월로)
+    if (lagTitle && M !== 1) {
+      const hdr = sortedRows.find((n) => n > lagTitle && num(tc[`Y${n}`]?.v) === 1 && num(tc[`${pc}${n}`]?.v) === prevM);
+      if (hdr && !tc[`${cc}${hdr}`]?.v) {
+        setCell(fr, `${cc}${hdr}`, numCell(`${cc}${hdr}`, styleOf(fr, `${pc}${hdr}`), M));
+        const adj = [];
+        for (let n = hdr + 1; n < (leadTitle || lastRow + 1); n++) {
+          const c0 = tc[`${pc}${n}`];
+          if (!c0 || !c0.f) continue;
+          let f = unesc(c0.f).split(`${pc}$${hdr}`).join(`${cc}$${hdr}`);
+          const mAdj = f.match(/\)\/10\^6([+-][\d.]+)$/);
+          if (mAdj) { f = f.slice(0, -mAdj[1].length); adj.push(`${T(`W${n}`)} ${T(`X${n}`)}(지난달 ${mAdj[1]})`); }
+          setCell(fr, `${cc}${n}`, fCell(`${cc}${n}`, styleOf(fr, `${pc}${n}`), f));
+        }
+        report.info.push(`채널별 후행물류비 표에 ${M}월 열(${cc})을 추가했습니다.`);
+        if (adj.length) report.warnings.push(`채널별 후행물류비 ${M}월 열: 지난달 수식 끝에 손으로 더한 값이 있던 곳은 빼고 넣었습니다 — ${adj.join(', ')}. 이번 달 가산값이 있으면 ${cc}열에 직접 더해 주세요.`);
+      }
+    }
+    // 선행: 지난달 열의 수식들을 당월 열로 옮기고 지난달 열은 비움
+    if (leadTitle) {
+      let moved = 0;
+      for (let n = leadTitle + 1; n <= lastRow; n++) {
+        const row = fr.get(n); if (!row) continue;
+        const xml = row.cells.get(colNum(pc));
+        if (!xml || !/<f[\s>\/]/.test(xml)) continue;
+        const curStyle = styleOf(fr, `${cc}${n}`);
+        const nx = xml.replace(`r="${pc}${n}"`, `r="${cc}${n}"`)
+          .replace(/(<f\b[^>]*?ref=")([^"]+)(")/, (m0, a1, r1, a2) => a1 + r1.replace(new RegExp(`\\b${pc}(?=\\d)`, 'g'), cc) + a2)
+          .replace(/(<f\b[^>]*>)([\s\S]*?)(<\/f>)/, (m0, a1, body, a2) => a1 + tok(body, pc, cc) + a2);
+        row.cells.set(colNum(cc), nx);
+        row.cells.set(colNum(pc), blankCell(`${pc}${n}`, curStyle));
+        moved++;
+      }
+      if (moved) report.info.push(`채널별 선행물류비 표를 ${prevM}월 열(${pc})에서 ${M}월 열(${cc})로 옮겼습니다 (${moved}칸).`);
+    }
+  }
+
   /* --- 채널 구분(G열: 집계파일 납품처 시트 기준, J열: 요약표 분류) --- */
   const dv = readDeliverySheet(XLSX, agg.wb, M);
   const chMap = matchChannels(agg.cols, dv);
