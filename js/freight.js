@@ -64,6 +64,7 @@ export function readAggregate(XLSX, buf) {
 
 /* ---------------- 1-2. 집계파일 '납품처' 시트 (채널 구분의 기준) ---------------- */
 // 채널(새 구분) → 운반비 시트 J열(요약표 분류)
+const KNOWN_CH = ['경매', 'Hyper/SSM', '온라인', 'F/S', 'B2B', '기타'];
 export const channelGroup = (ch) => (ch === '간선_외부매입' ? '매입운반비' : String(ch).startsWith('간선') ? '간선' : ch);
 
 export function readDeliverySheet(XLSX, wb, month) {
@@ -127,7 +128,7 @@ export function matchChannels(cols, dv) {
     cands.sort((a, b) => score(b) - score(a));
     const best = cands[0];
     const sure = cands.length === 1 || score(best) > score(cands[1]) || cands.every((c) => c.ch === best.ch);
-    out.set(kOf(col), { ch: best.ch, sure, row: best.row || null, group: best.group || null });
+    out.set(kOf(col), { ch: best.ch, sure, row: best.row || null, group: best.group || null, aggCh: norm(col.channel) });
   }
   // 2차: 같은 회사의 남은 열 2~3개를 합친 금액이 한 행과 같으면 (예: GS 네트웍스 + GS 신미래 = GS리테일 피킹비)
   const used = new Set([...out.values()].map((m) => m.row && m.row.i));
@@ -141,7 +142,7 @@ export function matchChannels(cols, dv) {
       if (Math.abs(pool[x].total + pool[y].total - r.cur) <= 1) hit = [pool[x], pool[y]];
       for (let z = y + 1; z < pool.length && !hit; z++) if (pool[z].company === pool[x].company && Math.abs(pool[x].total + pool[y].total + pool[z].total - r.cur) <= 1) hit = [pool[x], pool[y], pool[z]];
     }
-    if (hit) for (const c of hit) { left.delete(c); out.set(kOf(c), { ch: r.ch, sure: true, row: null, group: { rows: [r] }, combined: true }); }
+    if (hit) for (const c of hit) { left.delete(c); out.set(kOf(c), { ch: r.ch, sure: true, row: null, group: { rows: [r] }, combined: true, aggCh: norm(c.channel) }); }
   }
   // 3차: 금액이 안 맞으면 이름으로 (운송사 = 납품처 칸, 지역명 겹침). 확실하지 않음 표시
   for (const c of rest.filter((q) => left.has(q))) {
@@ -151,7 +152,7 @@ export function matchChannels(cols, dv) {
       const sc = [...tokens(`${r.client} ${r.place}`)].filter((t) => [...mine].some((m) => m.includes(t) || t.includes(m))).length + (norm(r.place) === norm(c.carrier) ? 1 : 0);
       if (sc > bs) { bs = sc; best = r; }
     }
-    if (best && bs >= 2) out.set(kOf(c), { ch: best.ch, sure: false, row: null, byName: `${best.client} ${best.place}` });
+    if (best && bs >= 2) out.set(kOf(c), { ch: best.ch, sure: false, row: null, byName: `${best.client} ${best.place}`, aggCh: norm(c.channel) });
   }
   return out;
 }
@@ -628,8 +629,18 @@ export async function buildVerification({ XLSX, JSZip, aggBuf, ledgerBufs, prevB
       const newG = m.ch, newJ = channelGroup(m.ch);
       x.channel = newG; x.group = newJ;
       if (newG !== oldG) setCell(fr, `G${x.n}`, textCell(`G${x.n}`, styleOf(fr, `G${x.n}`) || styleOf(fr, `G${x.n - 1}`), newG));
-      if (newJ !== oldJ || tc[`J${x.n}`]?.f === undefined) setCell(fr, `J${x.n}`, textCell(`J${x.n}`, styleOf(fr, `J${x.n}`) || styleOf(fr, `J${x.n - 1}`), newJ));
-      if (newG !== oldG || newJ !== oldJ) report.channelChanges.push({ row: x.n, co: x.co, place: x.place, carrier: x.carrier, from: oldG + (oldJ !== oldG ? ` / ${oldJ}` : ''), to: newG + (newJ !== newG ? ` / ${newJ}` : ''), sure: m.sure });
+      x.jSet = newJ;
+      const aggDiff = m.aggCh && KNOWN_CH.includes(m.aggCh) && channelGroup(m.aggCh) !== newJ ? m.aggCh : '';
+      if (newG !== oldG || newJ !== oldJ) report.channelChanges.push({ row: x.n, co: x.co, place: x.place, carrier: x.carrier, from: oldG + (oldJ !== oldG ? ` / ${oldJ}` : ''), to: newG + (newJ !== newG ? ` / ${newJ}` : ''), sure: m.sure, aggCh: aggDiff });
+    }
+    // J열 표기 통일: 분류가 G와 같으면 =G수식(원래 양식), 다르면(간선_*, 간선_외부매입) 분류 글자
+    for (const x of listRows) {
+      if (x.blank || !x.carrier || x.carrier === '합계') continue;
+      const g = x.channel || norm(T(`G${x.n}`));
+      if (!g) continue;
+      const j = x.jSet || channelGroup(g);
+      const jr = `J${x.n}`, js = styleOf(fr, jr) || styleOf(fr, `J${x.n - 1}`);
+      setCell(fr, jr, j === g ? fCell(jr, js, `G${x.n}`) : textCell(jr, js, j));
     }
     const byName = [...chMap.entries()].filter(([, m]) => m.byName);
     if (byName.length) report.warnings.push(`납품처 시트 금액과 맞지 않아 이름으로 채널을 정한 곳(확인 필요): ${byName.map(([k, m]) => `${k.split('|').slice(1).join(' · ')} → ${m.ch} (${m.byName})`).join(', ')}`);
