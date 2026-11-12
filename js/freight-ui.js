@@ -13,7 +13,7 @@ const idb = () => new Promise((res, rej) => { const r = indexedDB.open(DB, 1); r
 const idbPut = async (k, v) => { const d = await idb(); return new Promise((res, rej) => { const t = d.transaction(ST, 'readwrite'); t.objectStore(ST).put(v, k); t.oncomplete = res; t.onerror = () => rej(t.error); }); };
 const idbGet = async (k) => { const d = await idb(); return new Promise((res, rej) => { const q = d.transaction(ST).objectStore(ST).get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); };
 
-const state = { agg: null, ledgers: [], prev: null, lastOut: null, mapping: {} };
+const state = { agg: null, ledgers: [], prev: null, lastOut: null, mapping: {}, overrides: {} };
 
 function fileLabel(f) { return `${esc(f.name)} <span class="muted">(${Math.round(f.size / 1024).toLocaleString()}KB)</span>`; }
 function render() {
@@ -46,6 +46,7 @@ async function run() {
       ledgerBufs: await Promise.all(state.ledgers.map(async (f) => ({ name: f.name, buf: await buf(f) }))),
       prevBuf: await buf(state.prev),
       extraMapping,
+      overrides: state.overrides,
     });
     state.lastOut = out;
     showResult(out);
@@ -96,6 +97,18 @@ function showResult(out) {
       <datalist id="frPayees">${[...new Set(r.recon.map((x) => x.payee).filter((p) => p && !p.startsWith('(')))].map((p) => `<option value="${esc(p)}">`).join('')}</datalist>
       <div class="row-end"><button class="btn primary" id="frRemap">매핑 넣고 다시 만들기</button></div></div>`);
   }
+  // 납품처별 금액 (지난달 대비 크게 바뀐 곳 ⚠, 집계파일 오류는 여기서 수기 수정)
+  const big = (p) => p.prev !== null && p.prev !== undefined && Math.abs(p.amount - p.prev) >= 500000 && (p.prev === 0 || Math.abs(p.amount - p.prev) / Math.abs(p.prev) >= 0.3);
+  const flagged = r.places.filter(big).length;
+  html.push(`<details class="card fr-places" ${flagged || r.places.some((p) => p.overridden) ? 'open' : ''}>
+    <summary><b>납품처별 금액</b> <span class="muted sm">${r.places.length}곳 · 지난달 대비 30%·50만 원 이상 변동 ⚠ ${flagged}곳</span></summary>
+    <p class="muted sm">집계파일에 오류가 있으면 <b>이번 달</b> 칸을 고친 뒤 <b>수정값 반영해서 다시 만들기</b>를 누르세요. (엑소푸레쉬 등 0 처리 규칙 대상은 자동 0원)</p>
+    <table class="fr-table"><tr><th>행</th><th>회사</th><th>납품처 · 운송사</th><th class="r">지난달</th><th class="r">집계파일</th><th class="r">이번 달 (수정 가능)</th></tr>
+    ${r.places.map((p) => `<tr class="${big(p) ? 'flag' : ''}"><td class="muted">${p.row}</td><td>${esc(p.co)}</td><td>${big(p) ? '⚠ ' : ''}${esc(p.place)} · <span class="muted">${esc(p.carrier)}</span>${p.zeroed ? ' <span class="tag gray">0 처리 규칙</span>' : ''}${p.overridden ? ' <span class="tag">수기 수정</span>' : ''}</td>
+      <td class="r muted">${p.prev === null || p.prev === undefined ? '신규' : won(p.prev)}</td><td class="r">${p.agg === null || p.agg === undefined ? '-' : won(p.agg)}</td>
+      <td class="r"><input class="fr-ov" inputmode="numeric" data-key="${esc(p.key)}" value="${won(p.amount)}" data-orig="${Math.round(p.amount)}" /></td></tr>`).join('')}
+    </table>
+    <div class="row-end"><button class="btn" id="frOvReset">수기 수정 모두 취소</button><button class="btn primary" id="frOvApply">수정값 반영해서 다시 만들기</button></div></details>`);
   html.push(`<div class="card"><h2>회사별 운영 집계 vs 전표</h2>
     <table class="fr-table"><tr><th>회사</th><th class="r">운영 집계</th><th class="r">전표(선행)</th><th class="r">차이</th></tr>
     ${r.companies.map((c) => `<tr><td>${esc(c.co)}</td><td class="r">${won(c.ops)}</td><td class="r">${won(c.ledger)}</td><td class="r">${sign(c.diff)}</td></tr>`).join('')}</table></div>`);
@@ -113,6 +126,15 @@ function showResult(out) {
     ${r.ledgerFiles.map((f) => `<tr><td>${esc(f.name)}</td><td class="sm">${esc((f.sites || []).join(', ') || f.error || '')}</td><td class="r">${f.taken ?? '-'}</td><td class="r">${f.credit ?? '-'}</td><td class="r">${f.deduct ?? '-'}</td></tr>`).join('')}</table></div>`);
   $('#frResult').innerHTML = html.join('');
   $('#frDown').onclick = () => download(out);
+  $('#frOvApply').onclick = () => {
+    document.querySelectorAll('.fr-ov').forEach((i) => {
+      const v = Number(String(i.value).replace(/[^\d.-]/g, ''));
+      if (String(i.value).trim() === '' || isNaN(v)) return;
+      if (Math.round(v) !== +i.dataset.orig) state.overrides[i.dataset.key] = v;
+    });
+    run();
+  };
+  $('#frOvReset').onclick = () => { state.overrides = {}; run(); };
   $('#frRemap')?.addEventListener('click', () => {
     document.querySelectorAll('.fr-map').forEach((i) => { state.mapping[i.dataset.vendor] = { payee: i.value.trim(), co: i.dataset.co, lead: i.dataset.lead }; });
     run();

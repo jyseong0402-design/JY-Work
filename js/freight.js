@@ -12,6 +12,8 @@
 
 export const FREIGHT_CODES = ['1510424001', '1510424002', '1510424003']; // 운반보관비-선행/후행/기타
 export const SALES_DEDUCT = ['오아시스']; // 매출차감 거래처: 차변 음수 행은 0 처리
+// 운반비 검증에서 0으로 두는 납품처(후행물류비 등). 현황 시트에는 집계 값 그대로, 운반비N월 H열만 0
+export const ZERO_PLACES = ['엑소푸레쉬'];
 // 집계파일 현황 2행(회사) → 검증파일 운반비 시트 C열(사업장) 이름
 export const COMPANY_ALIAS = { 닥터애그: '대흥', '닥터애그_중부': '중부이천팜' };
 
@@ -201,7 +203,7 @@ const styleOf = (rows, ref) => {
 };
 
 /* ---------------- 4. 검증파일 만들기 ---------------- */
-export async function buildVerification({ XLSX, JSZip, aggBuf, ledgerBufs, prevBuf, extraMapping = [] }) {
+export async function buildVerification({ XLSX, JSZip, aggBuf, ledgerBufs, prevBuf, extraMapping = [], overrides = {} }) {
   const report = { warnings: [], info: [] };
   const agg = readAggregate(XLSX, aggBuf);
   const { year: Y, month: M } = agg;
@@ -363,10 +365,18 @@ export async function buildVerification({ XLSX, JSZip, aggBuf, ledgerBufs, prevB
     if (!co && !place && !carrier) { listRows.push({ n, blank: true, co: curCo }); continue; }
     if (co && co !== curCo) { curCo = co; curPlace = ''; }
     if (place) curPlace = place;
-    listRows.push({ n, co: curCo, place: curPlace, carrier, payee: norm(T(`I${n}`)), channel: norm(T(`G${n}`)), hasFormula: !!tc[`H${n}`]?.f });
+    listRows.push({ n, co: curCo, place: curPlace, carrier, payee: norm(T(`I${n}`)), channel: norm(T(`G${n}`)), hasFormula: !!tc[`H${n}`]?.f, prev: tc[`H${n}`]?.f ? null : num(tc[`H${n}`]?.v) });
   }
-  const carrierToPayee = new Map(listRows.filter((x) => x.carrier && x.payee).map((x) => [x.carrier, x.payee]));
   const key = (co, place, carrier) => `${norm(co)}|${norm(place)}|${norm(carrier)}`;
+  // 납품처 금액: 사용자가 고친 값 > 0 처리 규칙 > 집계 Total
+  const keyOfAgg = (a) => key(a.sajang, a.place, a.carrier);
+  const amt = (a) => {
+    const k = keyOfAgg(a);
+    if (overrides[k] !== undefined && overrides[k] !== null && overrides[k] !== '') return num(overrides[k]);
+    if (ZERO_PLACES.some((z) => a.place.includes(z) || a.carrier.includes(z))) return 0;
+    return a.total;
+  };
+  const carrierToPayee = new Map(listRows.filter((x) => x.carrier && x.payee).map((x) => [x.carrier, x.payee]));
   const aggMap = new Map(agg.cols.map((c) => [key(c.sajang, c.place, c.carrier), c]));
   const used = new Set();
   const changes = [];
@@ -378,8 +388,8 @@ export async function buildVerification({ XLSX, JSZip, aggBuf, ledgerBufs, prevB
     const s = styleOf(fr, ref);
     if (a) {
       used.add(k);
-      setCell(fr, ref, numCell(ref, s, a.total));
-      x.amount = a.total;
+      x.amount = amt(a); x.agg = a.total; x.key = keyOfAgg(a);
+      setCell(fr, ref, numCell(ref, s, x.amount));
     } else {
       setCell(fr, ref, numCell(ref, s, 0));
       x.amount = 0;
@@ -400,9 +410,9 @@ export async function buildVerification({ XLSX, JSZip, aggBuf, ledgerBufs, prevB
     const payee = carrierToPayee.get(a.carrier) || m.payee || a.carrier;
     setCell(fr, `F${m.n}`, textCell(`F${m.n}`, styleOf(fr, `F${m.n}`), a.carrier));
     setCell(fr, `I${m.n}`, textCell(`I${m.n}`, styleOf(fr, `I${m.n}`), payee));
-    setCell(fr, `H${m.n}`, numCell(`H${m.n}`, styleOf(fr, `H${m.n}`), a.total));
+    setCell(fr, `H${m.n}`, numCell(`H${m.n}`, styleOf(fr, `H${m.n}`), amt(a)));
     changes.push({ type: 'change', text: `${a.sajang} · ${a.place}: 운송사 ${m.carrier} → ${a.carrier} (${m.n}행, 지급처 '${payee}')` });
-    Object.assign(m, { carrier: a.carrier, payee, amount: a.total });
+    Object.assign(m, { carrier: a.carrier, payee, amount: amt(a), agg: a.total, key: keyOfAgg(a) });
   }
   const unplaced2 = [];
   for (const a of unplaced) {
@@ -410,9 +420,9 @@ export async function buildVerification({ XLSX, JSZip, aggBuf, ledgerBufs, prevB
     if (!m) { unplaced2.push(a); continue; }
     m.reused = true;
     setCell(fr, `E${m.n}`, textCell(`E${m.n}`, styleOf(fr, `E${m.n}`), a.placeRaw || a.place));
-    setCell(fr, `H${m.n}`, numCell(`H${m.n}`, styleOf(fr, `H${m.n}`), a.total));
+    setCell(fr, `H${m.n}`, numCell(`H${m.n}`, styleOf(fr, `H${m.n}`), amt(a)));
     changes.push({ type: 'change', text: `${a.sajang}: 납품처 ${m.place} → ${a.place} (${m.n}행, 운송사 ${a.carrier})` });
-    Object.assign(m, { place: a.place, amount: a.total });
+    Object.assign(m, { place: a.place, amount: amt(a), agg: a.total, key: keyOfAgg(a) });
   }
   for (const a of unplaced2) {
     const coRows = listRows.filter((x) => x.co === a.sajang && !x.blank);
@@ -427,16 +437,26 @@ export async function buildVerification({ XLSX, JSZip, aggBuf, ledgerBufs, prevB
     setCell(fr, `E${n}`, textCell(`E${n}`, st('E'), a.placeRaw || a.place));
     setCell(fr, `F${n}`, textCell(`F${n}`, st('F'), a.carrier));
     setCell(fr, `G${n}`, textCell(`G${n}`, st('G'), a.channel));
-    setCell(fr, `H${n}`, numCell(`H${n}`, st('H'), a.total));
+    setCell(fr, `H${n}`, numCell(`H${n}`, st('H'), amt(a)));
     setCell(fr, `I${n}`, textCell(`I${n}`, st('I'), payee));
     setCell(fr, `J${n}`, fCell(`J${n}`, st('J'), `G${n}`));
-    listRows.push({ n, co: a.sajang, place: a.place, carrier: a.carrier, payee, amount: a.total });
+    listRows.push({ n, co: a.sajang, place: a.place, carrier: a.carrier, payee, amount: amt(a), agg: a.total, key: keyOfAgg(a), prev: null });
     changes.push({ type: 'new', text: `${a.sajang} · ${a.place} · ${a.carrier} ${Math.round(a.total).toLocaleString()}원 → ${n}행에 새로 추가 (지급처 '${payee}' 확인 필요)` });
   }
   for (const m of listRows.filter((x) => x.missing && !x.reused)) {
     changes.push({ type: 'missing', text: `${m.co} · ${m.place} · ${m.carrier}: 이번 집계파일에 없어 0원 처리 (${m.n}행)` });
   }
   report.listChanges = changes;
+  report.places = listRows.filter((x) => !x.blank && x.carrier && x.carrier !== '합계' && !x.hasFormula).map((x) => ({
+    row: x.n, co: x.co, place: x.place, carrier: x.carrier, key: x.key || key(x.co, x.place, x.carrier),
+    amount: x.amount || 0, agg: x.agg ?? null, prev: x.prev ?? null,
+    zeroed: x.agg !== undefined && x.agg !== null && (x.amount || 0) === 0 && x.agg !== 0 && overrides[x.key] === undefined,
+    overridden: x.key !== undefined && overrides[x.key] !== undefined && overrides[x.key] !== '',
+  }));
+  for (const p of report.places) {
+    if (p.overridden) report.info.push(`수기 수정: ${p.co} · ${p.place} · ${p.carrier} ${Math.round(p.agg ?? 0).toLocaleString()} → ${Math.round(p.amount).toLocaleString()}원 (${p.row}행)`);
+    if (p.zeroed) report.info.push(`0 처리(규칙): ${p.co} · ${p.place} · ${p.carrier} 집계 ${Math.round(p.agg).toLocaleString()}원 → 0원 (${p.row}행)`);
+  }
   // 월·연도 셀
   const setNum = (ref, v) => setCell(fr, ref, numCell(ref, styleOf(fr, ref), v));
   setNum('B1', M);
@@ -479,7 +499,16 @@ export async function buildVerification({ XLSX, JSZip, aggBuf, ledgerBufs, prevB
     vendors.forEach((v, i) => {
       const payee = vendorToPayee.get(v) ?? '(매핑 없음)';
       const S = monthLed.filter((e) => e.co === co && e.lead === lead && e.m1 === v && e.payee === payee).reduce((s, e) => s + e.dr, 0);
-      const R = opsBy(co, payee);
+      let R = opsBy(co, payee);
+      // 운영 금액(R)을 특정 셀로 직접 지정한 수식(예: R10 = H25)이 있으면 엑셀과 같게 계산하고, 거래처가 바뀌었으면 알림
+      const rf = tc[`R${sp.row + i}`]?.f;
+      const direct = rf && unesc(rf).match(/^\$?H\$?(\d+)$/);
+      if (direct) {
+        const target = listRows.find((x) => x.n === +direct[1]);
+        R = target?.amount || 0;
+        const prevVendor = norm(T(`P${sp.row + i}`));
+        if (prevVendor !== v) report.warnings.push(`운반비${M}월 R${sp.row + i}은 H${direct[1]}(${target ? `${target.place}/${target.carrier}` : '빈 행'})를 직접 가리키는 수식인데, 이번 달 ${sp.row + i}행 거래처가 '${prevVendor}' → '${v}'로 바뀌었습니다. 엑셀에서 R${sp.row + i} 수식을 확인하세요.`);
+      }
       const lines = monthLed.filter((e) => e.co === co && e.m1 === v).sort((a, b) => Math.abs(b.dr) - Math.abs(a.dr));
       recon.push({ co, lead, row: sp.row + i, vendor: v, payee, ops: R, ledger: S, diff: R - S, prevNote: prevNotes.get(v) || '', lines: lines.slice(0, 4).map((e) => ({ amount: e.dr, memo: e.memo })) });
     });
@@ -649,5 +678,5 @@ export async function buildVerification({ XLSX, JSZip, aggBuf, ledgerBufs, prevB
   report.ledgerTotal = newLedger.reduce((s, e) => s + e.dr, 0);
   report.opsTotal = listRows.reduce((s, x) => s + (x.amount || 0), 0);
   const data = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
-  return { data, report, fileName: `운반비_검증_${String(Y).slice(2)}${String(M).padStart(2, '0')}.xlsx` };
+  return { data, report, fileName: `Freight_Check_${String(Y).slice(2)}${String(M).padStart(2, "0")}.xlsx` };
 }

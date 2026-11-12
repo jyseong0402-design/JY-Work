@@ -677,3 +677,7 @@ form.focus #focusToggle { background: rgba(255, 255, 255, .12); }
 .plus { color: var(--danger); } .minus { color: var(--primary); } .ok { color: var(--ok); }
 .err-card { border-color: var(--danger); }
 @media (max-width: 900px) { .fr-drops { grid-template-columns: 1fr; } .fr-table { font-size: 13px; } }
+.fr-places summary { cursor: pointer; padding: 2px 0; }
+.fr-places table { margin-top: 10px; }
+.fr-table tr.flag td { background: rgba(217, 138, 0, .08); }
+.fr-ov { width: 140px; text-align: right; padding: 4px 8px; min-height: 34px; font-variant-numeric: tabular-nums; }
