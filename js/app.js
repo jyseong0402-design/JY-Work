@@ -4,6 +4,7 @@ import { aiSummarize, aiAnswer, aiTranscribe, aiEnabled } from './ai.js';
 import { InkPad, renderInkPreview } from './ink.js';
 import { icon } from './icons.js';
 import { initFreight } from './freight-ui.js';
+import { initClosing } from './closing-ui.js';
 import { inkdb } from './inkdb.js';
 import { sync, loadInk, saveInk, flushInk, parseConfig, getConfig } from './sync.js';
 import { exportExcel, importExcel } from './excel.js';
@@ -1094,6 +1095,7 @@ setInterval(checkUpdate, 30 * 60 * 1000);
 setTimeout(checkUpdate, 5000);
 
 initFreight();
+initClosing();
 
 /* ---------- 시작 ---------- */
 function renderAll() {

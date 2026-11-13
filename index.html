@@ -22,6 +22,7 @@
       <button data-view="tasks"><span class="ic">✅</span><span>할일</span></button>
       <button data-view="search"><span class="ic">🔎</span><span>조회</span></button>
       <button data-view="freight"><span class="ic">🚚</span><span>운반비 검증</span></button>
+      <button data-view="closing"><span class="ic">📊</span><span>월마감 자동화</span></button>
       <button data-view="settings"><span class="ic">⚙️</span><span>설정</span></button>
       <button type="button" class="nav-ver" id="appVer" title="업데이트 내역 보기"></button>
     </nav>
@@ -201,6 +202,39 @@
           </ul>
         </details>
         <div id="frResult"></div>
+      </section>
+
+      <section id="view-closing" class="view">
+        <header class="vh">
+          <div>
+            <h1>📊 월마감 자동화</h1>
+            <p class="muted sm">지난달 보고서와 ERP RD를 넣으면, 같은 양식에 이번 달을 붙인 파일이 만들어집니다. 파일은 이 기기 안에서만 처리됩니다.</p>
+          </div>
+        </header>
+        <div class="fr-drops">
+          <div class="fr-drop" id="clPrev" tabindex="0">
+            <b>① 지난달 보고서</b><small>채권채무 · 선급금 · 내부거래 집계 · 포장소모품비 (종류는 자동 인식)</small>
+            <div class="fr-name" id="clPrevName"></div>
+            <input type="file" id="clPrevIn" accept=".xlsx,.xlsm" multiple hidden />
+          </div>
+          <div class="fr-drop" id="clRd" tabindex="0">
+            <b>② ERP RD</b><small>거래처원장 · 계정별원장 · 기간별입고현황 — 전체계정 파일 그대로</small>
+            <div class="fr-name" id="clRdName"></div>
+            <input type="file" id="clRdIn" accept=".xlsx,.xls" multiple hidden />
+          </div>
+        </div>
+        <div class="row-end"><span id="clSaved"></span><button class="btn primary" id="clRun" disabled>보고서 만들기</button></div>
+        <details class="card fr-rules">
+          <summary>무엇을 만드나요?</summary>
+          <ul class="sm">
+            <li><b>채권·채무</b>: 거래처원장에서 외상매출금(11110401)·외상매입금(12100101)을 골라 'YY년MM월매출채권/매입채무' 시트를 만들고, 매출비교·매입비교에 이번 달 열을 추가 (차액 열은 이번 달 기준으로 옮김). 목록에 없는 거래처는 끝에 '신규'로 추가</li>
+            <li><b>선급금</b>: 거래처원장에서 선급금(11110800)을 골라 'YY년MM월선급금' 시트 + 선급금증감 이번 달 열</li>
+            <li><b>내부거래 집계</b>: 계정별원장에서 비용·수익 시트에 쓰던 계정 중 상대가 계열사(대흥·송이애·군자·중부/이천팜·SPC)인 행만 붙임. D열(내용)·상대회사는 지난 기록에서 같은 거래를 찾아 채우고, 처음 보는 거래는 적요로 판단해 알려줌. '내부거래 집계'에 이번 달 묶음 추가</li>
+            <li><b>포장소모품비</b>: 기간별입고현황 → 수불o, 계정별원장의 포장 계정(Mapping P열) → 수불x에 붙이고, 회사별 시트에 이번 달 3칸 + 월별 요약 열 추가</li>
+            <li>RD의 날짜로 이번 달을 정하고, 같은 달을 다시 만들면 그 달 행을 새로 바꿈</li>
+          </ul>
+        </details>
+        <div id="clResult"></div>
       </section>
 
       <section id="view-settings" class="view">
