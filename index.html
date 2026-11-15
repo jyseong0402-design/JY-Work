@@ -168,7 +168,7 @@
         <header class="vh bd-head">
           <div>
             <h1>📋 월마감 현황</h1>
-            <p class="muted sm">내가 만들 파일과 필요한 파일·생산자를 관리하고, 이번 달에 받은 파일과 완성한 파일을 체크합니다. 번호는 이 사이트의 순서(⠿ 끌어서 변경)입니다.</p>
+            <p class="muted sm">내가 만들 파일과 필요한 파일·생산자를 관리하고, 이번 달에 받은 파일과 완성한 파일을 체크합니다. 번호는 이 사이트의 순서(⠿ 끌어서 변경)이고, 자동화된 업무는 📊 파일 생성으로 바로 만들 수 있습니다.</p>
           </div>
           <div class="bd-tools">
             <div class="bd-monthnav"><button class="btn sm" id="bdPrev">◀</button><b id="bdMonth"></b><button class="btn sm" id="bdNext">▶</button></div>
@@ -177,12 +177,12 @@
         </header>
         <div class="card bd-stats" id="bdStats"></div>
         <div id="bdList"></div>
-        <details class="card bd-sheet" id="bdSheetBox">
-          <summary>↻ 구글시트에서 가져오기</summary>
-          <p class="muted sm">업무 일정표 주소를 붙여 넣고 가져오면 업무·필요파일·파일 생산자를 채웁니다. 이미 있는 업무는 지우거나 바꾸지 않고 빠진 내용만 더합니다. (시트 공유: 링크가 있는 모든 사용자 – 뷰어)</p>
-          <div class="bd-sheet-row"><input id="bdSheetUrl" placeholder="https://docs.google.com/spreadsheets/d/…/edit#gid=…" /><button class="btn" id="bdImport">가져오기</button></div>
-          <p class="sm" id="bdImportMsg"></p>
-        </details>
+        <div class="bd-foot">
+          <button class="btn sm" id="bdLoad">📥 목록 파일 불러오기</button>
+          <button class="btn sm" id="bdSave">💾 목록 파일로 저장</button>
+          <input type="file" id="bdLoadIn" accept=".json,application/json" hidden />
+          <span class="muted sm" id="bdLoadMsg">목록 파일은 이 기기에서만 읽고, 내용은 내 계정에만 저장됩니다.</span>
+        </div>
       </section>
 
       <section id="view-auto" class="view">
@@ -469,6 +469,18 @@
   </dialog>
 
   <!-- 업데이트 알림 -->
+  <dialog id="dlgMake" class="dlg-make">
+    <div class="mk-head">
+      <div><h2 id="mkTitle">📊 파일 생성</h2><p class="muted sm" id="mkSub"></p></div>
+      <button type="button" class="bd-ib mk-x" id="mkClose" title="닫기">✕</button>
+    </div>
+    <div id="mkBody"></div>
+    <div class="mk-done" id="mkDone" hidden>
+      <span id="mkDoneMsg"></span>
+      <button type="button" class="btn primary" id="mkMarkDone">✔ 이 업무 완료로 표시</button>
+    </div>
+  </dialog>
+
   <dialog id="dlgUpdate">
     <div id="updateBody"></div>
     <div class="row-end"><button class="btn primary" data-close>확인</button></div>

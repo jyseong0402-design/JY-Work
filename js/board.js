@@ -1,6 +1,6 @@
 // ✅ 월마감 현황: 내가 만들 파일(업무) · 필요파일 · 파일 생산자 목록 + 월별 '받음'·'완료' 체크
 // 업무 1개 = store 'closing' 항목 1개 { id, order, name, file, timing, auto, needs:[{id,name,producer}], marks:{'YYYY-MM':{done, recv:{needId:date}}} }
-import { store, settings, uid, todayStr } from './store.js';
+import { store, uid, todayStr } from './store.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -35,7 +35,7 @@ function taskView(t, i) {
       <span class="bd-timing">${esc(t.timing || '')}</span>
       <span class="bd-need-sum">${needs.length ? `필요파일 <b>${got}/${needs.length}</b>` : ''}</span>
       <span class="bd-acts">
-        ${t.auto ? `<button class="btn sm primary" data-auto="${t.auto}" title="백업자료 생성으로 이동">📊 바로 만들기</button>` : ''}
+        ${t.auto ? `<button class="btn sm primary" data-make="${t.id}" title="이 업무의 파일 만들기">📊 파일 생성</button>` : ''}
         <label class="bd-done ${mk.done ? 'on' : ''}"><input type="checkbox" data-done="${t.id}" ${mk.done ? 'checked' : ''}/> ${mk.done ? `완료 ${md(mk.done)}` : '완료'}</label>
         <button class="bd-ib" data-edit="${t.id}" title="편집">✎</button>
         <button class="bd-ib" data-del="${t.id}" title="삭제">🗑</button>
@@ -95,9 +95,7 @@ export function renderBoard() {
     <div class="bd-prog"><i style="width:${items.length ? Math.round((done / items.length) * 100) : 0}%"></i></div>`;
   const rows = items.map((t, i) => (ui.editing === t.id ? editView(ui.draft, i) : taskView(t, i)));
   if (ui.editing === 'new') rows.push(editView(ui.draft, items.length));
-  $('#bdList').innerHTML = rows.join('') || `<div class="empty">아직 업무가 없습니다. <b>＋ 업무 추가</b>로 만들거나, <b>구글시트에서 가져오기</b>로 한 번에 채우세요.</div>`;
-  const url = settings.get().closingSheet || '';
-  $('#bdSheetUrl').value = url;
+  $('#bdList').innerHTML = rows.join('') || `<div class="empty">아직 업무가 없습니다. 아래 <b>📥 목록 파일 불러오기</b>로 받은 목록을 넣거나, <b>＋ 업무 추가</b>로 직접 만드세요.</div>`;
 }
 const render = renderBoard;
 
@@ -121,83 +119,74 @@ function save() {
   render();
 }
 
-/* ---------- 구글시트에서 가져오기 (공유: 링크가 있는 모든 사용자) ---------- */
-function sheetIds(url) {
-  const id = (url.match(/\/d\/([a-zA-Z0-9_-]+)/) || [])[1];
-  const gid = (url.match(/[#&?]gid=(\d+)/) || [])[1] || '0';
-  return id ? { id, gid } : null;
+/* ---------- 목록 파일(JSON) 불러오기·저장: 이름 등은 공개 코드에 넣지 않고 내 계정에만 ---------- */
+const FILE_TAG = 'jywork-closing-list';
+function exportList() {
+  const tasks = list().map((t) => ({ name: t.name, file: t.file || '', timing: t.timing || '', auto: t.auto || '', needs: (t.needs || []).map((n) => ({ name: n.name, producer: n.producer || '' })) }));
+  const blob = new Blob([JSON.stringify({ app: FILE_TAG, version: 1, tasks }, null, 1)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `closing-list-${todayStr()}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 }
-function fetchSheet(url) {
-  const ids = sheetIds(url);
-  if (!ids) return Promise.reject(new Error('구글 스프레드시트 주소가 아닙니다.'));
-  return new Promise((res, rej) => {
-    const cb = `__bdSheet${Date.now()}`;
-    const s = document.createElement('script');
-    const done = () => { delete window[cb]; s.remove(); };
-    window[cb] = (r) => { done(); if (r.status === 'error') rej(new Error('시트를 읽지 못했습니다. 공유가 "링크가 있는 모든 사용자"인지 확인하세요.')); else res(r.table); };
-    s.onerror = () => { done(); rej(new Error('시트를 읽지 못했습니다. 공유 설정과 인터넷 연결을 확인하세요.')); };
-    s.src = `https://docs.google.com/spreadsheets/d/${ids.id}/gviz/tq?gid=${ids.gid}&headers=0&tqx=out:json;responseHandler:${cb}`;
-    document.head.appendChild(s);
-    setTimeout(() => { if (window[cb]) { done(); rej(new Error('시간 초과: 시트 공유 설정을 확인하세요.')); } }, 15000);
-  });
-}
-// 시트 양식: B=업무, C=필요파일(ㄴ…), D=파일명, E=업무시기/파일생산자
-export function parseSheetRows(rows) {
-  const tasks = [];
-  let cur = null;
-  const txt = (v) => String(v ?? '').replace(/\s+/g, ' ').trim();
-  for (const r of rows) {
-    const c = (i) => txt(r[i]);
-    const b = c(1), cc = c(2), d = c(3), e = c(4);
-    if (b === '업무' || cc === '필요파일' || /파일$/.test(cc) && d === '파일명') continue;
-    if (b) {
-      cur = { name: b, file: d, timing: e, needs: [] };
-      tasks.push(cur);
-      continue;
-    }
-    if (!cur) continue;
-    const label = cc.replace(/^ㄴ\s*/, '');
-    if (!label && !d) continue;
-    cur.needs.push({ name: label ? (d && d !== label ? `${label} (${d})` : label) : d, producer: e });
-  }
-  return tasks;
-}
-const guessAuto = (name) => (/운반비/.test(name) ? 'freight' : /내부거래/.test(name) ? 'internal' : /포장소모품비/.test(name) ? 'packing' : /^AR\/AP$/.test(name) ? 'arap' : '');
-
-async function importSheet() {
-  const url = $('#bdSheetUrl').value.trim();
-  if (!url) { alert('구글 스프레드시트 주소를 붙여 넣어 주세요.'); return; }
-  settings.set({ closingSheet: url });
-  const btn = $('#bdImport');
-  btn.disabled = true; btn.textContent = '읽는 중…';
-  try {
-    const table = await fetchSheet(url);
-    const rows = table.rows.map((row) => (row.c || []).map((x) => (x ? (x.f ?? x.v) : '')));
-    const tasks = parseSheetRows(rows);
-    if (!tasks.length) throw new Error('업무 줄을 찾지 못했습니다. 시트 양식(B열 업무, C열 필요파일)을 확인하세요.');
-    const have = list();
-    let added = 0, updated = 0;
-    let order = (have.at(-1)?.order ?? 0);
-    for (const t of tasks) {
-      const ex = have.find((x) => x.name === t.name);
-      if (ex) {
-        const names = new Set((ex.needs || []).map((n) => n.name));
-        const more = t.needs.filter((n) => !names.has(n.name)).map((n) => ({ id: uid(), ...n }));
-        if (more.length || (!ex.file && t.file) || (!ex.timing && t.timing)) {
-          store.upsert('closing', { id: ex.id, file: ex.file || t.file, timing: ex.timing || t.timing, needs: [...(ex.needs || []), ...more] });
-          updated++;
-        }
-      } else {
-        store.upsert('closing', { ...t, needs: t.needs.map((n) => ({ id: uid(), ...n })), auto: guessAuto(t.name), order: ++order, marks: {} });
-        added++;
+async function importList(file) {
+  let j;
+  try { j = JSON.parse(await file.text()); } catch { throw new Error('목록 파일을 읽지 못했습니다 (JSON 형식이 아님).'); }
+  if (!j || j.app !== FILE_TAG || !Array.isArray(j.tasks)) throw new Error('월마감 목록 파일이 아닙니다.');
+  const have = list();
+  let added = 0, updated = 0;
+  let order = have.at(-1)?.order ?? 0;
+  for (const t of j.tasks) {
+    if (!t || !t.name) continue;
+    const needs = (t.needs || []).filter((n) => n && (n.name || n.producer));
+    const ex = have.find((x) => x.name === t.name);
+    if (ex) {
+      const cur = (ex.needs || []).map((n) => ({ ...n }));
+      let ch = false;
+      for (const n of needs) {
+        const m = cur.find((x) => x.name === n.name);
+        if (!m) { cur.push({ id: uid(), name: n.name || '', producer: n.producer || '' }); ch = true; }
+        else if (!m.producer && n.producer) { m.producer = n.producer; ch = true; }
       }
+      const patch = { id: ex.id };
+      if (ch) patch.needs = cur;
+      if (!ex.file && t.file) patch.file = t.file;
+      if (!ex.timing && t.timing) patch.timing = t.timing;
+      if (!ex.auto && t.auto) patch.auto = t.auto;
+      if (Object.keys(patch).length > 1) { store.upsert('closing', patch); updated++; }
+    } else {
+      store.upsert('closing', { name: t.name, file: t.file || '', timing: t.timing || '', auto: t.auto || '', needs: needs.map((n) => ({ id: uid(), name: n.name || '', producer: n.producer || '' })), order: ++order, marks: {} });
+      added++;
     }
-    $('#bdImportMsg').textContent = `가져오기 완료: 새 업무 ${added}개${updated ? `, 기존 업무 ${updated}개에 빠진 내용 추가` : ''} (이미 있는 내용은 그대로 둠)`;
-  } catch (err) {
-    $('#bdImportMsg').textContent = '⚠ ' + (err.message || err);
-  } finally {
-    btn.disabled = false; btn.textContent = '가져오기';
   }
+  return { added, updated };
+}
+
+/* ---------- 📊 파일 생성 팝업: 백업자료 생성 화면을 그대로 띄움 ---------- */
+let mkTask = null;
+function openMake(taskId) {
+  const t = store.find('closing', taskId);
+  if (!t || !t.auto || !ui.openAuto) return;
+  mkTask = t.id;
+  const dlg = $('#dlgMake');
+  const body = $('#mkBody');
+  const view = $('#view-auto');
+  // 백업자료 생성 화면의 선택칸·첨부칸·결과를 팝업으로 옮김 (닫으면 제자리로)
+  [...view.querySelectorAll(':scope > .auto-pick, :scope > .auto-panel')].forEach((el) => body.appendChild(el));
+  ui.openAuto(t.auto);
+  const idx = list().findIndex((x) => x.id === t.id);
+  $('#mkTitle').textContent = `📊 파일 생성 · ${AUTO[t.auto] || ''}`;
+  $('#mkSub').textContent = `${idx + 1}. ${t.name} — ${monthLabel(ui.month)}`;
+  $('#mkDone').hidden = true;
+  if (!dlg.open) dlg.showModal();
+}
+function closeMake() {
+  const dlg = $('#dlgMake');
+  const view = $('#view-auto');
+  [...$('#mkBody').children].forEach((el) => view.appendChild(el));
+  mkTask = null;
+  if (dlg.open) dlg.close();
 }
 
 /* ---------- 순서 바꾸기 (끌어 놓기) ---------- */
@@ -217,7 +206,30 @@ export function initBoard({ openAuto } = {}) {
   $('#bdPrev').onclick = () => shiftMonth(-1);
   $('#bdNext').onclick = () => shiftMonth(1);
   $('#bdAdd').onclick = () => startEdit('new');
-  $('#bdImport').onclick = importSheet;
+  $('#bdSave').onclick = exportList;
+  $('#bdLoad').onclick = () => $('#bdLoadIn').click();
+  $('#bdLoadIn').onchange = async (e) => {
+    const f = e.target.files[0]; e.target.value = '';
+    if (!f) return;
+    try {
+      const r = await importList(f);
+      $('#bdLoadMsg').textContent = `불러오기 완료: 새 업무 ${r.added}개${r.updated ? `, 기존 업무 ${r.updated}개에 빠진 내용 추가` : ''} (이미 있는 내용은 그대로 둠)`;
+    } catch (err) { $('#bdLoadMsg').textContent = '⚠ ' + (err.message || err); }
+  };
+  $('#mkClose').onclick = closeMake;
+  $('#dlgMake').addEventListener('close', () => { if ($('#mkBody').children.length) closeMake(); });
+  $('#dlgMake').addEventListener('cancel', (e) => { e.preventDefault(); closeMake(); });
+  window.addEventListener('backup:made', (e) => {
+    if (!mkTask || !$('#dlgMake').open) return;
+    $('#mkDoneMsg').innerHTML = `✅ <b>${esc(e.detail?.fileName || '')}</b> 완성 — 내려받은 뒤 완료로 표시하세요`;
+    $('#mkDone').hidden = false;
+  });
+  $('#mkMarkDone').onclick = () => {
+    const t = mkTask && store.find('closing', mkTask);
+    if (t) setMark(t, (m) => { m.done = todayStr(); });
+    $('#mkMarkDone').textContent = '✔ 완료로 표시했습니다';
+    setTimeout(() => { $('#mkMarkDone').textContent = '✔ 이 업무 완료로 표시'; closeMake(); }, 700);
+  };
   const box = $('#bdList');
   box.addEventListener('change', (e) => {
     const t = e.target;
@@ -245,7 +257,7 @@ export function initBoard({ openAuto } = {}) {
       readDraft();
       const items = list(); const i = items.findIndex((t) => t.id === ui.editing); const j = i + +b.dataset.tmove;
       if (i >= 0 && j >= 0 && j < items.length) { reorder(ui.editing, items[j].id, +b.dataset.tmove > 0); render(); }
-    } else if (b.dataset.auto && ui.openAuto) ui.openAuto(b.dataset.auto);
+    } else if (b.dataset.make) openMake(b.dataset.make);
   });
   let dragId = null;
   box.addEventListener('dragstart', (e) => {

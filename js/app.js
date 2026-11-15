@@ -1097,7 +1097,7 @@ setTimeout(checkUpdate, 5000);
 
 initFreight();
 initClosing();
-initBoard({ openAuto: (type) => { show('auto'); openAutoType(type); } });
+initBoard({ openAuto: (type) => openAutoType(type) });
 
 /* ---------- 시작 ---------- */
 function renderAll() {

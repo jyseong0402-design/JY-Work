@@ -71,7 +71,7 @@ function setMode(m) {
   state.mode = m;
   setPref('autoType', m);
   $('#autoType').value = m;
-  $$('#view-auto .auto-panel').forEach((el) => { el.hidden = el.dataset.panel !== (m === 'freight' ? 'freight' : 'closing'); });
+  $$('.auto-panel').forEach((el) => { el.hidden = el.dataset.panel !== (m === 'freight' ? 'freight' : 'closing'); });
   render();
 }
 
@@ -148,6 +148,7 @@ async function run() {
     const out = await TYPES[kind].build()({ XLSX, JSZip, prevBuf, rdFiles });
     outs.push(out);
     $('#clResult').innerHTML = resultCard(kind, state.prev.file.name, out, 0);
+    window.dispatchEvent(new CustomEvent('backup:made', { detail: { type: kind, fileName: out.fileName } }));
     try { await idbPut(kind, { name: out.fileName, data: out.data, at: Date.now() }); state.saved[kind] = { name: out.fileName, data: out.data }; } catch { /* 저장 공간 */ }
   } catch (e) {
     console.error(e);
@@ -167,7 +168,7 @@ export function initClosing() {
   bindDrop('#clRd', '#clRdIn', (files) => { state.rds.push(...files); });
   document.addEventListener('click', (e) => {
     const t = e.target.closest('[data-x-prev],[data-x-rd],[data-use],[data-dl]');
-    if (!t || !t.closest('#view-auto')) return;
+    if (!t || !t.closest('#view-auto, #dlgMake')) return;
     if (t.dataset.xPrev !== undefined) { state.prev = null; render(); }
     else if (t.dataset.xRd !== undefined) { state.rds.splice(+t.dataset.xRd, 1); render(); }
     else if (t.dataset.use) {

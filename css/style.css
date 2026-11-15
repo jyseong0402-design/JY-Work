@@ -743,11 +743,18 @@ form.focus #focusToggle { background: rgba(255, 255, 255, .12); }
 .bd-nform { padding: 0 14px 12px 60px; }
 .bd-nhead, .bd-nrow { display: grid; grid-template-columns: 1.5fr 1fr 40px 40px; gap: 8px; align-items: center; margin-bottom: 6px; }
 .bd-add { border: 0; background: none; color: var(--primary); font-weight: 600; cursor: pointer; padding: 6px 0; font-size: 14px; }
-.bd-sheet summary { font-weight: 600; cursor: pointer; }
-.bd-sheet-row { display: flex; gap: 8px; } .bd-sheet-row input { flex: 1; margin: 0; }
 @media (max-width: 900px) {
   .bd-stats { grid-template-columns: repeat(2, 1fr); }
   .bd-row { grid-template-columns: 30px 1fr; } .bd-timing, .bd-need-sum { grid-column: 2; } .bd-acts { grid-column: 1 / -1; justify-content: flex-start; }
   .bd-needs, .bd-form, .bd-nform { padding-left: 14px; } .bd-form { grid-template-columns: 1fr; }
   .bd-need { grid-template-columns: 24px 1fr; } .bd-prod, .bd-rdate { grid-column: 2; }
 }
+.bd-foot { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0 16px; }
+/* 📊 파일 생성 팝업 */
+dialog.dlg-make { width: min(1000px, calc(100vw - 24px)); padding: 0; }
+.mk-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 18px 22px 12px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); z-index: 2; }
+.mk-head h2 { margin: 0 0 2px; font-size: 19px; } .mk-head p { margin: 0; }
+.mk-x { font-size: 16px; min-width: 36px; min-height: 36px; }
+#mkBody { padding: 16px 22px 8px; }
+#mkBody .auto-pick { display: none; }
+.mk-done { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 22px 18px; padding: 12px 16px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--ok) 40%, var(--line)); background: color-mix(in srgb, var(--ok) 8%, var(--panel)); }

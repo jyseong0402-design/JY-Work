@@ -55,6 +55,7 @@ async function run() {
     });
     state.lastOut = out;
     showResult(out);
+    window.dispatchEvent(new CustomEvent('backup:made', { detail: { type: 'freight', fileName: out.fileName } }));
     try { await idbPut('last', { name: out.fileName, data: out.data, at: Date.now() }); } catch { /* 저장 공간 부족 등 */ }
   } catch (e) {
     console.error(e);
