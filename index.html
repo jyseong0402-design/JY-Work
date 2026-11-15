@@ -21,8 +21,7 @@
       <button data-view="meetings"><span class="ic">📝</span><span>회의메모</span></button>
       <button data-view="tasks"><span class="ic">✅</span><span>할일</span></button>
       <button data-view="search"><span class="ic">🔎</span><span>조회</span></button>
-      <button data-view="freight"><span class="ic">🚚</span><span>운반비 검증</span></button>
-      <button data-view="closing"><span class="ic">📊</span><span>월마감 자동화</span></button>
+      <button data-view="auto"><span class="ic">📊</span><span>파일 만들기</span></button>
       <button data-view="settings"><span class="ic">⚙️</span><span>설정</span></button>
       <button type="button" class="nav-ver" id="appVer" title="업데이트 내역 보기"></button>
     </nav>
@@ -164,14 +163,26 @@
 
       <!-- 설정 -->
       <!-- 운반비 검증 -->
-      <section id="view-freight" class="view">
+      <section id="view-auto" class="view">
         <header class="vh">
           <div>
-            <h1>🚚 운반비 검증</h1>
-            <p class="muted sm">집계파일 · 계정별원장 · 지난 검증파일을 넣으면 이번 달 검증 시트(현황·운반비)를 붙인 검증파일이 만들어집니다. 파일은 이 기기 안에서만 처리됩니다.</p>
+            <h1>📊 파일 만들기</h1>
+            <p class="muted sm">만들 파일을 고르고, 필요한 파일을 넣으면 같은 양식에 이번 달을 붙인 엑셀이 만들어집니다. 파일은 이 기기 안에서만 처리됩니다.</p>
           </div>
         </header>
-        <div class="fr-drops">
+        <div class="card auto-pick">
+          <label for="autoType"><b>만들 파일</b></label>
+          <select id="autoType">
+            <option value="freight">🚚 운반비 검증</option>
+            <option value="arap">💳 채권·채무 (매출채권·매입채무)</option>
+            <option value="prepay">💰 선급금</option>
+            <option value="internal">🔁 내부거래 집계</option>
+            <option value="packing">📦 포장소모품비</option>
+          </select>
+          <span class="muted sm" id="autoDesc"></span>
+        </div>
+        <div class="auto-panel" data-panel="freight">
+<div class="fr-drops">
           <div class="fr-drop" id="frAgg" tabindex="0">
             <b>① 운반비 집계파일</b><small>타부서에서 받은 파일 ('현황' 시트)</small>
             <div class="fr-name" id="frAggName"></div>
@@ -202,30 +213,23 @@
           </ul>
         </details>
         <div id="frResult"></div>
-      </section>
-
-      <section id="view-closing" class="view">
-        <header class="vh">
-          <div>
-            <h1>📊 월마감 자동화</h1>
-            <p class="muted sm">지난달 보고서와 ERP RD를 넣으면, 같은 양식에 이번 달을 붙인 파일이 만들어집니다. 파일은 이 기기 안에서만 처리됩니다.</p>
-          </div>
-        </header>
-        <div class="fr-drops">
+        </div>
+        <div class="auto-panel" data-panel="closing" hidden>
+<div class="fr-drops">
           <div class="fr-drop" id="clPrev" tabindex="0">
-            <b>① 지난달 보고서</b><small>채권채무 · 선급금 · 내부거래 집계 · 포장소모품비 (종류는 자동 인식)</small>
+            <b id="clPrevTitle">① 지난달 파일</b><small id="clPrevHint"></small>
             <div class="fr-name" id="clPrevName"></div>
-            <input type="file" id="clPrevIn" accept=".xlsx,.xlsm" multiple hidden />
+            <input type="file" id="clPrevIn" accept=".xlsx,.xlsm" hidden />
           </div>
           <div class="fr-drop" id="clRd" tabindex="0">
-            <b>② ERP RD</b><small>거래처원장 · 계정별원장 · 기간별입고현황 — 전체계정 파일 그대로</small>
+            <b id="clRdTitle">② ERP RD</b><small id="clRdHint"></small>
             <div class="fr-name" id="clRdName"></div>
             <input type="file" id="clRdIn" accept=".xlsx,.xls" multiple hidden />
           </div>
         </div>
         <div class="row-end"><span id="clSaved"></span><button class="btn primary" id="clRun" disabled>보고서 만들기</button></div>
         <details class="card fr-rules">
-          <summary>무엇을 만드나요?</summary>
+          <summary>만드는 방법 보기</summary>
           <ul class="sm">
             <li><b>채권·채무</b>: 거래처원장에서 외상매출금(11110401)·외상매입금(12100101)을 골라 'YY년MM월매출채권/매입채무' 시트를 만들고, 매출비교·매입비교에 이번 달 열을 추가 (차액 열은 이번 달 기준으로 옮김). 목록에 없는 거래처는 끝에 '신규'로 추가</li>
             <li><b>선급금</b>: 거래처원장에서 선급금(11110800)을 골라 'YY년MM월선급금' 시트 + 선급금증감 이번 달 열</li>
@@ -235,6 +239,7 @@
           </ul>
         </details>
         <div id="clResult"></div>
+        </div>
       </section>
 
       <section id="view-settings" class="view">
