@@ -2,7 +2,7 @@
 // - 기기에 먼저 저장하고(오프라인 가능), 로그인되어 있으면 클라우드와 주고받습니다.
 // - 같은 항목을 두 기기에서 고치면 더 나중에 고친 쪽이 남습니다.
 // - 데이터 경로: users/{내 계정}/items, users/{내 계정}/ink  (보안 규칙으로 본인만 접근)
-import { store, settings, nowIso } from './store.js';
+import { store, settings, nowIso, KINDS } from './store.js';
 import { inkdb } from './inkdb.js';
 import defaultConfig from './firebase-config.js';
 
@@ -100,8 +100,8 @@ async function initialMerge() {
       toRemote.push(putOp(r.kind, local));
     }
   });
-  for (const kind of ['events', 'meetings', 'tasks']) {
-    for (const x of data[kind]) if (!seen.has(`${kind}:${x.id}`)) toRemote.push(putOp(kind, x));
+  for (const kind of KINDS) {
+    for (const x of data[kind] || []) if (!seen.has(`${kind}:${x.id}`)) toRemote.push(putOp(kind, x));
   }
   for (const [key, at] of Object.entries(data.tombs)) {
     if (!seen.has(key)) {

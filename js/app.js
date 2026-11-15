@@ -4,7 +4,8 @@ import { aiSummarize, aiAnswer, aiTranscribe, aiEnabled } from './ai.js';
 import { InkPad, renderInkPreview } from './ink.js';
 import { icon } from './icons.js';
 import { initFreight } from './freight-ui.js';
-import { initClosing } from './closing-ui.js';
+import { initClosing, openAutoType } from './closing-ui.js';
+import { initBoard } from './board.js';
 import { inkdb } from './inkdb.js';
 import { sync, loadInk, saveInk, flushInk, parseConfig, getConfig } from './sync.js';
 import { exportExcel, importExcel } from './excel.js';
@@ -1096,6 +1097,7 @@ setTimeout(checkUpdate, 5000);
 
 initFreight();
 initClosing();
+initBoard({ openAuto: (type) => { show('auto'); openAutoType(type); } });
 
 /* ---------- 시작 ---------- */
 function renderAll() {

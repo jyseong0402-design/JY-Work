@@ -17,6 +17,7 @@
     <nav class="nav" aria-label="메뉴">
       <div class="brand"><img src="icons/icon.svg" alt="" /><span>업무노트</span></div>
       <button data-view="dashboard" class="active"><span class="ic">🏠</span><span>홈</span></button>
+      <button data-view="board"><span class="ic">📋</span><span>월마감 현황</span></button>
       <button data-view="calendar"><span class="ic">📅</span><span>일정</span></button>
       <button data-view="meetings"><span class="ic">📝</span><span>회의메모</span></button>
       <button data-view="tasks"><span class="ic">✅</span><span>할일</span></button>
@@ -163,6 +164,27 @@
 
       <!-- 설정 -->
       <!-- 운반비 검증 -->
+      <section id="view-board" class="view">
+        <header class="vh bd-head">
+          <div>
+            <h1>📋 월마감 현황</h1>
+            <p class="muted sm">내가 만들 파일과 필요한 파일·생산자를 관리하고, 이번 달에 받은 파일과 완성한 파일을 체크합니다. 번호는 이 사이트의 순서(⠿ 끌어서 변경)입니다.</p>
+          </div>
+          <div class="bd-tools">
+            <div class="bd-monthnav"><button class="btn sm" id="bdPrev">◀</button><b id="bdMonth"></b><button class="btn sm" id="bdNext">▶</button></div>
+            <button class="btn primary" id="bdAdd">＋ 업무 추가</button>
+          </div>
+        </header>
+        <div class="card bd-stats" id="bdStats"></div>
+        <div id="bdList"></div>
+        <details class="card bd-sheet" id="bdSheetBox">
+          <summary>↻ 구글시트에서 가져오기</summary>
+          <p class="muted sm">업무 일정표 주소를 붙여 넣고 가져오면 업무·필요파일·파일 생산자를 채웁니다. 이미 있는 업무는 지우거나 바꾸지 않고 빠진 내용만 더합니다. (시트 공유: 링크가 있는 모든 사용자 – 뷰어)</p>
+          <div class="bd-sheet-row"><input id="bdSheetUrl" placeholder="https://docs.google.com/spreadsheets/d/…/edit#gid=…" /><button class="btn" id="bdImport">가져오기</button></div>
+          <p class="sm" id="bdImportMsg"></p>
+        </details>
+      </section>
+
       <section id="view-auto" class="view">
         <header class="vh">
           <div>

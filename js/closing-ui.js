@@ -158,6 +158,8 @@ async function run() {
   }
 }
 
+export function openAutoType(m) { setMode(m); }
+
 export function initClosing() {
   if (!$('#view-auto')) return;
   $('#autoType').addEventListener('change', (e) => setMode(e.target.value));

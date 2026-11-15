@@ -23,6 +23,8 @@
 - 화면: 「📊 백업자료 생성」(view-auto) 한 메뉴 + 드롭다운(#autoType). 운반비=freight-ui(.auto-panel[data-panel=freight]), 나머지=closing-ui의 TYPES 목록
   · 새 자료 추가: closing.js에 build 함수 + closing-ui.js TYPES 한 줄 + index.html <option> 하나
   · 원칙: 기존 서식·수식 절대 유지, 이번 달만 추가(손대지 않은 시트는 원본 그대로 저장). 검증은 rd/integrity.py 방식(원래 셀 서식·수식 비교)
+- `js/board.js` 📋 월마감 현황(view-board): store kind 'closing' = 업무 {name,file,timing,auto,needs[{id,name,producer}],order,marks{'YYYY-MM':{done,recv{needId:date}}}}
+  · 구글시트 가져오기는 gviz JSONP(공유 링크 필요, 주소는 settings.closingSheet — 저장소에 하드코딩 금지). 담당자·target·done은 사이트에 두지 않음(사용자가 시트에 기록)
 - `js/closing.js` 월마감 엔진 / `js/closing-ui.js` 화면 / `js/xlsxkit.js` 공용 XML 편집(열·행 삽입 시 수식 참조 이동, 시트 추가)
   · 채권채무: 거래처원장 11110401·12100101 → 'YY년MM월매출채권/매입채무' + 매출비교·매입비교 열 삽입(차액 열 이동, 새 거래처 '신규' 행)
   · 선급금: 11110800 → 'YY년MM월선급금' + 선급금증감 열 / 내부거래: 비용·수익 최근 6개월 계정 중 상대가 계열사인 행, D·상대회사는 이력 우선
