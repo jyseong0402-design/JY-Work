@@ -1,5 +1,5 @@
 // ✅ 월마감 현황: 내가 만들 파일(업무) · 필요파일 · 파일 생산자 목록 + 월별 '받음'·'완료' 체크
-// 업무 1개 = store 'closing' 항목 1개 { id, order, name, file, timing, auto, needs:[{id,name,producer}], marks:{'YYYY-MM':{done, recv:{needId:date}}} }
+// 업무 1개 = store 'closing' 항목 1개 { id, order, name, file, timing, auto, needs:[{id,name,dept,person}], marks:{'YYYY-MM':{done, recv:{needId:date}}} }
 import { store, uid, todayStr } from './store.js';
 import { CLOSING_SEED } from './closing-seed.js';
 
@@ -8,6 +8,15 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const AUTO = { '': '연결 없음', freight: '🚚 운반비 검증', arap: '💳 채권·채무', prepay: '💰 선급금', internal: '🔁 내부거래 집계', packing: '📦 포장소모품비' };
 const ym = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 const md = (s) => (s ? `${+s.slice(5, 7)}/${+s.slice(8, 10)}` : '');
+
+// 예전 '파일 생산자' 한 칸 → 부서/담당자 (사람 이름은 담당자, 조직 이름은 부서)
+const ORG = /팀|기획|법인|ERP|부서|본부|센터|회계|영업부|생산부|재무|운영/;
+export function splitProducer(p) {
+  const v = String(p || '').trim();
+  if (!v) return { dept: '', person: '' };
+  return ORG.test(v) && !/님/.test(v) ? { dept: v, person: '' } : { dept: '', person: v };
+}
+const needOf = (n) => (n.dept !== undefined || n.person !== undefined ? { ...n, dept: n.dept || '', person: n.person || '' } : { ...n, ...splitProducer(n.producer) });
 
 const ui = { month: ym(new Date()), editing: null, draft: null, openAuto: null };
 
@@ -42,9 +51,9 @@ function taskView(t, i) {
         <button class="bd-ib" data-del="${t.id}" title="삭제">🗑</button>
       </span>
     </div>
-    ${needs.length ? `<div class="bd-needs">${needs.map((n) => `<label class="bd-need ${mk.recv?.[n.id] ? 'on' : ''}">
+    ${needs.length ? `<div class="bd-needs"><div class="bd-need bd-need-h"><span></span><span>필요파일</span><span>부서</span><span>담당자</span><span></span></div>${needs.map(needOf).map((n) => `<label class="bd-need ${mk.recv?.[n.id] ? 'on' : ''}">
         <input type="checkbox" data-recv="${t.id}|${n.id}" ${mk.recv?.[n.id] ? 'checked' : ''}/>
-        <span class="bd-nname">${esc(n.name)}</span><span class="bd-prod">${esc(n.producer || '')}</span>
+        <span class="bd-nname">${esc(n.name)}</span><span class="bd-dept">${n.dept ? `<span class="tag">${esc(n.dept)}</span>` : '<span class="muted">—</span>'}</span><span class="bd-prod">${esc(n.person) || '<span class="muted">—</span>'}</span>
         <span class="bd-rdate">${mk.recv?.[n.id] ? `받음 ${md(mk.recv[n.id])}` : '<span class="muted">미수취</span>'}</span></label>`).join('')}</div>` : ''}
   </div>`;
 }
@@ -60,8 +69,8 @@ function editView(d, i) {
       <label><span>바로 만들기 연결</span><select data-f="auto">${Object.entries(AUTO).map(([k, v]) => `<option value="${k}" ${d.auto === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
     </div>
     <div class="bd-nform">
-      <div class="bd-nhead"><span>필요파일</span><span>파일 생산자 (담당자·부서)</span><span></span></div>
-      ${d.needs.map((n, k) => `<div class="bd-nrow" data-k="${k}"><input data-n="name" value="${esc(n.name)}" placeholder="파일명"/><input data-n="producer" value="${esc(n.producer)}" placeholder="누가 주는지"/><button class="bd-ib" data-nup="${k}" title="위로">▲</button><button class="bd-ib" data-ndel="${k}" title="삭제">🗑</button></div>`).join('')}
+      <div class="bd-nhead"><span>필요파일</span><span>부서</span><span>담당자</span><span></span><span></span></div>
+      ${d.needs.map((n, k) => `<div class="bd-nrow" data-k="${k}"><input data-n="name" value="${esc(n.name)}" placeholder="파일명"/><input data-n="dept" value="${esc(n.dept)}" placeholder="부서"/><input data-n="person" value="${esc(n.person)}" placeholder="담당자"/><button class="bd-ib" data-nup="${k}" title="위로">▲</button><button class="bd-ib" data-ndel="${k}" title="삭제">🗑</button></div>`).join('')}
       <button class="bd-add" data-nadd>＋ 필요파일 추가</button>
     </div>
   </div>`;
@@ -102,8 +111,8 @@ const render = renderBoard;
 
 function startEdit(id) {
   readDraft();
-  if (id === 'new') ui.draft = { name: '', file: '', timing: '', auto: '', needs: [{ id: uid(), name: '', producer: '' }] };
-  else { const t = store.find('closing', id); ui.draft = JSON.parse(JSON.stringify({ needs: [], auto: '', ...t })); }
+  if (id === 'new') ui.draft = { name: '', file: '', timing: '', auto: '', needs: [{ id: uid(), name: '', dept: '', person: '' }] };
+  else { const t = store.find('closing', id); ui.draft = JSON.parse(JSON.stringify({ needs: [], auto: '', ...t })); ui.draft.needs = ui.draft.needs.map(needOf); }
   ui.editing = id;
   render();
   $('#bdList .bd-editing input')?.focus();
@@ -112,7 +121,7 @@ function save() {
   readDraft();
   const d = ui.draft;
   if (!d.name.trim()) { alert('업무명을 입력해 주세요.'); return; }
-  const needs = d.needs.filter((n) => n.name.trim() || n.producer.trim()).map((n) => ({ id: n.id || uid(), name: n.name.trim(), producer: n.producer.trim() }));
+  const needs = d.needs.filter((n) => n.name.trim() || n.dept.trim() || n.person.trim()).map((n) => ({ id: n.id || uid(), name: n.name.trim(), dept: n.dept.trim(), person: n.person.trim() }));
   const base = { name: d.name.trim(), file: d.file.trim(), timing: d.timing.trim(), auto: d.auto || '', needs };
   if (ui.editing === 'new') store.upsert('closing', { ...base, order: (list().at(-1)?.order ?? 0) + 1, marks: {} });
   else store.upsert('closing', { id: ui.editing, ...base });
@@ -123,7 +132,7 @@ function save() {
 /* ---------- 목록 파일(JSON) 불러오기·저장: 이름 등은 공개 코드에 넣지 않고 내 계정에만 ---------- */
 const FILE_TAG = 'jywork-closing-list';
 function exportList() {
-  const tasks = list().map((t) => ({ name: t.name, file: t.file || '', timing: t.timing || '', auto: t.auto || '', needs: (t.needs || []).map((n) => ({ name: n.name, producer: n.producer || '' })) }));
+  const tasks = list().map((t) => ({ name: t.name, file: t.file || '', timing: t.timing || '', auto: t.auto || '', needs: (t.needs || []).map(needOf).map((n) => ({ name: n.name, dept: n.dept, person: n.person })) }));
   const blob = new Blob([JSON.stringify({ app: FILE_TAG, version: 1, tasks }, null, 1)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -140,15 +149,18 @@ async function importList(file) {
   let order = have.at(-1)?.order ?? 0;
   for (const t of j.tasks) {
     if (!t || !t.name) continue;
-    const needs = (t.needs || []).filter((n) => n && (n.name || n.producer));
+    const needs = (t.needs || []).filter((n) => n && (n.name || n.producer || n.dept || n.person)).map(needOf);
     const ex = have.find((x) => x.name === t.name);
     if (ex) {
-      const cur = (ex.needs || []).map((n) => ({ ...n }));
+      const cur = (ex.needs || []).map(needOf);
       let ch = false;
       for (const n of needs) {
         const m = cur.find((x) => x.name === n.name);
-        if (!m) { cur.push({ id: uid(), name: n.name || '', producer: n.producer || '' }); ch = true; }
-        else if (!m.producer && n.producer) { m.producer = n.producer; ch = true; }
+        if (!m) { cur.push({ id: uid(), name: n.name || '', dept: n.dept, person: n.person }); ch = true; }
+        else {
+          if (!m.dept && n.dept) { m.dept = n.dept; ch = true; }
+          if (!m.person && n.person) { m.person = n.person; ch = true; }
+        }
       }
       const patch = { id: ex.id };
       if (ch) patch.needs = cur;
@@ -157,7 +169,7 @@ async function importList(file) {
       if (!ex.auto && t.auto) patch.auto = t.auto;
       if (Object.keys(patch).length > 1) { store.upsert('closing', patch); updated++; }
     } else {
-      store.upsert('closing', { name: t.name, file: t.file || '', timing: t.timing || '', auto: t.auto || '', needs: needs.map((n) => ({ id: uid(), name: n.name || '', producer: n.producer || '' })), order: ++order, marks: {} });
+      store.upsert('closing', { name: t.name, file: t.file || '', timing: t.timing || '', auto: t.auto || '', needs: needs.map((n) => ({ id: uid(), name: n.name || '', dept: n.dept, person: n.person })), order: ++order, marks: {} });
       added++;
     }
   }
@@ -258,7 +270,7 @@ export function initBoard({ openAuto } = {}) {
       if (confirm(`'${t.name}' 업무를 삭제할까요? 필요파일 목록과 체크 기록도 함께 지워집니다.`)) store.remove('closing', t.id);
     } else if (b.hasAttribute('data-save')) save();
     else if (b.hasAttribute('data-cancel')) { ui.editing = null; ui.draft = null; render(); }
-    else if (b.hasAttribute('data-nadd')) { readDraft(); ui.draft.needs.push({ id: uid(), name: '', producer: '' }); render(); $$last('#bdList .bd-nrow input')?.focus(); }
+    else if (b.hasAttribute('data-nadd')) { readDraft(); ui.draft.needs.push({ id: uid(), name: '', dept: '', person: '' }); render(); $$last('#bdList .bd-nrow input')?.focus(); }
     else if (b.dataset.ndel !== undefined) { readDraft(); ui.draft.needs.splice(+b.dataset.ndel, 1); render(); }
     else if (b.dataset.nup !== undefined) { readDraft(); const k = +b.dataset.nup; if (k > 0) { const n = ui.draft.needs; [n[k - 1], n[k]] = [n[k], n[k - 1]]; } render(); }
     else if (b.dataset.tmove) {
