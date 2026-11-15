@@ -50,13 +50,19 @@ function render() {
   const bad = p && p.kind !== undefined && p.kind !== state.mode;
   $('#clPrevName').innerHTML = p
     ? `<span class="chipfile">${p.kind === undefined ? '<span class="muted">확인 중…</span> ' : bad ? '<b class="minus">⚠ 고른 자료의 파일이 아님</b> · ' : '✅ '}${fileLabel(p.file)} <button type="button" data-x-prev="1" title="빼기">✕</button></span>`
-    : '<span class="muted">파일을 끌어다 놓거나 눌러서 선택</span>';
+    : '<span class="muted">📂 끌어다 놓거나 눌러서 선택</span>';
   $('#clRdName').innerHTML = state.rds.length
     ? state.rds.map((f, i) => `<span class="chipfile">${fileLabel(f)} <button type="button" data-x-rd="${i}" title="빼기">✕</button></span>`).join('')
-    : '<span class="muted">여러 개 선택 가능</span>';
+    : '<span class="muted">📂 여러 개 선택 가능</span>';
   const sv = state.saved[state.mode];
   $('#clSaved').innerHTML = sv ? `<button type="button" class="btn sm" data-use="${state.mode}">↺ 지난번 만든 파일 · ${esc(sv.name)}</button>` : '';
-  $('#clRun').disabled = !(p && p.kind === state.mode && state.rds.length);
+  const okPrev = !!(p && p.kind === state.mode);
+  $('#clRun').disabled = !(okPrev && state.rds.length);
+  $('#clPrev').classList.toggle('has', okPrev);
+  $('#clPrev').classList.toggle('bad', !!bad);
+  $('#clRd').classList.toggle('has', state.rds.length > 0);
+  const miss = [!okPrev && '① 지난달 파일', !state.rds.length && '② RD'].filter(Boolean);
+  $('#clHint').innerHTML = p && p.kind === undefined ? '파일 종류 확인 중…' : bad ? '<span class="minus">① 칸에 고른 자료의 파일을 넣어 주세요</span>' : miss.length ? `${miss.join(' · ')}을(를) 넣어 주세요` : '<span class="ok">✓ 준비 완료 — 파일 만들기를 누르세요</span>';
 }
 
 function setMode(m) {

@@ -171,15 +171,15 @@
           </div>
         </header>
         <div class="card auto-pick">
-          <label for="autoType"><b>만들 자료</b></label>
-          <select id="autoType">
+          <label for="autoType" class="ap-label">만들 자료</label>
+          <div class="ap-sel"><select id="autoType">
             <option value="freight">🚚 운반비 검증</option>
             <option value="arap">💳 채권·채무 (매출채권·매입채무)</option>
             <option value="prepay">💰 선급금</option>
             <option value="internal">🔁 내부거래 집계</option>
             <option value="packing">📦 포장소모품비</option>
-          </select>
-          <span class="muted sm" id="autoDesc"></span>
+          </select></div>
+          <p class="ap-desc" id="autoDesc"></p>
         </div>
         <div class="auto-panel" data-panel="freight">
 <div class="fr-drops">
@@ -200,7 +200,7 @@
             <input type="file" id="frPrevIn" accept=".xlsx,.xlsm" hidden />
           </div>
         </div>
-        <div class="row-end"><button class="btn primary" id="frRun" disabled>파일 만들기</button></div>
+        <div class="run-bar"><span class="run-hint" id="frHint"></span><button class="btn primary big" id="frRun" disabled>파일 만들기</button></div>
         <details class="card fr-rules">
           <summary>검증 규칙 보기</summary>
           <ul class="sm">
@@ -227,7 +227,7 @@
             <input type="file" id="clRdIn" accept=".xlsx,.xls" multiple hidden />
           </div>
         </div>
-        <div class="row-end"><span id="clSaved"></span><button class="btn primary" id="clRun" disabled>파일 만들기</button></div>
+        <div class="run-bar"><span id="clSaved"></span><span class="run-hint" id="clHint"></span><button class="btn primary big" id="clRun" disabled>파일 만들기</button></div>
         <details class="card fr-rules">
           <summary>만드는 방법 보기</summary>
           <ul class="sm" id="clRules"></ul>

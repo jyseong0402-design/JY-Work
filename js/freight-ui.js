@@ -17,10 +17,15 @@ const state = { agg: null, ledgers: [], prev: null, lastOut: null, mapping: {}, 
 
 function fileLabel(f) { return `${esc(f.name)} <span class="muted">(${Math.round(f.size / 1024).toLocaleString()}KB)</span>`; }
 function render() {
-  $('#frAggName').innerHTML = state.agg ? fileLabel(state.agg) : '<span class="muted">파일을 끌어다 놓거나 눌러서 선택</span>';
-  $('#frLedName').innerHTML = state.ledgers.length ? state.ledgers.map((f, i) => `<span class="chipfile">${fileLabel(f)} <button type="button" data-rm="${i}" title="빼기">✕</button></span>`).join('') : '<span class="muted">여러 개 선택 가능 (대흥·군자·송이애 등)</span>';
-  $('#frPrevName').innerHTML = state.prev ? fileLabel(state.prev) : '<span class="muted">지난달까지 작업한 검증파일</span>';
+  $('#frAggName').innerHTML = state.agg ? fileLabel(state.agg) : '<span class="muted">📂 끌어다 놓거나 눌러서 선택</span>';
+  $('#frLedName').innerHTML = state.ledgers.length ? state.ledgers.map((f, i) => `<span class="chipfile">${fileLabel(f)} <button type="button" data-rm="${i}" title="빼기">✕</button></span>`).join('') : '<span class="muted">📂 여러 개 선택 가능 (대흥·군자·송이애 등)</span>';
+  $('#frPrevName').innerHTML = state.prev ? fileLabel(state.prev) : '<span class="muted">📂 끌어다 놓거나 눌러서 선택</span>';
   $('#frRun').disabled = !(state.agg && state.ledgers.length && state.prev);
+  $('#frAgg').classList.toggle('has', !!state.agg);
+  $('#frLed').classList.toggle('has', state.ledgers.length > 0);
+  $('#frPrev').classList.toggle('has', !!state.prev);
+  const miss = [!state.agg && '① 집계파일', !state.ledgers.length && '② 계정별원장', !state.prev && '③ 지난 검증파일'].filter(Boolean);
+  $('#frHint').innerHTML = miss.length ? `${miss.join(' · ')}을(를) 넣어 주세요` : '<span class="ok">✓ 준비 완료 — 파일 만들기를 누르세요</span>';
 }
 
 function bindDrop(zoneSel, inputSel, onFiles) {
