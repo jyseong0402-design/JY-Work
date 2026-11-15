@@ -1,6 +1,7 @@
 // ✅ 월마감 현황: 내가 만들 파일(업무) · 필요파일 · 파일 생산자 목록 + 월별 '받음'·'완료' 체크
 // 업무 1개 = store 'closing' 항목 1개 { id, order, name, file, timing, auto, needs:[{id,name,producer}], marks:{'YYYY-MM':{done, recv:{needId:date}}} }
 import { store, uid, todayStr } from './store.js';
+import { CLOSING_SEED } from './closing-seed.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -95,7 +96,7 @@ export function renderBoard() {
     <div class="bd-prog"><i style="width:${items.length ? Math.round((done / items.length) * 100) : 0}%"></i></div>`;
   const rows = items.map((t, i) => (ui.editing === t.id ? editView(ui.draft, i) : taskView(t, i)));
   if (ui.editing === 'new') rows.push(editView(ui.draft, items.length));
-  $('#bdList').innerHTML = rows.join('') || `<div class="empty">아직 업무가 없습니다. 아래 <b>📥 목록 파일 불러오기</b>로 받은 목록을 넣거나, <b>＋ 업무 추가</b>로 직접 만드세요.</div>`;
+  $('#bdList').innerHTML = rows.join('') || `<div class="empty">아직 업무가 없습니다. <b>＋ 업무 추가</b>로 만들거나, 아래 <b>📥 목록 파일 불러오기</b>로 넣으세요.</div>`;
 }
 const render = renderBoard;
 
@@ -203,6 +204,13 @@ function reorder(dragId, targetId, after) {
 export function initBoard({ openAuto } = {}) {
   if (!$('#view-board')) return;
   ui.openAuto = openAuto;
+  // 처음 쓰는 기기: 기본 목록을 넣어 둠 (한 번만)
+  try {
+    if (!localStorage.getItem('jywork-closing-seeded')) {
+      if (!(store.get().closing || []).length) store.seed('closing', CLOSING_SEED.map((t) => ({ ...t, marks: {} })));
+      localStorage.setItem('jywork-closing-seeded', '1');
+    }
+  } catch { /* 저장 불가 */ }
   $('#bdPrev').onclick = () => shiftMonth(-1);
   $('#bdNext').onclick = () => shiftMonth(1);
   $('#bdAdd').onclick = () => startEdit('new');

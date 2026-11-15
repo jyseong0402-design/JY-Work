@@ -1,9 +1,13 @@
 // 앱 버전과 변경 내역
 // ※ 업데이트할 때마다 APP_VERSION을 올리고 CHANGES 맨 위에 내용을 추가하세요.
 //    (앱이 이 값을 보고 '새 버전 적용됨' 알림과 좌측 하단 버전을 표시합니다)
-export const APP_VERSION = '1.11.0';
+export const APP_VERSION = '1.11.1';
 
 export const CHANGES = [
+  {
+    v: '1.11.1', date: '2026-11-15',
+    items: ['월마감 현황: 업무 일정표 목록(25개)이 처음부터 들어 있음 — 파일 불러오기 필요 없음'],
+  },
   {
     v: '1.11.0', date: '2026-11-15',
     items: [

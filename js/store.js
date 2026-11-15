@@ -141,6 +141,16 @@ export const store = {
     persist();
   },
 
+  // 기본 목록 넣기: 오래된 시각으로 넣어서 다른 기기의 수정·삭제가 항상 이김 (업로드는 하지 않음)
+  seed(kind, items, at = '2026-01-01T00:00:00.000Z') {
+    const arr = data[kind];
+    for (const it of items) {
+      if (arr.some((x) => x.id === it.id) || data.tombs[`${kind}:${it.id}`]) continue;
+      arr.push({ ...it, createdAt: at, updatedAt: at });
+    }
+    persist({ silent: true });
+  },
+
   // 다른 기기에서 받은 변경을 반영 (다시 업로드하지 않음)
   applyRemote(list) {
     for (const r of list) {
