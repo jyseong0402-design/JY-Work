@@ -55,7 +55,7 @@ async function run() {
     console.error(e);
     $('#frResult').innerHTML = `<div class="card err-card"><h2>만들지 못했습니다</h2><p>${esc(e.message || e)}</p></div>`;
   } finally {
-    btn.textContent = '검증파일 만들기';
+    btn.textContent = '파일 만들기';
     render();
   }
 }

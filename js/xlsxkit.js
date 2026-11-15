@@ -174,7 +174,9 @@ export class Book {
     if (this.cache.has(name)) return this.cache.get(name);
     const s = this.sheets.find((x) => x.name === name);
     if (!s) return null;
-    const sh = new Sheet(await this.zip.file(s.path).async('string'), name);
+    const raw = await this.zip.file(s.path).async('string');
+    const sh = new Sheet(raw, name);
+    sh.orig = raw;
     this.cache.set(name, sh);
     return sh;
   }
@@ -338,6 +340,11 @@ export class Book {
       const s = this.sheets.find((x) => x.name === name);
       if (!s) continue;
       let xml = sh.build();
+      // 손대지 않은 시트는 원래 파일 그대로 둠 (한 글자도 바꾸지 않음)
+      if (sh.orig && xml === new Sheet(sh.orig, name).build()) {
+        if (activeSheet && /tabSelected="1"/.test(sh.orig)) this.zip.file(s.path, sh.orig.replace(/\stabSelected="1"/, ''));
+        continue;
+      }
       if (activeSheet) xml = xml.replace(/\stabSelected="1"/, '');
       if (activeSheet === name) xml = xml.replace(/<sheetView\b/, '<sheetView tabSelected="1"');
       this.zip.file(s.path, xml);

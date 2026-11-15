@@ -3,6 +3,7 @@ import { detectBook, buildArAp, buildInternal, buildPacking } from './closing.js
 import { loadXLSX } from './excel.js';
 
 const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const won = (n) => (Math.round(n || 0)).toLocaleString('ko-KR');
 
@@ -15,33 +16,69 @@ const idb = () => new Promise((res, rej) => { const r = indexedDB.open(DB, 1); r
 const idbPut = async (k, v) => { const d = await idb(); return new Promise((res, rej) => { const t = d.transaction(ST, 'readwrite'); t.objectStore(ST).put(v, k); t.oncomplete = res; t.onerror = () => rej(t.error); }); };
 const idbAll = async () => { const d = await idb(); return new Promise((res, rej) => { const out = {}; const c = d.transaction(ST).objectStore(ST).openCursor(); c.onsuccess = () => { const cur = c.result; if (cur) { out[cur.key] = cur.value; cur.continue(); } else res(out); }; c.onerror = () => rej(c.error); }); };
 
-const state = { prevs: [], rds: [], saved: {} };
+// ── 백업자료 종류 목록 ──────────────────────────────────────────
+// 새 자료를 추가할 때: 여기 한 줄 + closing.js에 만드는 함수(build) + index.html 드롭다운 <option> 하나
+const TYPES = {
+  arap: { build: () => buildArAp, prev: '① 지난달 채권·채무 파일', prevHint: '매출비교·매입비교 시트가 있는 파일', rd: '② ERP 거래처원장', rdHint: '전체계정 그대로 OK — 외상매출금·외상매입금만 골라 씀',
+    desc: '매출채권·매입채무 월 시트 + 매출비교·매입비교 이번 달 열',
+    rules: ['거래처원장에서 외상매출금(11110401)·외상매입금(12100101) 행만 골라 \'YY년MM월매출채권/매입채무\' 시트를 새로 만듦 (지난달 시트 서식 그대로)', '매출비교·매입비교에 이번 달 열을 끼워 넣음 — 기존 열·수식은 그대로, 오른쪽 차액 열만 이번 달 기준으로 옮김', '목록에 없는 거래처는 끝에 B열 \'신규\'로 추가 → 구분을 바꿔 주세요', '거래처원장에는 날짜가 없어 지난달 시트의 다음 달로 만듦'] },
+  prepay: { build: () => buildArAp, prev: '① 지난달 선급금 파일', prevHint: '선급금증감 시트가 있는 파일', rd: '② ERP 거래처원장', rdHint: '전체계정 그대로 OK — 선급금만 골라 씀',
+    desc: '선급금 월 시트 + 선급금증감 이번 달 열',
+    rules: ['거래처원장에서 선급금(11110800) 행만 골라 \'YY년MM월선급금\' 시트를 새로 만듦', '선급금증감에 이번 달 열 추가 (기존 열·수식 그대로), 새 거래처는 끝에 \'신규\'로 추가'] },
+  internal: { build: () => buildInternal, prev: '① 지난달 내부거래 집계 파일', prevHint: '비용·수익·내부거래 집계 시트가 있는 파일', rd: '② ERP 계정별원장', rdHint: '전체계정 그대로 OK — 비용·수익 시트에 쓰던 계정만 골라 씀',
+    desc: '비용·수익 시트 이번 달 행 + 내부거래 집계 이번 달 묶음',
+    rules: ['비용·수익 시트 맨 아래에 이번 달 행만 붙임 — 최근 쓰던 계정 중 상대가 계열사(대흥·송이애·군자·중부/이천팜·SPC)인 행', 'D열(내용)·상대회사는 지난 기록에서 같은 거래를 찾아 채우고, 처음 보는 거래는 적요로 판단해 알려 줌', '\'내부거래 집계\' 맨 아래에 이번 달 묶음(25행) 추가', 'RD 날짜로 이번 달을 정하고, 같은 달을 다시 만들면 그 달 행만 새로 바꿈'] },
+  packing: { build: () => buildPacking, prev: '① 지난달 포장소모품비 파일', prevHint: '수불o·수불x 시트가 있는 파일', rd: '② ERP RD', rdHint: '기간별입고현황 + 계정별원장 (전체계정 그대로 OK)',
+    desc: '수불o·수불x 이번 달 행 + 회사별 시트 이번 달 열',
+    rules: ['기간별입고현황 → 수불o, 계정별원장의 포장 계정(Mapping P열) → 수불x 맨 아래에 이번 달 행만 붙임', '회사별 시트에 이번 달 3칸(수불o·수불x 판관·제조) + 월별 요약 열 추가 (기존 열은 오른쪽으로 밀릴 뿐 수식·서식 그대로)', '\'포장소모품비 예산정리\' 시트는 손으로 넣는 칸이라 비워 둠', 'RD 날짜로 이번 달을 정하고, 같은 달을 다시 만들면 그 달 행만 새로 바꿈'] },
+  freight: { desc: '집계파일 + 계정별원장 + 지난 검증파일 → 이번 달 검증 시트(현황·운반비)를 붙인 검증파일' },
+};
+const pref = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
+const setPref = (k, v) => { try { localStorage.setItem(k, v); } catch { /* 무시 */ } };
+
+const state = { mode: 'freight', prev: null, rds: [], saved: {} };
 
 function fileLabel(f) { return `${esc(f.name)} <span class="muted">(${Math.round((f.size || f.data?.length || 0) / 1024).toLocaleString()}KB)</span>`; }
 function render() {
-  $('#clPrevName').innerHTML = state.prevs.length
-    ? state.prevs.map((p, i) => `<span class="chipfile">${p.kind ? `<b>${KIND_LABEL[p.kind]}</b> · ` : p.kind === null ? '<b class="minus">알 수 없는 파일</b> · ' : ''}${fileLabel(p.file)} <button type="button" data-rm-prev="${i}" title="빼기">✕</button></span>`).join('')
-    : '<span class="muted">채권채무 · 선급금 · 내부거래 집계 · 포장소모품비 파일 (여러 개 가능)</span>';
+  const T = TYPES[state.mode];
+  $('#autoDesc').textContent = T.desc || '';
+  if (state.mode === 'freight') return;
+  $('#clPrevTitle').textContent = T.prev; $('#clPrevHint').textContent = T.prevHint;
+  $('#clRdTitle').textContent = T.rd; $('#clRdHint').textContent = T.rdHint;
+  $('#clRules').innerHTML = T.rules.map((r) => `<li>${esc(r)}</li>`).join('');
+  const p = state.prev;
+  const bad = p && p.kind !== undefined && p.kind !== state.mode;
+  $('#clPrevName').innerHTML = p
+    ? `<span class="chipfile">${p.kind === undefined ? '<span class="muted">확인 중…</span> ' : bad ? '<b class="minus">⚠ 고른 자료의 파일이 아님</b> · ' : '✅ '}${fileLabel(p.file)} <button type="button" data-x-prev="1" title="빼기">✕</button></span>`
+    : '<span class="muted">파일을 끌어다 놓거나 눌러서 선택</span>';
   $('#clRdName').innerHTML = state.rds.length
-    ? state.rds.map((f, i) => `<span class="chipfile">${fileLabel(f)} <button type="button" data-rm-rd="${i}" title="빼기">✕</button></span>`).join('')
-    : '<span class="muted">거래처원장 · 계정별원장 · 기간별입고현황 (전체계정 그대로, 여러 개 가능)</span>';
-  const saved = Object.entries(state.saved);
-  $('#clSaved').innerHTML = saved.length ? `<span class="muted sm">지난번 만든 파일:</span> ${saved.map(([k, v]) => `<button type="button" class="btn sm" data-use="${k}">↺ ${esc(KIND_LABEL[k] || k)} · ${esc(v.name)}</button>`).join(' ')}` : '';
-  $('#clRun').disabled = !(state.prevs.some((p) => p.kind) && state.rds.length);
+    ? state.rds.map((f, i) => `<span class="chipfile">${fileLabel(f)} <button type="button" data-x-rd="${i}" title="빼기">✕</button></span>`).join('')
+    : '<span class="muted">여러 개 선택 가능</span>';
+  const sv = state.saved[state.mode];
+  $('#clSaved').innerHTML = sv ? `<button type="button" class="btn sm" data-use="${state.mode}">↺ 지난번 만든 파일 · ${esc(sv.name)}</button>` : '';
+  $('#clRun').disabled = !(p && p.kind === state.mode && state.rds.length);
 }
 
-async function addPrev(files) {
+function setMode(m) {
+  if (!TYPES[m]) m = 'freight';
+  if (m !== state.mode) { state.prev = null; $('#clResult').innerHTML = ''; }
+  state.mode = m;
+  setPref('autoType', m);
+  $('#autoType').value = m;
+  $$('#view-auto .auto-panel').forEach((el) => { el.hidden = el.dataset.panel !== (m === 'freight' ? 'freight' : 'closing'); });
+  render();
+}
+
+async function setPrev(file) {
   const { default: JSZip } = await import('./vendor/jszip.mjs');
-  for (const f of files) {
-    const item = { file: f, kind: undefined };
-    state.prevs.push(item);
-    render();
-    try {
-      const d = await detectBook(JSZip, await f.arrayBuffer());
-      item.kind = kindOf(d.kinds);
-    } catch { item.kind = null; }
-    render();
-  }
+  const item = { file, kind: undefined };
+  state.prev = item;
+  render();
+  try {
+    const d = await detectBook(JSZip, await file.arrayBuffer());
+    item.kind = kindOf(d.kinds);
+  } catch { item.kind = null; }
+  render();
 }
 
 function bindDrop(zoneSel, inputSel, onFiles) {
@@ -95,54 +132,44 @@ const outs = [];
 async function run() {
   const btn = $('#clRun');
   btn.disabled = true; btn.textContent = '만드는 중…';
-  $('#clResult').innerHTML = '<div class="card"><p class="muted">RD를 읽고 보고서를 만드는 중입니다… (파일이 크면 10~20초 걸릴 수 있어요)</p></div>';
+  $('#clResult').innerHTML = '<div class="card"><p class="muted">RD를 읽고 파일을 만드는 중입니다… (파일이 크면 10~20초 걸릴 수 있어요)</p></div>';
   outs.length = 0;
-  const cards = [];
+  const kind = state.mode;
   try {
     const [XLSX, { default: JSZip }] = await Promise.all([loadXLSX(), import('./vendor/jszip.mjs')]);
     const rdFiles = await Promise.all(state.rds.map(async (f) => ({ name: f.name, buf: await f.arrayBuffer() })));
-    for (const p of state.prevs) {
-      if (!p.kind) continue;
-      try {
-        const prevBuf = await p.file.arrayBuffer();
-        const fn = p.kind === 'internal' ? buildInternal : p.kind === 'packing' ? buildPacking : buildArAp;
-        const out = await fn({ XLSX, JSZip, prevBuf, rdFiles });
-        outs.push(out);
-        cards.push(resultCard(p.kind, p.file.name, out, outs.length - 1));
-        try { await idbPut(p.kind, { name: out.fileName, data: out.data, at: Date.now() }); state.saved[p.kind] = { name: out.fileName, data: out.data }; } catch { /* 저장 공간 */ }
-      } catch (e) {
-        console.error(e);
-        cards.push(`<div class="card err-card"><h2>${esc(KIND_LABEL[p.kind])}: 만들지 못했습니다</h2><p>${esc(e.message || e)}</p></div>`);
-      }
-      $('#clResult').innerHTML = cards.join('');
-    }
+    const prevBuf = await state.prev.file.arrayBuffer();
+    const out = await TYPES[kind].build()({ XLSX, JSZip, prevBuf, rdFiles });
+    outs.push(out);
+    $('#clResult').innerHTML = resultCard(kind, state.prev.file.name, out, 0);
+    try { await idbPut(kind, { name: out.fileName, data: out.data, at: Date.now() }); state.saved[kind] = { name: out.fileName, data: out.data }; } catch { /* 저장 공간 */ }
   } catch (e) {
+    console.error(e);
     $('#clResult').innerHTML = `<div class="card err-card"><h2>만들지 못했습니다</h2><p>${esc(e.message || e)}</p></div>`;
   } finally {
-    btn.textContent = '보고서 만들기';
+    btn.textContent = '파일 만들기';
     render();
   }
 }
 
 export function initClosing() {
-  if (!$('#view-closing')) return;
-  bindDrop('#clPrev', '#clPrevIn', (files) => addPrev(files));
+  if (!$('#view-auto')) return;
+  $('#autoType').addEventListener('change', (e) => setMode(e.target.value));
+  bindDrop('#clPrev', '#clPrevIn', (files) => { if (files[0]) setPrev(files[0]); });
   bindDrop('#clRd', '#clRdIn', (files) => { state.rds.push(...files); });
   document.addEventListener('click', (e) => {
-    const t = e.target.closest('[data-rm-prev],[data-rm-rd],[data-use],[data-dl]');
-    if (!t || !t.closest('#view-closing')) return;
-    if (t.dataset.rmPrev !== undefined) { state.prevs.splice(+t.dataset.rmPrev, 1); render(); }
-    else if (t.dataset.rmRd !== undefined) { state.rds.splice(+t.dataset.rmRd, 1); render(); }
+    const t = e.target.closest('[data-x-prev],[data-x-rd],[data-use],[data-dl]');
+    if (!t || !t.closest('#view-auto')) return;
+    if (t.dataset.xPrev !== undefined) { state.prev = null; render(); }
+    else if (t.dataset.xRd !== undefined) { state.rds.splice(+t.dataset.xRd, 1); render(); }
     else if (t.dataset.use) {
       const v = state.saved[t.dataset.use];
       if (!v) return;
-      const file = new File([v.data], v.name, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      state.prevs = state.prevs.filter((p) => p.kind !== t.dataset.use);
-      state.prevs.push({ file, kind: t.dataset.use });
+      state.prev = { file: new File([v.data], v.name, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), kind: t.dataset.use };
       render();
     } else if (t.dataset.dl !== undefined) download(outs[+t.dataset.dl]);
   });
   $('#clRun').addEventListener('click', run);
   idbAll().then((all) => { state.saved = all || {}; render(); }).catch(() => render());
-  render();
+  setMode(pref('autoType', 'freight'));
 }

@@ -681,3 +681,7 @@ form.focus #focusToggle { background: rgba(255, 255, 255, .12); }
 .fr-places table { margin-top: 10px; }
 .fr-table tr.flag td { background: rgba(217, 138, 0, .08); }
 .fr-ov { width: 140px; text-align: right; padding: 4px 8px; min-height: 34px; font-variant-numeric: tabular-nums; }
+/* 백업자료 생성: 자료 고르기 */
+.auto-pick { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.auto-pick select { font: inherit; font-size: 16px; padding: 9px 12px; min-width: 300px; border: 2px solid var(--primary); border-radius: 10px; background: var(--card, #fff); color: inherit; }
+@media (max-width: 600px) { .auto-pick select { min-width: 0; width: 100%; } }
