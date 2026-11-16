@@ -13,6 +13,7 @@ import { sync, loadInk, saveInk, flushInk, parseConfig, getConfig } from './sync
 import { exportExcel, importExcel } from './excel.js';
 import { APP_VERSION, CHANGES, cmpVersion } from './version.js';
 import { expandEvents, repeatLabel } from './recur.js';
+import { WEEKLY_SEED } from './weekly-seed.js';
 
 /* ---------- 공통 도우미 ---------- */
 const $ = (s, el = document) => el.querySelector(s);
@@ -190,12 +191,67 @@ $('#cal').addEventListener('click', (e) => {
   renderCalendar();
 });
 // 홈 달력: [달력 | 목록] 전환
+let calModeNow = 'week';
 function setCalMode(mode) {
+  calModeNow = mode;
   $('#calBox').hidden = mode !== 'cal';
-  $('#listBox').hidden = mode === 'cal';
+  $('#weekBox').hidden = mode !== 'week';
+  $('#listBox').hidden = mode !== 'list';
+  $('.home-grid')?.classList.toggle('wide', mode === 'week');
   $$('#calMode button').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
-  try { localStorage.setItem('jy-calmode', mode); } catch { /* 무시 */ }
+  try { localStorage.setItem('jy-calmode2', mode); } catch { /* 무시 */ }
+  if (mode === 'week') renderWeek(); else renderCalendar();
 }
+
+/* ---------- 주간 보기 (시간표) ---------- */
+let weekStart = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d; })();
+const CAT_COLORS = { 운영: ['#fbd3ea', '#a0346f'], 영업: ['#d6e6fb', '#1d4f9a'], 생산: ['#d9f2d4', '#2f7a2a'], 전략: ['#fff3a8', '#7a6400'], 경영: ['#fcd5b0', '#8a4b10'] };
+const toMin = (t) => { const [h, m] = String(t || '').split(':').map(Number); return isNaN(h) ? null : h * 60 + (m || 0); };
+function renderWeek() {
+  if (calModeNow !== 'week') return;
+  const { events } = store.get();
+  const from = todayStr(weekStart);
+  const days = [...Array(7)].map((_, i) => { const d = new Date(weekStart); d.setDate(d.getDate() + i); return todayStr(d); });
+  const evs = expandEvents(events, from, days[6]);
+  const weekend = evs.some((e) => e.date === days[5] || e.date === days[6]);
+  const shown = weekend ? days : days.slice(0, 5);
+  const timed = evs.filter((e) => toMin(e.start) !== null);
+  const allDay = evs.filter((e) => toMin(e.start) === null);
+  let h0 = 9, h1 = 18;
+  for (const e of timed) { const a = toMin(e.start), b = toMin(e.end) ?? a + 60; h0 = Math.min(h0, Math.floor(a / 60)); h1 = Math.max(h1, Math.ceil(b / 60)); }
+  const PX = 64;
+  const we = new Date(weekStart); we.setDate(we.getDate() + 6);
+  $('#calTitle').textContent = `${weekStart.getMonth() + 1}/${weekStart.getDate()} ~ ${we.getMonth() + 1}/${we.getDate()} 주간`;
+  const today = todayStr();
+  const head = shown.map((ds) => { const d = parseD(ds); return `<div class="wk-dh ${ds === today ? 'today' : ''}">${DOW[d.getDay()]} <span>${d.getMonth() + 1}/${d.getDate()}</span></div>`; }).join('');
+  const hours = [...Array(h1 - h0)].map((_, i) => `<div class="wk-hr" style="top:${i * PX}px"><span>${h0 + i}:00</span></div>`).join('');
+  const cols = shown.map((ds) => {
+    // 겹치는 일정은 나란히
+    const list = timed.filter((e) => e.date === ds).map((e) => ({ e, a: toMin(e.start), b: Math.max(toMin(e.end) ?? toMin(e.start) + 60, toMin(e.start) + 30) })).sort((x, y) => x.a - y.a || y.b - x.b);
+    const lanes = [];
+    let cluster = [], clusterEnd = -1;
+    const flush = () => { const n = Math.max(1, ...cluster.map((c) => c.lane + 1)); cluster.forEach((c) => { c.n = n; }); cluster = []; };
+    for (const it of list) {
+      if (it.a >= clusterEnd) { flush(); lanes.length = 0; clusterEnd = -1; }
+      let l = lanes.findIndex((end) => end <= it.a);
+      if (l < 0) { l = lanes.length; lanes.push(0); }
+      lanes[l] = it.b; it.lane = l; cluster.push(it); clusterEnd = Math.max(clusterEnd, it.b);
+    }
+    flush();
+    const blocks = list.map(({ e, a, b, lane, n }) => {
+      const [bg, fg] = CAT_COLORS[e.category] || ['var(--primary-soft)', 'var(--primary)'];
+      return `<div class="wk-ev ${e.done ? 'done' : ''}" data-open="event" data-id="${e.id}" data-occ="${e.occ || ''}" title="${esc(`${e.start}~${e.end || ''} ${e.title}${e.attendees ? ' · ' + e.attendees : ''}`)}"
+        style="top:${((a - h0 * 60) / 60) * PX + 1}px;height:${((b - a) / 60) * PX - 3}px;left:calc(${(lane / n) * 100}% + 2px);width:calc(${100 / n}% - 4px);background:${bg};color:${fg}">
+        <b>${esc(e.title)}</b><small>${esc(e.start)}${e.end ? '~' + esc(e.end) : ''}${e.attendees ? ' · ' + esc(e.attendees) : ''}</small></div>`;
+    }).join('');
+    return `<div class="wk-col" data-date="${ds}">${blocks}</div>`;
+  }).join('');
+  const alld = allDay.length ? `<div class="wk-all"><span class="muted sm">종일</span>${allDay.map((e) => `<button class="tag gray" data-open="event" data-id="${e.id}" data-occ="${e.occ || ''}">${fmt(e.date)} ${esc(e.title)}</button>`).join('')}</div>` : '';
+  $('#wk').style.setProperty('--days', shown.length);
+  $('#wk').innerHTML = `${alld}<div class="wk-head"><div></div>${head}</div><div class="wk-body" style="height:${(h1 - h0) * PX}px"><div class="wk-hours">${hours}</div>${cols}</div>
+    <div class="wk-legend">${Object.entries(CAT_COLORS).map(([k, [bg, fg]]) => `<span style="background:${bg};color:${fg}">${k}</span>`).join('')}<span class="muted sm">· 빈 칸을 두 번 누르면 그 날 일정 추가</span></div>`;
+}
+$('#wk').addEventListener('dblclick', (e) => { const c = e.target.closest('.wk-col'); if (c && !e.target.closest('.wk-ev')) openEvent(null, c.dataset.date); });
 $('#calMode').addEventListener('click', (e) => { const b = e.target.closest('button[data-mode]'); if (b) setCalMode(b.dataset.mode); });
 // 홈 검색창 → 검색 화면
 $('#homeSearch').addEventListener('submit', (e) => {
@@ -204,9 +260,12 @@ $('#homeSearch').addEventListener('submit', (e) => {
   $('#q').value = $('#homeQ').value.trim();
   $('#qRun').click();
 });
-$('#calPrev').onclick = () => { calMonth.setMonth(calMonth.getMonth() - 1); renderCalendar(); };
-$('#calNext').onclick = () => { calMonth.setMonth(calMonth.getMonth() + 1); renderCalendar(); };
-$('#calToday').onclick = () => { calMonth = new Date(); calMonth.setDate(1); selDate = todayStr(); renderCalendar(); };
+$('#calPrev').onclick = () => { if (calModeNow === 'week') { weekStart.setDate(weekStart.getDate() - 7); renderWeek(); return; } calMonth.setMonth(calMonth.getMonth() - 1); renderCalendar(); };
+$('#calNext').onclick = () => { if (calModeNow === 'week') { weekStart.setDate(weekStart.getDate() + 7); renderWeek(); return; } calMonth.setMonth(calMonth.getMonth() + 1); renderCalendar(); };
+$('#calToday').onclick = () => {
+  if (calModeNow === 'week') { weekStart = new Date(); weekStart.setHours(0, 0, 0, 0); weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7)); renderWeek(); return; }
+  calMonth = new Date(); calMonth.setDate(1); selDate = todayStr(); renderCalendar();
+};
 
 /* ---------- 회의메모 목록 (노트 표지 / 목록) ---------- */
 const meetingText = (m) => [m.series, m.title, m.attendees, m.tags, m.content, m.summary, (m.decisions || []).join(' '), (m.keywords || []).join(' ')].join(' ').toLowerCase();
@@ -1128,13 +1187,18 @@ function renderAll() {
   if (dlgMeeting.open) renderPrevBox();
   renderDashboard();
   renderCalendar();
+  renderWeek();
   renderMeetings();
   renderTasks();
   renderSettings();
 }
 store.subscribe(renderAll);
 renderAll();
-setCalMode((() => { try { return localStorage.getItem('jy-calmode') || 'cal'; } catch { return 'cal'; } })());
+// 주단위 고정 회의: 기기마다 처음 한 번 등록 (이후 수정·삭제는 일정에서)
+try {
+  if (!localStorage.getItem('jywork-weekly-seeded')) { store.seed('events', WEEKLY_SEED); localStorage.setItem('jywork-weekly-seeded', '1'); }
+} catch { /* 저장 불가 */ }
+setCalMode((() => { try { return localStorage.getItem('jy-calmode2') || 'week'; } catch { return 'week'; } })());
 runPreset('week');
 const startView = location.hash.slice(1);
 if (startView && $('#view-' + startView)) show(startView);

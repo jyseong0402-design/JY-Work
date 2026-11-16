@@ -53,7 +53,7 @@
               <strong id="calTitle"></strong>
               <button class="btn ghost" id="calNext" aria-label="다음 달">›</button>
               <button class="btn ghost sm" id="calToday">오늘</button>
-              <span class="seg" id="calMode"><button type="button" data-mode="cal" class="on">달력</button><button type="button" data-mode="list">목록</button></span>
+              <span class="seg" id="calMode"><button type="button" data-mode="week">주간</button><button type="button" data-mode="cal" class="on">달력</button><button type="button" data-mode="list">목록</button></span>
             </div>
             <div id="calBox">
               <div class="cal" id="cal"></div>
@@ -62,6 +62,7 @@
                 <div id="dayEvents"></div>
               </div>
             </div>
+            <div id="weekBox" hidden><div class="wk" id="wk"></div></div>
             <div id="listBox" hidden>
               <h2>오늘 · 이번 주 일정</h2>
               <div id="dashEvents"></div>
@@ -361,7 +362,7 @@
         <label><span id="dateLabel">날짜</span><input type="date" name="date" required /></label>
         <label>분류
           <select name="category">
-            <option>회의</option><option>외근</option><option>보고</option><option>마감</option><option>개인</option><option>기타</option>
+            <option>회의</option><option>운영</option><option>영업</option><option>생산</option><option>전략</option><option>경영</option><option>외근</option><option>보고</option><option>마감</option><option>개인</option><option>기타</option>
           </select>
         </label>
         <label>시작<input type="time" name="start" /></label>

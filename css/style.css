@@ -817,3 +817,33 @@ dialog.dlg-make { width: min(1000px, calc(100vw - 24px)); padding: 0; }
 .aq-form input:focus { border-color: var(--primary); outline: none; }
 .aq-sumtxt { font-weight: 600; margin-left: 10px; color: var(--muted); }
 .aq-cond span.loc { background: var(--bg); color: var(--muted); border: 1px solid var(--line); }
+
+/* 📅 주간 보기 (시간표) */
+.wk { --days: 5; }
+.wk-head { display: grid; grid-template-columns: 52px repeat(var(--days), 1fr); border: 1px solid var(--line); border-bottom: 0; border-radius: 10px 10px 0 0; background: var(--bg); }
+.wk-dh { text-align: center; font-weight: 700; padding: 7px 0; border-left: 1px solid var(--line); font-size: 14px; }
+.wk-dh span { color: var(--muted); font-weight: 400; font-size: 12px; }
+.wk-dh.today { color: var(--primary); }
+.wk-body { position: relative; display: grid; grid-template-columns: 52px repeat(var(--days), 1fr); border: 1px solid var(--line); border-radius: 0 0 10px 10px; background: var(--panel); }
+.wk-hours { position: relative; grid-column: 1; }
+.wk-hr { position: absolute; left: 0; width: 100%; height: 64px; }
+.wk-hr span { position: absolute; left: 6px; top: 3px; font-size: 12px; color: var(--muted); }
+.wk-body::before { content: ''; position: absolute; inset: 0; pointer-events: none;
+  background-image: linear-gradient(to bottom, var(--line) 1px, transparent 1px), linear-gradient(to bottom, color-mix(in srgb, var(--line) 50%, transparent) 1px, transparent 1px);
+  background-size: 100% 64px, 100% 32px; background-position: 0 0, 0 0; }
+.wk-col { position: relative; border-left: 1px solid var(--line); min-height: 100%; }
+.wk-ev { position: absolute; border-radius: 6px; padding: 3px 6px; font-size: 12px; overflow: hidden; cursor: pointer; line-height: 1.35; box-shadow: 0 1px 2px rgba(0,0,0,.08); z-index: 1; }
+.wk-ev:hover { z-index: 3; outline: 2px solid currentColor; }
+.wk-ev b { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-all; }
+.wk-ev small { display: block; opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wk-ev.done { opacity: .5; }
+.wk-all { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+.wk-all .tag { border: 0; cursor: pointer; }
+.wk-legend { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+.wk-legend > span:not(.muted) { border-radius: 6px; padding: 1px 8px; font-size: 12px; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .wk-ev { filter: brightness(.92); } }
+/* 주간 보기일 때 달력을 넓게, 오른쪽 요약은 아래로 3칸 */
+.home-grid.wide { grid-template-columns: 1fr; }
+.home-grid.wide .home-side { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.home-grid.wide .home-side .card { margin-bottom: 0; }
+@media (max-width: 1000px) { .home-grid.wide .home-side { grid-template-columns: 1fr; } }
