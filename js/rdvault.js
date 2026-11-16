@@ -193,7 +193,10 @@ async function runAll() {
         st.outs.push({ kind: o.kind, label: o.label, out });
         await putSaved(o.kind, { name: out.fileName, data: out.data, at: Date.now() }).catch(() => {});
         const w = out.report.warnings || [];
+        const scopeBad = w.filter((x) => /범위 확인/.test(x));
+        const scopeOk = (out.report.info || []).filter((x) => /범위 확인 ✓/.test(x));
         cards.push(`<div class="rd-res"><div class="rd-res-h"><span>✅ <b>${o.label}</b> → ${esc(out.fileName)}</span><button class="btn sm primary" data-rd-out="${st.outs.length - 1}">⬇ 내려받기</button></div>
+          ${scopeBad.map((x) => `<div class="rd-scope bad">${esc(x)}</div>`).join('')}${scopeOk.map((x) => `<div class="rd-scope ok sm">${esc(x)}</div>`).join('')}
           ${w.length ? `<details><summary class="sm">확인할 것 ${w.length}건</summary><ul class="fr-notes">${w.map((x) => `<li>⚠ ${esc(x)}</li>`).join('')}</ul></details>` : '<div class="muted sm">확인할 것 없음</div>'}</div>`);
       } catch (e) {
         console.error(e);

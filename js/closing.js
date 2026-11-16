@@ -25,7 +25,7 @@ export function readPartnerLedgers(XLSX, files) {
       const H = t.head;
       const ix = (k) => H.findIndex((h) => h === k);
       const cName = ix('거래처명'), cCode = ix('거래처코드'), cAc = ix('계정코드'), cAn = ix('계정명');
-      const cB = ix('기초'), cD = ix('차변'), cC = ix('대변'), cE = ix('잔액'), cV = ix('v');
+      const cB = ix('기초'), cD = ix('차변'), cC = ix('대변'), cE = ix('잔액'), cV = ix('v'), cSite = ix('사업장');
       if (cName < 0 || (cAc < 0 && cAn < 0) || cE < 0) continue;
       for (let i = t.start; i < grid.length; i++) {
         const r = grid[i] || [];
@@ -34,7 +34,7 @@ export function readPartnerLedgers(XLSX, files) {
         const ac = cAc >= 0 ? norm(r[cAc]) : '';
         const an = cAn >= 0 ? norm(r[cAn]) : '';
         if (!ac && !an) continue;
-        out.push({ v: cV >= 0 ? r[cV] : 0, code: cCode >= 0 ? r[cCode] : null, name: String(nm), acctCode: ac, acctName: an,
+        out.push({ v: cV >= 0 ? r[cV] : 0, code: cCode >= 0 ? r[cCode] : null, name: String(nm), acctCode: ac, acctName: an, site: cSite >= 0 ? norm(r[cSite]) : '',
           open: num(r[cB]), dr: num(r[cD]), cr: num(r[cC]), bal: num(r[cE]), src: name });
         got++;
       }
@@ -165,6 +165,40 @@ async function addArApMonth(book, kind, rd, target, report) {
   const tplData = [...tpl.rows.keys()].filter((rn) => rn >= 3 && norm(book.text(tpl.info('C', rn)))).sort((a, b) => a - b);
   const tplLast = tplData[tplData.length - 1];
   const tplTotal = tplLast + 1;
+
+  /* --- 범위 확인: 이번 RD '기초' = 지난달 시트 '잔액' 이어야 같은 법인 범위로 받은 것 --- */
+  {
+    const scope = norm(book.text(cmp.info('A', 1))).replace(/^ERP\s*>\s*/, '');
+    if (scope) report.info.push(`${K.label}: 지난달 파일의 거래처원장 조회 범위 — ${scope}`);
+    const prevBal = new Map();
+    let prevSum = 0;
+    for (const rn of tplData) {
+      const nm = norm(book.text(tpl.info('C', rn)));
+      const v = num(book.val(tpl, 'I', rn));
+      prevBal.set(nm, (prevBal.get(nm) || 0) + v);
+      prevSum += v;
+    }
+    const openBal = new Map();
+    let openSum = 0;
+    for (const r of rows) { const nm = norm(r.name); openBal.set(nm, (openBal.get(nm) || 0) + r.open); openSum += r.open; }
+    const diffs = [];
+    for (const nm of new Set([...prevBal.keys(), ...openBal.keys()])) {
+      const d = (openBal.get(nm) || 0) - (prevBal.get(nm) || 0);
+      if (Math.abs(d) >= 1) diffs.push({ nm, prev: prevBal.get(nm) || 0, open: openBal.get(nm) || 0, d });
+    }
+    diffs.sort((a, b) => Math.abs(b.d) - Math.abs(a.d));
+    const sites = [...new Set(rows.map((r) => r.site).filter(Boolean))];
+    const check = { prevSum, openSum, diff: openSum - prevSum, vendors: diffs.length, sites };
+    report.checks = (report.checks || []).concat({ label: K.label, ...check });
+    const won = (n) => Math.round(n).toLocaleString();
+    if (Math.abs(check.diff) >= 1 || diffs.length) {
+      report.warnings.unshift(`⚠ ${K.label} 범위 확인: 이번 RD 기초 합계 ${won(openSum)}원 ≠ 지난달(${last.name}) 잔액 합계 ${won(prevSum)}원 (차이 ${won(openSum - prevSum)}원, 거래처 ${diffs.length}곳). ERP 거래처원장을 지난달과 같은 법인 범위로 받았는지 확인하세요${scope ? ` (지난달: ${scope})` : ''}.`
+        + (diffs.length ? ` 차이 큰 거래처: ${diffs.slice(0, 5).map((x) => `${x.nm} 기초 ${won(x.open)} / 지난달 ${won(x.prev)}`).join(', ')}${diffs.length > 5 ? ' …' : ''}` : '')
+        + (sites.length ? ` · RD에 들어 있는 사업장: ${sites.join(', ')}` : ''));
+    } else {
+      report.info.push(`${K.label} 범위 확인 ✓ 이번 RD 기초 합계가 지난달 잔액 합계(${won(prevSum)}원)와 같습니다${sites.length ? ` · 사업장: ${sites.join(', ')}` : ''}.`);
+    }
+  }
 
   /* --- 새 월 시트 --- */
   const ns = new Sheet(tpl.xml.replace(/<mergeCells[\s\S]*?<\/mergeCells>/, ''), newName);

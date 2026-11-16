@@ -789,3 +789,6 @@ dialog.dlg-make { width: min(1000px, calc(100vw - 24px)); padding: 0; }
 .rd-res.bad { border-color: var(--danger); color: var(--danger); }
 .rd-res-h { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
 .rd-res details { margin-top: 6px; }
+.rd-scope { margin-top: 6px; padding: 8px 10px; border-radius: 8px; font-size: 13.5px; }
+.rd-scope.bad { background: color-mix(in srgb, var(--danger) 10%, transparent); color: var(--danger); font-weight: 600; }
+.rd-scope.ok { background: color-mix(in srgb, var(--ok) 10%, transparent); color: var(--ok); }
