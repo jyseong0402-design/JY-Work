@@ -380,7 +380,7 @@ export function initRdVault() {
     const b = e.target.closest('button');
     if (!b) return;
     try {
-      if (b.id === 'rdPick') { const h = await window.showDirectoryPicker({ id: 'jywork-year', mode: 'readwrite' }); fold.root = h; await putRoot(h); await checkPerm(true); fold.msg = ''; await folderRead(); }
+      if (b.id === 'rdPick') { const h = await window.showDirectoryPicker({ id: 'jywork-year', mode: 'readwrite' }); fold.root = h; await putRoot(h).catch(() => {}); await checkPerm(true); fold.msg = ''; await folderRead(); }
       else if (b.id === 'rdGrant') { if (await checkPerm(true)) await folderRead(); else renderFolder(); }
       else if (b.id === 'rdFoldRead') await folderRead();
       else if (b.id === 'rdFoldRun') { await folderRead(); await runAll(); }
