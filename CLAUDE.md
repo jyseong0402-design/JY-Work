@@ -22,7 +22,7 @@
 
 - 메뉴(2026-11-16~): 홈(dashboard: 달력 #calMode 달력/목록, #homeSearch→search 뷰, #homeClosing=board.homeClosingHTML) · 메모(meetings) · 월마감 현황(board) · RD 보관함(rd) · 자료생성(auto) · 설정. tasks/search 뷰는 메뉴 없이 [data-go-view]로 이동
 - `js/rdvault.js` 📥 RD 보관함: IndexedDB 'jywork-rd'(기기별, 요금 없음) 월별 보관, classify로 거래처원장/계정별원장/기간별입고현황/운반비 집계 인식(날짜 있는 RD는 그 달로), 지난달 파일=자료생성과 같은 저장소(jywork-closing/kind, jywork-freight/'last'), 파일명 _YYMM이 보관함 달 이상이면 사용 안 함, 한꺼번에 만들기+zip
-- `js/rdask.js` 💬 RD에 물어보기(RD 보관함 아래 #aqCard): 질문→AI(aiJson, SPEC_SCHEMA)가 조회 조건 JSON만 생성(보내는 것: 질문·열 이름·계정코드/계정명·사업장 목록, 금액 X)→브라우저에서 runSpec으로 필터·정렬·소계/요약→원래 RD 열 그대로 + 맨 끝 '법인' 열(corpOf: 사업장→대흥/군자/송이애/중부·이천팜/SPC). 14xxx=제조, 15xxx=판관. 엑셀은 SheetJS(제목·머리글·소계·합계, 법인별 시트 옵션). API 키 없거나 AI 실패 시 localSpec(계정명 앞부분 매칭+앞의 제조/판관, 법인, 잔액 n억 이상, 합계/요약, 이어서 고치기)
+- `js/rdask.js` 💬 RD에 물어보기(RD 보관함 아래 #aqCard): 질문→AI(aiJson, SPEC_SCHEMA)가 조회 조건 JSON만 생성(보내는 것: 질문·열 이름·계정코드/계정명·사업장 목록, 금액 X)→브라우저에서 runSpec으로 필터·정렬·소계/요약→원래 RD 열 그대로 + 맨 끝 '법인' 열(corpOf: 사업장→대흥/군자/송이애/중부·이천팜/SPC). 14xxx=제조, 15xxx=판관. 엑셀(원장 행)은 toStyledExcel: 첫 RD 파일을 본보기로 다른 시트 삭제(Book.removeSheet)·머리글 줄 유지·데이터 줄 서식은 날짜 있는 첫 줄, 소계는 원본 합계 줄 서식(없으면 데이터 줄), '법인' 가상 열은 엑셀에 안 넣음. 요약(summary)만 SheetJS. API 키 없거나 AI 실패 시 localSpec(계정명 앞부분 매칭+앞의 제조/판관, 법인, 잔액 n억 이상, 합계/요약, 이어서 고치기)
 - 화면: 「📊 자료생성」(view-auto) 한 메뉴 + 드롭다운(#autoType). 운반비=freight-ui(.auto-panel[data-panel=freight]), 나머지=closing-ui의 TYPES 목록
   · 새 자료 추가: closing.js에 build 함수 + closing-ui.js TYPES 한 줄 + index.html <option> 하나
   · 원칙: 기존 서식·수식 절대 유지, 이번 달만 추가(손대지 않은 시트는 원본 그대로 저장). 검증은 rd/integrity.py 방식(원래 셀 서식·수식 비교)

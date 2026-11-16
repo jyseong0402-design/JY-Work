@@ -2,7 +2,7 @@
 // → 이 PC 브라우저 안에서 보관함 RD를 걸러 원래 ERP 양식(같은 열 순서·머리글)으로 표와 엑셀을 만듦
 import { loadXLSX } from './excel.js';
 import { aiJson, aiEnabled } from './ai.js';
-import { findTable, norm, num } from './xlsxkit.js';
+import { findTable, norm, num, Book, Sheet, valCell, blankCell, textCell, numCell, colLet, cellInfo } from './xlsxkit.js';
 import { vaultState } from './rdvault.js';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -44,7 +44,7 @@ async function tablesOf(f) {
       }
       if (!rows.length) continue;
       const prev = out[key];
-      if (prev) prev.rows.push(...rows); else out[key] = { head: cols.map((x) => x.name), rows };
+      if (prev) prev.rows.push(...rows); else out[key] = { head: cols.map((x) => x.name), rows, layout: { sheet: sn, headerRow: t.headerRow, start: t.start, cols } };
     }
   }
   cache.set(f.id, out);
@@ -58,10 +58,11 @@ async function gather(source, months) {
   let head = null;
   const rows = [];
   const used = [];
+  let tpl = null; // 엑셀 서식 본보기: 첫 번째 RD 파일의 그 시트
   for (const f of pick) {
     const t = (await tablesOf(f))[source];
     if (!t) continue;
-    if (!head) head = [...t.head];
+    if (!head) { head = [...t.head]; tpl = { file: f, ...t.layout }; }
     // 파일마다 열 순서가 다를 수 있어 이름으로 맞춤 (없는 열은 뒤에 추가)
     for (const h of t.head) if (!head.includes(h)) head.push(h);
     const idx = head.map((h) => t.head.indexOf(h));
@@ -74,7 +75,7 @@ async function gather(source, months) {
     head.push('법인');
     for (const r of rows) r.cells.push(corpOf(si >= 0 ? norm(r.cells[si]) : '', r.file));
   }
-  return { head: head || [], rows, used };
+  return { head: head || [], rows, used, tpl };
 }
 
 // 사업장 → 법인 (원래 양식 맨 끝에 '법인' 열을 붙여 법인별 소계·필터에 씀)
@@ -233,6 +234,86 @@ function tableHTML(res, { subtotal = true, max = 300 } = {}) {
     lines.push(subRow('합계', res.total, 'aq-tot'));
   }
   return `<div class="aq-xl"><table><tr>${th}</tr>${lines.join('')}</table></div>${n > max ? `<p class="muted sm">화면에는 ${max}행까지만 보입니다. 엑셀에는 ${res.rowCount.toLocaleString()}행이 모두 들어갑니다.</p>` : ''}`;
+}
+
+const colOf0 = (tpl, name) => { const x = tpl.cols.find((y) => y.name === name); return x ? x.c + 1 : null; };
+// 원본 RD 파일을 본보기로: 머리글 위쪽(제목·머리글 줄)과 열 너비·서식은 그대로, 데이터 줄만 결과로 바꿈
+async function toStyledExcel(res, spec, tpl, { subtotal = true, split = false } = {}) {
+  const { default: JSZip } = await import('./vendor/jszip.mjs');
+  const book = await Book.open(JSZip, tpl.file.data);
+  for (const s0 of [...book.sheets]) if (s0.name !== tpl.sheet) book.removeSheet(s0.name);
+  const sh = await book.sheet(tpl.sheet);
+  sh.expandShared();
+  const first = tpl.start + 1; // 1부터 세는 행 번호
+  const rowsNo = [...sh.rows.keys()].sort((a, b) => a - b);
+  // 데이터 줄 서식: 첫 데이터 줄, 소계 줄 서식: 원본의 합계·월계·누계 줄(없으면 데이터 줄)
+  const dCol = SOURCES[spec.source].date ? colOf0(tpl, SOURCES[spec.source].date) : null;
+  const dataRn = rowsNo.find((rn) => rn >= first && (dCol ? cellInfo(sh.rows.get(rn).cells.get(dCol))?.v !== undefined : [...sh.rows.get(rn).cells.values()].some((x) => cellInfo(x)?.v !== undefined))) || first;
+  const sumRn = rowsNo.find((rn) => rn >= first && [...sh.rows.get(rn).cells.values()].some((x) => /합\s*계|월\s*계|누\s*계|소\s*계/.test(book.text(cellInfo(x)))));
+  // 지우기 전에 본보기 줄(데이터·합계)의 서식을 먼저 기억
+  const keep = new Map([dataRn, sumRn].filter(Boolean).map((rn) => [rn, { attrs: sh.rows.get(rn)?.attrs || '', cells: new Map(sh.rows.get(rn)?.cells || []) }]));
+  const styleAt = (rn, c) => { const x = keep.get(rn)?.cells.get(c); return x ? (x.match(/\ss="(\d+)"/) || [])[1] : undefined; };
+  const colOf = new Map(tpl.cols.map((x) => [x.name, x.c + 1])); // 결과 열 이름 → 원본 열 번호
+  const outCols = res.head.map((h) => colOf.get(h)).map((c) => c || null); // '법인' 같은 가상 열은 null
+  const allCols = new Set([...(keep.get(dataRn)?.cells.keys() || []), ...outCols.filter(Boolean)]);
+  const dataAttrs = keep.get(dataRn)?.attrs || '';
+  const firstSumCol = Math.min(...res.sumIdx.map((i) => outCols[i]).filter(Boolean));
+  const labelCol = Math.min(...[...allCols]);
+  const writeRows = (target, groups, withSub) => {
+    for (const rn of [...target.rows.keys()]) if (rn >= first) target.rows.delete(rn);
+    let rn = first - 1;
+    const putRow = (cellsFn, styleRn) => {
+      rn++;
+      const cells = new Map();
+      for (const c of allCols) cells.set(c, cellsFn(c, `${colLet(c)}${rn}`, styleAt(styleRn, c) ?? styleAt(dataRn, c)));
+      target.rows.set(rn, { attrs: (styleRn === dataRn ? dataAttrs : keep.get(styleRn)?.attrs || dataAttrs).replace(/\sr="\d+"/, ` r="${rn}"`) || ` r="${rn}"`, cells });
+    };
+    const sumLine = (label, sums) => putRow((c, ref, st) => {
+      if (c === labelCol) return textCell(ref, st, label);
+      const i = res.sumIdx.findIndex((k) => outCols[k] === c);
+      return i >= 0 ? numCell(ref, st, Math.round(sums[i] * 100) / 100) : blankCell(ref, st);
+    }, sumRn || dataRn);
+    for (const g of groups) {
+      for (const r of g.rows) {
+        putRow((c, ref, st) => {
+          const i = outCols.indexOf(c);
+          const v = i >= 0 ? r.cells[i] : null;
+          return v === null || v === undefined || v === '' ? blankCell(ref, st) : valCell(ref, st, v);
+        }, dataRn);
+      }
+      if (withSub && g.key !== null) sumLine(`${g.key || '(빈칸)'} 소계`, res.totalOf(g.rows));
+    }
+    sumLine('합계', res.totalOf(groups.flatMap((g) => g.rows)));
+    // 필터 범위·표시 범위 맞춤
+    target.xml = target.xml.replace(/(<autoFilter ref="[A-Z]+\d+:[A-Z]+)(\d+)"/, (m, a) => `${a}${rn}"`)
+      .replace(/<mergeCell ref="([A-Z]+)(\d+):([A-Z]+)(\d+)"\/>/g, (m, a, r1) => (+r1 >= first ? '' : m))
+      .replace(/<conditionalFormatting[\s\S]*?<\/conditionalFormatting>/g, '');
+    target.xml = target.xml.replace(/<mergeCells count="\d+">([\s\S]*?)<\/mergeCells>/, (m, body) => { const n = (body.match(/<mergeCell /g) || []).length; return n ? `<mergeCells count="${n}">${body}</mergeCells>` : ''; });
+    void firstSumCol;
+  };
+  if (split && res.groups.length > 1) {
+    const baseXml = sh.xml;
+    const baseRows = new Map([...sh.rows].filter(([rn]) => rn < first).map(([rn, r]) => [rn, { attrs: r.attrs, cells: new Map(r.cells) }]));
+    let k = 0;
+    for (const g of res.groups) {
+      const name = (g.key || '(빈칸)').replace(/[\\/?*[\]:]/g, ' ').slice(0, 31);
+      if (k === 0) { writeRows(sh, [g], false); book.sheets.find((x) => x.name === tpl.sheet).name = name; book.wbXml = book.wbXml.replace(/(<sheet\b[^>]*name=")[^"]+"/, `$1${name.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"`); book.cache.delete(tpl.sheet); book.cache.set(name, sh); sh.name = name; }
+      else {
+        const ns = new Sheet(baseXml, name);
+        ns.rows = new Map([...baseRows].map(([rn, r]) => [rn, { attrs: r.attrs, cells: new Map(r.cells) }]));
+        writeRows(ns, [g], false);
+        await book.addSheet(name, ns, {});
+      }
+      k++;
+    }
+  } else writeRows(sh, res.groups, subtotal);
+  const data = await book.save();
+  const blob = new Blob([data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${(spec.title || 'RD_query').replace(/[\\/:*?"<>|]/g, ' ').trim()}.xlsx`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 }
 
 async function toExcel(res, spec, { subtotal = true, split = false } = {}) {
@@ -402,7 +483,7 @@ async function ask(q) {
     const g = await gather(spec.source, months);
     const res = runSpec(spec, g);
     chat.last = spec;
-    chat.items[slot] = { spec, res, used: g.used, subtotal: true };
+    chat.items[slot] = { spec, res, used: g.used, tpl: g.tpl, subtotal: true };
   } catch (e) {
     chat.items[slot] = { err: e.message || String(e) };
   }
@@ -418,11 +499,13 @@ export function initRdAsk() {
     if (!b) return;
     const it = chat.items[+(b.dataset.aqXl ?? b.dataset.aqSplit ?? b.dataset.aqSub)];
     if (!it || !it.res) return;
-    if (b.dataset.aqXl !== undefined) toExcel(it.res, it.spec, { subtotal: it.subtotal });
-    else if (b.dataset.aqSplit !== undefined) toExcel(it.res, it.spec, { subtotal: it.subtotal, split: true });
+    const styled = it.res.mode === 'rows' && it.tpl;
+    const go = (opts) => (styled ? toStyledExcel(it.res, it.spec, it.tpl, opts) : toExcel(it.res, it.spec, opts)).catch((err) => { console.error(err); toExcel(it.res, it.spec, opts); });
+    if (b.dataset.aqXl !== undefined) go({ subtotal: it.subtotal });
+    else if (b.dataset.aqSplit !== undefined) go({ subtotal: it.subtotal, split: true });
     else if (b.dataset.aqSub !== undefined) { it.subtotal = !it.subtotal; renderLog(); }
   });
 }
 
 // 테스트용 (Node에서 조건 실행만 확인)
-export const _test = { localSpec, runSpec, gather, tablesOf, schemaFor, toExcel, tableHTML, chat, renderLog };
+export const _test = { toStyledExcel, localSpec, runSpec, gather, tablesOf, schemaFor, toExcel, tableHTML, chat, renderLog };

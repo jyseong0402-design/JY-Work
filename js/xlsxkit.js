@@ -304,6 +304,33 @@ export class Book {
     this.zip.file(dstPath.replace('worksheets/', 'worksheets/_rels/') + '.rels', rx);
     return sheetXml;
   }
+  // 시트 지우기 (워크북 목록·관계·내용형식·시트 전용 이름 정리)
+  removeSheet(name) {
+    const list = [...this.wbXml.matchAll(/<sheet\b[^>]*\/>/g)].map((m) => m[0]);
+    const idx = list.findIndex((t) => unesc(t.match(/name="([^"]+)"/)[1]) === name);
+    if (idx < 0) return;
+    const tag = list[idx];
+    const rid = tag.match(/r:id="([^"]+)"/)[1];
+    const s = this.sheets.find((x) => x.name === name);
+    this.wbXml = this.wbXml.replace(tag, '');
+    this.relXml = this.relXml.replace(new RegExp(`<Relationship\\b[^>]*Id="${rid}"[^>]*/>`), '');
+    if (s?.path) {
+      this.ct = this.ct.replace(new RegExp(`<Override PartName="/${reEsc(s.path)}"[^>]*/>`), '');
+      this.zip.remove(s.path);
+      const rp = s.path.replace('worksheets/', 'worksheets/_rels/') + '.rels';
+      if (this.zip.file(rp)) this.zip.remove(rp);
+    }
+    const nm = reEsc(name).replace(/'/g, "''?");
+    this.wbXml = this.wbXml.replace(/<definedName\b([^>]*)>([\s\S]*?)<\/definedName>/g, (m, a, body) => {
+      const ls = (a.match(/localSheetId="(\d+)"/) || [])[1];
+      if (ls !== undefined && +ls === idx) return '';
+      if (new RegExp(`'?${nm}'?!`).test(unesc(body))) return '';
+      return ls !== undefined && +ls > idx ? m.replace(`localSheetId="${ls}"`, `localSheetId="${+ls - 1}"`) : m;
+    }).replace(/<definedNames>\s*<\/definedNames>/, '');
+    this.wbXml = this.wbXml.replace(/activeTab="\d+"/, 'activeTab="0"').replace(/firstSheet="\d+"/, 'firstSheet="0"');
+    this.sheets = this.sheets.filter((x) => x.name !== name);
+    this.cache.delete(name);
+  }
   // 새 시트 추가: sheet(Sheet 객체), relsFrom(메모·도형을 복사할 원본 시트 이름), after/before 위치
   async addSheet(name, sheet, { relsFrom, after, before } = {}) {
     if (this.has(name)) throw new Error(`이미 '${name}' 시트가 있습니다`);
