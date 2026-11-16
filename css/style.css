@@ -761,3 +761,31 @@ dialog.dlg-make { width: min(1000px, calc(100vw - 24px)); padding: 0; }
 .bd-need-h { cursor: default; font-size: 12px; color: var(--muted); font-weight: 600; padding: 2px 0; }
 .bd-dept .tag { margin: 0; }
 @media (max-width: 900px) { .bd-nhead { display: none; } .bd-nrow { grid-template-columns: 1fr 1fr; } .bd-nrow input[data-n="name"] { grid-column: 1 / -1; } }
+
+/* 🏠 홈: 검색창 · 달력 · 오른쪽 요약 */
+.home-search { display: flex; gap: 8px; margin: 0 0 14px; }
+.home-search input { flex: 1; margin: 0; font-size: 16px; padding: 12px 16px; border: 2px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--text); }
+.home-search input:focus { border-color: var(--primary); outline: none; }
+.home-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.home-side .card { margin-bottom: 16px; }
+.home-cal .cal-head { flex-wrap: wrap; }
+.home-cal .cal-head .seg { margin-left: auto; }
+.day-box { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+.day-box h2 { font-size: 16px; }
+.card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }
+.card-head h2 { margin: 0; }
+.st { display: inline-block; border-radius: 99px; padding: 2px 10px; font-size: 12.5px; font-weight: 700; white-space: nowrap; }
+.st.ok { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
+.st.wn { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+.hc-row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); cursor: pointer; font-size: 14px; }
+.hc-row .muted { grid-column: 2; }
+.hc-name { font-weight: 600; }
+.back { margin-right: 6px; vertical-align: middle; }
+@media (max-width: 1000px) { .home-grid { grid-template-columns: 1fr; } }
+
+/* 📥 RD 보관함 */
+.rd-drop { min-height: 0; margin-bottom: 16px; align-items: center; text-align: center; padding: 22px; }
+.rd-res { border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; margin-bottom: 8px; }
+.rd-res.bad { border-color: var(--danger); color: var(--danger); }
+.rd-res-h { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.rd-res details { margin-top: 6px; }

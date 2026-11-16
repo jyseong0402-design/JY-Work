@@ -301,3 +301,27 @@ export function initBoard({ openAuto } = {}) {
   render();
 }
 const $$last = (s) => { const a = document.querySelectorAll(s); return a[a.length - 1]; };
+
+// 🏠 홈 요약: 이번 달 진행률 + 바로 작업 가능한 업무 / 파일 기다리는 업무
+export function homeClosingHTML() {
+  const month = ym(new Date());
+  const items = list();
+  if (!items.length) return '<div class="empty">월마감 업무가 없습니다.</div>';
+  let done = 0, miss = 0;
+  const ready = [], wait = [];
+  for (const t of items) {
+    const mk = (t.marks && t.marks[month]) || { done: '', recv: {} };
+    const needs = t.needs || [];
+    const left = needs.filter((n) => !mk.recv?.[n.id]);
+    miss += left.length;
+    if (mk.done) { done++; continue; }
+    if (needs.length && !left.length) ready.push(t);
+    else if (left.length) wait.push({ t, left });
+  }
+  const pct = Math.round((done / items.length) * 100);
+  const row = (cls, label, t, sub) => `<div class="hc-row" data-go-view="board"><span class="st ${cls}">${label}</span><span class="hc-name">${esc(t.name)}</span><span class="muted sm">${esc(sub)}</span></div>`;
+  return `<div class="bd-prog"><i style="width:${pct}%"></i></div>
+    <p class="muted sm" style="margin:6px 0 8px">${monthLabel(month)} · ${items.length}개 중 <b>${done}</b>개 완료 · 못 받은 필요파일 ${miss}개</p>
+    ${ready.slice(0, 3).map((t) => row('ok', '작업 가능', t, '필요파일 모두 받음')).join('')}
+    ${wait.slice(0, Math.max(0, 4 - Math.min(ready.length, 3))).map(({ t, left }) => row('wn', '대기', t, `${left[0].name}${left.length > 1 ? ` 외 ${left.length - 1}` : ''} 미수취`)).join('')}`;
+}

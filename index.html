@@ -17,12 +17,10 @@
     <nav class="nav" aria-label="메뉴">
       <div class="brand"><img src="icons/icon.svg" alt="" /><span>업무노트</span></div>
       <button data-view="dashboard" class="active"><span class="ic">🏠</span><span>홈</span></button>
+      <button data-view="meetings"><span class="ic">📝</span><span>메모</span></button>
       <button data-view="board"><span class="ic">📋</span><span>월마감 현황</span></button>
-      <button data-view="calendar"><span class="ic">📅</span><span>일정</span></button>
-      <button data-view="meetings"><span class="ic">📝</span><span>회의메모</span></button>
-      <button data-view="tasks"><span class="ic">✅</span><span>할일</span></button>
-      <button data-view="search"><span class="ic">🔎</span><span>조회</span></button>
-      <button data-view="auto"><span class="ic">📊</span><span>백업자료 생성</span></button>
+      <button data-view="rd"><span class="ic">📥</span><span>RD 보관함</span></button>
+      <button data-view="auto"><span class="ic">📊</span><span>자료생성</span></button>
       <button data-view="settings"><span class="ic">⚙️</span><span>설정</span></button>
       <button type="button" class="nav-ver" id="appVer" title="업데이트 내역 보기"></button>
     </nav>
@@ -38,35 +36,42 @@
           </div>
           <div class="actions">
             <button class="btn" data-new="event">+ 일정</button>
-            <button class="btn primary" data-new="meeting">+ 회의메모</button>
+            <button class="btn" data-new="task">+ 할일</button>
+            <button class="btn primary" data-new="meeting">+ 메모</button>
           </div>
         </header>
+        <form class="home-search" id="homeSearch">
+          <input type="search" id="homeQ" placeholder="🔎 메모·일정·할일 검색 (예: 운반비, 예산, 김대리)" />
+          <button class="btn" type="submit">검색</button>
+          <button class="btn ghost" type="button" data-go-view="search" title="기간·종류 검색, 빠른 리포트, AI 질문">상세 검색</button>
+        </form>
         <div class="stats" id="stats"></div>
-        <div class="grid2">
-          <div class="card"><h2>오늘 · 이번 주 일정</h2><div id="dashEvents"></div></div>
-          <div class="card"><h2>마감 임박 할일</h2><div id="dashTasks"></div></div>
-        </div>
-        <div class="card"><h2>최근 회의 요약</h2><div id="dashMeetings"></div></div>
-      </section>
-
-      <!-- 일정 -->
-      <section id="view-calendar" class="view">
-        <header class="vh">
-          <h1>일정</h1>
-          <div class="actions"><button class="btn primary" data-new="event">+ 일정 추가</button></div>
-        </header>
-        <div class="card">
-          <div class="cal-head">
-            <button class="btn ghost" id="calPrev" aria-label="이전 달">‹</button>
-            <strong id="calTitle"></strong>
-            <button class="btn ghost" id="calNext" aria-label="다음 달">›</button>
-            <button class="btn ghost sm" id="calToday">오늘</button>
+        <div class="home-grid">
+          <div class="card home-cal">
+            <div class="cal-head">
+              <button class="btn ghost" id="calPrev" aria-label="이전 달">‹</button>
+              <strong id="calTitle"></strong>
+              <button class="btn ghost" id="calNext" aria-label="다음 달">›</button>
+              <button class="btn ghost sm" id="calToday">오늘</button>
+              <span class="seg" id="calMode"><button type="button" data-mode="cal" class="on">달력</button><button type="button" data-mode="list">목록</button></span>
+            </div>
+            <div id="calBox">
+              <div class="cal" id="cal"></div>
+              <div class="day-box">
+                <h2 id="dayTitle"></h2>
+                <div id="dayEvents"></div>
+              </div>
+            </div>
+            <div id="listBox" hidden>
+              <h2>오늘 · 이번 주 일정</h2>
+              <div id="dashEvents"></div>
+            </div>
           </div>
-          <div class="cal" id="cal"></div>
-        </div>
-        <div class="card">
-          <h2 id="dayTitle"></h2>
-          <div id="dayEvents"></div>
+          <div class="home-side">
+            <div class="card"><div class="card-head"><h2>📋 이번 달 월마감</h2><button class="btn ghost sm" data-go-view="board">월마감 현황 →</button></div><div id="homeClosing"></div></div>
+            <div class="card"><div class="card-head"><h2>✅ 할일</h2><button class="btn ghost sm" data-go-view="tasks">전체 보기 →</button></div><div id="dashTasks"></div></div>
+            <div class="card"><div class="card-head"><h2>📝 최근 메모</h2><button class="btn ghost sm" data-go-view="meetings">메모 →</button></div><div id="dashMeetings"></div></div>
+          </div>
         </div>
       </section>
 
@@ -97,7 +102,7 @@
       <!-- 할일 -->
       <section id="view-tasks" class="view">
         <header class="vh">
-          <h1>할일</h1>
+          <h1><button type="button" class="btn ghost sm back" data-go-view="dashboard">← 홈</button> 할일</h1>
           <div class="actions"><button class="btn primary" data-new="task">+ 할일 추가</button></div>
         </header>
         <div class="toolbar">
@@ -114,7 +119,7 @@
 
       <!-- 조회 · 리포트 -->
       <section id="view-search" class="view">
-        <header class="vh"><h1>조회 · 리포트</h1></header>
+        <header class="vh"><h1><button type="button" class="btn ghost sm back" data-go-view="dashboard">← 홈</button> 검색 · 리포트</h1></header>
         <div class="card">
           <h2>빠른 리포트</h2>
           <div class="chips" id="presets">
@@ -185,10 +190,34 @@
         </div>
       </section>
 
+      <section id="view-rd" class="view">
+        <header class="vh bd-head">
+          <div>
+            <h1>📥 RD 보관함</h1>
+            <p class="muted sm">이번 달 RD를 한 번 올려 두면, 만들 수 있는 월마감 자료를 한꺼번에 만듭니다. 파일은 <b>이 기기 안에만</b> 월별로 보관됩니다 (외부 서버·요금 없음).</p>
+          </div>
+          <div class="bd-monthnav"><button class="btn sm" id="rdPrev">◀</button><b id="rdMonth"></b><button class="btn sm" id="rdNext">▶</button></div>
+        </header>
+        <div class="fr-drop rd-drop" id="rdDrop" tabindex="0">
+          <b>📂 RD 파일을 끌어다 놓거나 눌러서 선택</b>
+          <small>거래처원장 · 계정별원장 · 기간별입고현황 · 운반비 집계파일 (전체계정 그대로, 여러 개 가능) — 종류는 자동으로 알아봅니다</small>
+          <div class="sm" id="rdMsg"></div>
+          <input type="file" id="rdIn" accept=".xlsx,.xls,.xlsm" multiple hidden />
+        </div>
+        <div class="card"><h2>올려 둔 RD</h2><div id="rdFiles"></div></div>
+        <div class="card">
+          <div class="card-head"><h2>이 RD로 만들 수 있는 자료</h2><button class="btn primary big" id="rdRun" disabled>⚡ 한꺼번에 만들기</button></div>
+          <div id="rdCan"></div>
+          <input type="file" id="rdPrevIn" accept=".xlsx,.xlsm" hidden />
+          <p class="muted sm">처음 한 번은 자료마다 '지난달 파일 넣기'로 지난달 완성본을 넣어 주세요. 그 뒤로는 만든 파일이 자동으로 다음 달의 지난달 파일이 됩니다.</p>
+        </div>
+        <div id="rdOut"></div>
+      </section>
+
       <section id="view-auto" class="view">
         <header class="vh">
           <div>
-            <h1>📊 백업자료 생성</h1>
+            <h1>📊 자료생성</h1>
             <p class="muted sm">만들 자료를 고르고 필요한 파일을 넣으면, 기존 양식·수식은 그대로 두고 이번 달만 붙인 엑셀이 만들어집니다. 파일은 이 기기 안에서만 처리됩니다.</p>
           </div>
         </header>

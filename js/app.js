@@ -5,7 +5,8 @@ import { InkPad, renderInkPreview } from './ink.js';
 import { icon } from './icons.js';
 import { initFreight } from './freight-ui.js';
 import { initClosing, openAutoType } from './closing-ui.js';
-import { initBoard } from './board.js';
+import { initBoard, homeClosingHTML } from './board.js';
+import { initRdVault } from './rdvault.js';
 import { inkdb } from './inkdb.js';
 import { sync, loadInk, saveInk, flushInk, parseConfig, getConfig } from './sync.js';
 import { exportExcel, importExcel } from './excel.js';
@@ -141,12 +142,13 @@ function renderDashboard() {
   const open = tasks.filter((t) => !t.done);
   const overdue = open.filter((t) => t.due && t.due < today);
   $('#stats').innerHTML = `
-    <div class="stat" data-go="calendar"><b>${todayEv.length}</b><span>오늘 일정</span></div>
+    <div class="stat" data-calmode="list"><b>${todayEv.length}</b><span>오늘 일정</span></div>
     <div class="stat" data-preset="week"><b>${expandEvents(events, wf, wt).length}</b><span>이번 주 일정</span></div>
     <div class="stat" data-go="tasks"><b>${open.length}</b><span>미완료 할일</span></div>
     <div class="stat ${overdue.length ? 'warn' : ''}" data-preset="overdue"><b>${overdue.length}</b><span>기한 지난 할일</span></div>`;
   $('#dashEvents').innerHTML = listHTML(weekEv.slice(0, 8), eventItem, '', '이번 주 남은 일정이 없습니다.');
   $('#dashTasks').innerHTML = listHTML(open.sort(byDue).slice(0, 8), taskItem, '', '미완료 할일이 없습니다 🎉');
+  $('#homeClosing').innerHTML = homeClosingHTML();
   $('#dashMeetings').innerHTML = listHTML([...meetings].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5), meetingItem, '', '아직 회의메모가 없습니다. “+ 회의메모”로 시작해보세요.');
 }
 
@@ -185,6 +187,21 @@ $('#cal').addEventListener('click', (e) => {
   if (selDate === d.dataset.date) openEvent(null, d.dataset.date);
   selDate = d.dataset.date;
   renderCalendar();
+});
+// 홈 달력: [달력 | 목록] 전환
+function setCalMode(mode) {
+  $('#calBox').hidden = mode !== 'cal';
+  $('#listBox').hidden = mode === 'cal';
+  $$('#calMode button').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
+  try { localStorage.setItem('jy-calmode', mode); } catch { /* 무시 */ }
+}
+$('#calMode').addEventListener('click', (e) => { const b = e.target.closest('button[data-mode]'); if (b) setCalMode(b.dataset.mode); });
+// 홈 검색창 → 검색 화면
+$('#homeSearch').addEventListener('submit', (e) => {
+  e.preventDefault();
+  show('search');
+  $('#q').value = $('#homeQ').value.trim();
+  $('#qRun').click();
 });
 $('#calPrev').onclick = () => { calMonth.setMonth(calMonth.getMonth() - 1); renderCalendar(); };
 $('#calNext').onclick = () => { calMonth.setMonth(calMonth.getMonth() + 1); renderCalendar(); };
@@ -918,6 +935,10 @@ document.addEventListener('click', (e) => {
     if (open === 'task') openTask(id);
     return;
   }
+  const gv = e.target.closest('[data-go-view]');
+  if (gv) { show(gv.dataset.goView); return; }
+  const cm = e.target.closest('[data-calmode]');
+  if (cm) { setCalMode(cm.dataset.calmode); return; }
   const go = e.target.closest('.stat[data-go]');
   if (go) { show(go.dataset.go); return; }
   const pr = e.target.closest('.stat[data-preset]');
@@ -1098,6 +1119,7 @@ setTimeout(checkUpdate, 5000);
 initFreight();
 initClosing();
 initBoard({ openAuto: (type) => openAutoType(type) });
+initRdVault();
 
 /* ---------- 시작 ---------- */
 function renderAll() {
@@ -1111,6 +1133,7 @@ function renderAll() {
 }
 store.subscribe(renderAll);
 renderAll();
+setCalMode((() => { try { return localStorage.getItem('jy-calmode') || 'cal'; } catch { return 'cal'; } })());
 runPreset('week');
 const startView = location.hash.slice(1);
 if (startView && $('#view-' + startView)) show(startView);
