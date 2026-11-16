@@ -295,7 +295,7 @@ function renderLog() {
     const r = it.res;
     return `<div class="aq-bot">
       <div>✅ ${esc(it.spec.explain || '')} — <b>${r.rowCount.toLocaleString()}행</b>${r.mode === 'rows' && r.total.length ? ` (${SOURCES[it.spec.source].sum.filter((c) => r.head.includes(c)).map((c, k) => `${c} ${won(r.total[k])}`).join(' · ')})` : ''}</div>
-      <div class="aq-cond"><span>${SOURCES[it.spec.source].label} ${it.used.length}개 파일</span>${it.spec.conditions.map((c) => `<span>${esc(c)}</span>`).join('')}${r.ignored.length ? `<span class="bad">무시한 조건: ${esc(r.ignored.join(', '))}</span>` : ''}</div>
+      <div class="aq-cond">${it.spec.local ? '<span class="loc">AI 없이 해석</span>' : ''}<span>${SOURCES[it.spec.source].label} ${it.used.length}개 파일</span>${it.spec.conditions.map((c) => `<span>${esc(c)}</span>`).join('')}${r.ignored.length ? `<span class="bad">무시한 조건: ${esc(r.ignored.join(', '))}</span>` : ''}</div>
       ${r.rowCount ? tableHTML(r, { subtotal: it.subtotal }) : '<div class="empty">조건에 맞는 행이 없습니다. 계정명·법인 이름을 바꿔 다시 물어보세요.</div>'}
       ${r.rowCount ? `<div class="aq-btns"><button class="btn sm primary" data-aq-xl="${i}">⬇ 엑셀로 받기 (${esc(SOURCES[it.spec.source].label)} 양식)</button>
         ${r.mode === 'rows' && r.groups.length > 1 ? `<button class="btn sm" data-aq-split="${i}">${esc(it.spec.subtotalBy)}별 시트로 나눠 받기</button><button class="btn sm" data-aq-sub="${i}">${it.subtotal ? '소계 빼기' : '소계 넣기'}</button>` : ''}</div>` : ''}
@@ -304,9 +304,83 @@ function renderLog() {
   $('#aqLog').scrollTop = $('#aqLog').scrollHeight;
 }
 
+/* ---------- AI 없이 해석 (자주 쓰는 요청: 계정·제조/판관·법인·잔액·합계) ---------- */
+const CORPS = ['대흥', '군자', '송이애', '중부/이천팜', 'SPC'];
+export function localSpec(q, schema, prev) {
+  const Q = String(q).replace(/\s+/g, '');
+  const has = (re) => re.test(Q);
+  // 이어서 고치기: "결산전표 포함/빼줘", "소계 빼줘", "군자만" 등은 이전 조건에서 바꿈
+  const base = prev && has(/^(결산전표|소계|군자|대흥|송이애|중부|이천팜|SPC|법인별|합계|요약)/) && !has(/비|원장|잔액|입고/) ? JSON.parse(JSON.stringify(prev)) : null;
+  const src = base ? base.source : has(/거래처원장|잔액|외상|채권|채무|선급금/) ? 'partner' : has(/입고|수불|품목/) ? 'receipts' : 'account';
+  const info = schema.find((x) => x.source === src);
+  if (!info) return null;
+  const spec = base || { source: src, filters: [], mode: 'rows', subtotalBy: '', summaryBy: [], summarySum: [], sort: [], title: '', explain: '', conditions: [] };
+  const conds = base ? [...spec.conditions] : [];
+  const setFilter = (col, op, values) => { spec.filters = spec.filters.filter((f) => !(f.col === col && f.op === op)); if (values) spec.filters.push({ col, op, values }); };
+  if (!base && src === 'account') {
+    // 계정: '계정명' 앞부분(예: 전력비, 수도광열비, 소모품비(포장))이 질문에 있으면, 바로 앞의 '제조/판관'으로 14·15 구분
+    const accs = (info.accounts || []).map((a) => { const k = a.indexOf(' '); return { code: a.slice(0, k), name: a.slice(k + 1) }; });
+    const bases = [...new Set(accs.map((a) => a.name.split('-')[0].replace(/\s+/g, '')))].sort((a, b) => b.length - a.length);
+    const picked = [];
+    let rest = Q;
+    for (const b of bases) {
+      let at = rest.indexOf(b);
+      while (at >= 0) {
+        const before = rest.slice(Math.max(0, at - 3), at);
+        const pre = /제조/.test(before) ? '14' : /판관|판매/.test(before) ? '15' : '';
+        const after = rest.slice(at + b.length, at + b.length + 12);
+        const subs = accs.filter((a) => a.name.replace(/\s+/g, '').split('-')[0] === b && (!pre || a.code.startsWith(pre)));
+        const narrow = subs.filter((a) => { const sub = (a.name.split('-')[1] || '').replace(/\s+/g, ''); return sub && (after.startsWith(sub) || after.startsWith(`-${sub}`) || after.startsWith(`(${sub}`)); });
+        picked.push({ base: b, pre, codes: (narrow.length ? narrow : subs).map((a) => a.code) });
+        // 세부 계정 이름(예: 생산전력비)까지 지워서 같은 계정을 두 번 잡지 않게
+        const subLen = narrow.length ? Math.max(...narrow.map((a) => (a.name.split('-')[1] || '').replace(/\s+/g, '').length)) : 0;
+        const cut = b.length + (narrow.length ? Math.min(after.length, subLen + 1) : 0);
+        rest = rest.slice(0, at) + ' '.repeat(cut) + rest.slice(at + cut);
+        at = rest.indexOf(b);
+      }
+    }
+    if (!picked.length) return null;
+    setFilter('계정코드', 'in', [...new Set(picked.flatMap((p) => p.codes))]);
+    picked.forEach((p) => conds.push(`계정: ${p.pre === '14' ? '제조 ' : p.pre === '15' ? '판관 ' : ''}${p.base}`));
+    spec.title = `${picked.map((p) => `${p.pre === '14' ? '제조' : p.pre === '15' ? '판관' : ''}${p.base}`).join('·')}`;
+  }
+  if (!base && src === 'partner') {
+    const an = has(/매출|채권/) ? '외상매출금' : has(/매입|채무/) ? '외상매입금' : has(/선급금/) ? '선급금' : '';
+    if (an) { setFilter('계정명', 'in', [an]); conds.push(`계정: ${an}`); }
+    const m = Q.match(/(\d+(?:\.\d+)?)(억|천만|백만|만)?원?이상/);
+    if (m) { const unit = { 억: 1e8, 천만: 1e7, 백만: 1e6, 만: 1e4 }[m[2]] || 1; setFilter('잔액', 'gte', [String(+m[1] * unit)]); conds.push(`잔액 ${m[0].replace('이상', '')} 이상`); spec.sort = [{ col: '잔액', dir: 'desc' }]; }
+    spec.title = spec.title || `거래처원장 ${an}`.trim();
+  }
+  if (!base && src === 'receipts') { spec.title = '기간별입고현황'; }
+  // 법인
+  const corps = CORPS.filter((c) => c.split('/').some((x) => Q.includes(x)));
+  if (corps.length && !has(/\d개법인|전체법인|전법인/)) { setFilter('법인', 'in', corps); conds.push(`법인: ${corps.join(', ')}`); }
+  else if (!base && has(/\d개법인|전체/)) conds.push('법인: 전체');
+  // 결산전표: 원장 금액 조회는 기본 제외
+  if (src === 'account') {
+    if (has(/결산전표포함|결산포함/)) { setFilter('적요', 'notContains', null); conds.push('결산전표 포함'); }
+    else if (!base || has(/결산전표/)) { setFilter('적요', 'notContains', ['결산전표']); if (!conds.includes('결산전표 제외')) conds.push('결산전표 제외'); }
+  }
+  // 모양: 합계/요약 → 법인·계정별 합계, 아니면 원장 행 + 법인 소계
+  if (has(/합계|요약|집계/) && !has(/원장/)) {
+    spec.mode = 'summary';
+    spec.summaryBy = src === 'account' ? ['법인', '계정명'] : src === 'partner' ? ['법인', '계정명'] : ['법인', '품목군'];
+    spec.summarySum = [];
+    conds.push('법인·계정별 합계');
+  } else if (!base || has(/소계|법인별/)) {
+    spec.mode = 'rows';
+    spec.subtotalBy = has(/소계빼|소계없/) ? '' : '법인';
+    spec.sort = spec.sort.length && src === 'partner' ? spec.sort : [{ col: '법인', dir: 'asc' }, ...(SOURCES[src].date ? [{ col: SOURCES[src].date, dir: 'asc' }] : [])];
+    if (spec.subtotalBy) conds.push('법인별 소계');
+  }
+  spec.conditions = [...new Set(conds)].filter((c) => !(c === '결산전표 제외' && conds.includes('결산전표 포함')));
+  spec.explain = `${SOURCES[src].label}에서 ${spec.title || '요청한 데이터'}`;
+  spec.local = true;
+  return spec;
+}
+
 async function ask(q) {
   if (!q.trim()) return;
-  if (!aiEnabled()) { chat.items.push({ me: q }, { err: '설정 탭에서 Claude API 키를 먼저 넣어 주세요.' }); renderLog(); return; }
   const months = monthsInScope();
   chat.items.push({ me: q }, { wait: true });
   renderLog();
@@ -314,8 +388,17 @@ async function ask(q) {
   try {
     const schema = await schemaFor(months);
     if (!schema.length) throw new Error('이 달 보관함에 조회할 RD(계정별원장·거래처원장·기간별입고현황)가 없습니다. RD를 넣거나 범위를 \'보관함 전체\'로 바꿔 보세요.');
-    const prompt = `보관함 RD 정보(값 없음, 열·목록만):\n${JSON.stringify(schema)}\n\n${chat.last ? `이전 조건:\n${JSON.stringify(chat.last)}\n\n` : ''}요청: ${q}`;
-    const spec = await aiJson({ system: SYSTEM, prompt, schema: SPEC_SCHEMA });
+    let spec = null;
+    if (aiEnabled()) {
+      try {
+        const prompt = `보관함 RD 정보(값 없음, 열·목록만):\n${JSON.stringify(schema)}\n\n${chat.last ? `이전 조건:\n${JSON.stringify(chat.last)}\n\n` : ''}요청: ${q}`;
+        spec = await aiJson({ system: SYSTEM, prompt, schema: SPEC_SCHEMA });
+      } catch (e) { spec = null; console.warn(e); }
+    }
+    if (!spec) spec = localSpec(q, schema, chat.last);
+    if (!spec) throw new Error(aiEnabled()
+      ? '요청을 해석하지 못했습니다. 계정명(예: 제조 전력비, 판관 소모품비)이나 거래처원장 계정(외상매출금 등)을 넣어 다시 말해 주세요.'
+      : '계정명을 찾지 못했습니다. "제조 전력비", "판관 소모품비(포장)"처럼 계정 이름을 넣어 말해 주세요. (설정에 Claude API 키를 넣으면 더 자유롭게 물어볼 수 있습니다)');
     const g = await gather(spec.source, months);
     const res = runSpec(spec, g);
     chat.last = spec;
@@ -342,4 +425,4 @@ export function initRdAsk() {
 }
 
 // 테스트용 (Node에서 조건 실행만 확인)
-export const _test = { runSpec, gather, tablesOf, schemaFor, toExcel, tableHTML, chat, renderLog };
+export const _test = { localSpec, runSpec, gather, tablesOf, schemaFor, toExcel, tableHTML, chat, renderLog };

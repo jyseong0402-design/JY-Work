@@ -816,3 +816,4 @@ dialog.dlg-make { width: min(1000px, calc(100vw - 24px)); padding: 0; }
 .aq-form input { flex: 1; margin: 0; font-size: 15px; padding: 11px 14px; border: 2px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--text); }
 .aq-form input:focus { border-color: var(--primary); outline: none; }
 .aq-sumtxt { font-weight: 600; margin-left: 10px; color: var(--muted); }
+.aq-cond span.loc { background: var(--bg); color: var(--muted); border: 1px solid var(--line); }

@@ -215,7 +215,7 @@
         <div class="card aq-card" id="aqCard">
           <div class="card-head"><h2>💬 RD에 물어보기</h2>
             <span class="aq-tools"><select id="aqScope"><option value="month">보고 있는 달 RD</option><option value="all">보관함 전체</option></select><button class="btn ghost sm" id="aqReset">대화 지우기</button></span></div>
-          <p class="muted sm">원하는 데이터를 말로 요청하면, 보관함 RD에서 골라 <b>원래 ERP 양식(같은 열·머리글)</b>으로 표와 엑셀을 만듭니다. AI에는 질문과 열 이름·계정 목록만 보내고 금액은 이 PC 밖으로 나가지 않습니다.</p>
+          <p class="muted sm">원하는 데이터를 말로 요청하면, 보관함 RD에서 골라 <b>원래 ERP 양식(같은 열·머리글)</b>으로 표와 엑셀을 만듭니다. 계정 이름(예: 제조 전력비)·법인·잔액 조건은 <b>API 키 없이도</b> 바로 해석하고, 설정에 Claude API 키가 있으면 더 자유롭게 물어볼 수 있습니다. 금액은 이 PC 밖으로 나가지 않습니다.</p>
           <div class="aq-log" id="aqLog"></div>
           <form class="aq-form" id="aqForm"><input id="aqQ" autocomplete="off" placeholder="예: 3개 법인 제조전력비 합쳐서 / 판관 소모품비 중 율성 거래만 / 외상매출금 잔액 1억 이상 거래처" /><button class="btn primary" type="submit">보내기</button></form>
         </div>
