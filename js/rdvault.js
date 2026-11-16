@@ -1,7 +1,7 @@
 // 📥 RD 보관함: 이번 달 RD를 이 기기(IndexedDB)에 월별로 보관하고, 그 RD로 만들 수 있는 백업자료를 한꺼번에 만듦
 // 외부 서버를 쓰지 않음(요금 없음). 파일은 이 기기 브라우저 안에만 저장됨
 import { loadXLSX } from './excel.js';
-import { readPartnerLedgers, readAccountLedgers, readReceipts, buildArAp, buildInternal, buildPacking, detectBook } from './closing.js';
+import { readPartnerLedgers, readAccountLedgers, readReceipts, readEnergyRd, buildArAp, buildInternal, buildPacking, buildEnergy, buildRawMaterial, detectBook } from './closing.js';
 import { readAggregate, buildVerification } from './freight.js';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -10,7 +10,7 @@ const ym = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0'
 const md = (t) => { const d = new Date(t); return `${d.getMonth() + 1}/${d.getDate()}`; };
 const kb = (n) => `${Math.max(1, Math.round(n / 1024)).toLocaleString()}KB`;
 
-const RD_TYPES = { partner: '거래처원장', account: '계정별원장', receipts: '기간별입고현황', agg: '운반비 집계' };
+const RD_TYPES = { partner: '거래처원장', account: '계정별원장', receipts: '기간별입고현황', agg: '운반비 집계', energy: '전력·에너지 사용현황' };
 // 자료별: 필요한 RD 종류, 지난달 파일 보관 위치
 const OUTPUTS = [
   { kind: 'arap', label: '💳 채권·채무', need: ['partner'] },
@@ -18,6 +18,8 @@ const OUTPUTS = [
   { kind: 'internal', label: '🔁 내부거래 집계', need: ['account'] },
   { kind: 'freight', label: '🚚 운반비 검증', need: ['account', 'agg'] },
   { kind: 'packing', label: '📦 포장소모품비', need: ['account', 'receipts'] },
+  { kind: 'energy', label: '⚡ 전력비·수도광열비', need: ['energy'] },
+  { kind: 'rawmat', label: '🌾 Raw Material', need: ['receipts'] },
 ];
 
 /* ---------- IndexedDB ---------- */
@@ -66,6 +68,15 @@ async function classify(XLSX, name, buf) {
       const ds = r.rows.map((x) => x.date).sort((x, y) => x - y);
       if (!month) month = ym(ds[ds.length - 1]);
       if (!period) period = `${ds[0].getMonth() + 1}/${ds[0].getDate()}~${ds[ds.length - 1].getMonth() + 1}/${ds[ds.length - 1].getDate()}`;
+    }
+  } catch { /* 아님 */ }
+  try {
+    const e = readEnergyRd(XLSX, f);
+    if (e.length) {
+      types.push('energy');
+      let k = 0;
+      for (const s of e) for (const [key, r] of s.L.blocks[0].rows) if (key > k && s.L.meters.some((mt) => { const v = s.get(r, mt.c); return typeof v === 'number' && v !== 0; })) k = key;
+      if (k) { if (!month) month = `${Math.floor(k / 100)}-${String(k % 100).padStart(2, '0')}`; if (!period) period = `${Math.floor(k / 100)}년 ${k % 100}월`; }
     }
   } catch { /* 아님 */ }
   try {
@@ -123,6 +134,8 @@ async function prevFromFolder() {
       if (d.kinds.includes('prepay') && !kinds.includes('arap')) kinds.push('prepay');
       if (d.kinds.includes('internal')) kinds.push('internal');
       if (d.kinds.includes('packing')) kinds.push('packing');
+      if (d.kinds.includes('energy')) kinds.push('energy');
+      if (d.kinds.includes('rawmat')) kinds.push('rawmat');
       if (d.sheets.some((n) => /^운반비\d+월$/.test(n)) && d.sheets.includes('계정원장')) kinds.push('freight');
       for (const k of kinds) if (!best[k] || f.lastModified > best[k].f.lastModified) best[k] = { f, buf };
     } catch { /* 엑셀이 아니거나 잠김 */ }
@@ -325,8 +338,8 @@ async function runAll() {
           out = await buildVerification({ XLSX, JSZip, aggBuf: of('agg')[0].buf, ledgerBufs: of('account'), prevBuf });
           out.report.warnings = out.report.warnings || [];
         } else {
-          const fn = o.kind === 'internal' ? buildInternal : o.kind === 'packing' ? buildPacking : buildArAp;
-          const rd = o.kind === 'internal' ? of('account') : o.kind === 'packing' ? [...of('account'), ...of('receipts')] : of('partner');
+          const fn = { internal: buildInternal, packing: buildPacking, energy: buildEnergy, rawmat: buildRawMaterial }[o.kind] || buildArAp;
+          const rd = o.kind === 'internal' ? of('account') : o.kind === 'packing' ? [...of('account'), ...of('receipts')] : o.kind === 'energy' ? of('energy') : o.kind === 'rawmat' ? of('receipts') : of('partner');
           out = await fn({ XLSX, JSZip, prevBuf, rdFiles: rd });
         }
         st.outs.push({ kind: o.kind, label: o.label, out });

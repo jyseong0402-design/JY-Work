@@ -1,5 +1,5 @@
 // 📊 월마감 자동화 화면: 지난달 보고서 + ERP RD → 이번 달을 붙인 보고서
-import { detectBook, buildArAp, buildInternal, buildPacking } from './closing.js';
+import { detectBook, buildArAp, buildInternal, buildPacking, buildEnergy, buildRawMaterial } from './closing.js';
 import { loadXLSX } from './excel.js';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -7,8 +7,8 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const won = (n) => (Math.round(n || 0)).toLocaleString('ko-KR');
 
-const KIND_LABEL = { arap: '채권·채무', prepay: '선급금', internal: '내부거래 집계', packing: '포장소모품비' };
-const kindOf = (kinds) => (kinds.includes('internal') ? 'internal' : kinds.includes('packing') ? 'packing' : kinds.includes('prepay') && !kinds.includes('ar') && !kinds.includes('ap') ? 'prepay' : kinds.some((k) => ['ar', 'ap', 'prepay'].includes(k)) ? 'arap' : null);
+const KIND_LABEL = { arap: '채권·채무', prepay: '선급금', internal: '내부거래 집계', packing: '포장소모품비', energy: '전력비·수도광열비', rawmat: 'Raw Material' };
+const kindOf = (kinds) => (kinds.includes('energy') ? 'energy' : kinds.includes('rawmat') ? 'rawmat' : kinds.includes('internal') ? 'internal' : kinds.includes('packing') ? 'packing' : kinds.includes('prepay') && !kinds.includes('ar') && !kinds.includes('ap') ? 'prepay' : kinds.some((k) => ['ar', 'ap', 'prepay'].includes(k)) ? 'arap' : null);
 
 // 만든 파일은 기기에 보관 → 다음 달에 '지난번 파일'로 바로 사용
 const DB = 'jywork-closing', ST = 'files';
@@ -31,6 +31,12 @@ const TYPES = {
   packing: { build: () => buildPacking, prev: '① 지난달 포장소모품비 파일', prevHint: '수불o·수불x 시트가 있는 파일', rd: '② ERP RD', rdHint: '기간별입고현황 + 계정별원장 (전체계정 그대로 OK)',
     desc: '수불o·수불x 이번 달 행 + 회사별 시트 이번 달 열',
     rules: ['기간별입고현황 → 수불o, 계정별원장의 포장 계정(Mapping P열) → 수불x 맨 아래에 이번 달 행만 붙임', '회사별 시트에 이번 달 3칸(수불o·수불x 판관·제조) + 월별 요약 열 추가 (기존 열은 오른쪽으로 밀릴 뿐 수식·서식 그대로)', '\'포장소모품비 예산정리\' 시트는 손으로 넣는 칸이라 비워 둠', 'RD 날짜로 이번 달을 정하고, 같은 달을 다시 만들면 그 달 행만 새로 바꿈'] },
+  energy: { build: () => buildEnergy, prev: '① 지난달 전력비·수도광열비 파일', prevHint: '전력비·가스 등유 벙커c유 등 시트가 있는 \'계획대비계정증감\' 파일', rd: '② 전력비 및 에너지 사용현황', rdHint: '담당자에게 받는 사용현황 파일 2개 (대흥 / 송이애·새송이·용인) 를 같이 넣기',
+    desc: '전력비·가스(등유·벙커C유) 시트 이번 달 행 — 사용량·요금 칸 채움, 단가·합계는 기존 수식',
+    rules: ['RD 사용현황 파일의 계량기 열을 지난 달 값이 같은 열끼리 자동으로 짝지어 이번 달 사용량·요금을 옮김 (열 순서·이름이 달라도 OK)', '단가·합계·Total 칸은 원래 수식 그대로 (값을 덮지 않음)', '이번 달 행이 없으면(새해 1월 등) 블록마다 맨 위에 한 줄 끼우고 위 행 수식을 복사', 'RD에서 짝을 못 찾은 계량기 열은 경고로 알려 줌 — 손으로 확인', '계약전력·bgt 시트는 그대로'] },
+  rawmat: { build: () => buildRawMaterial, prev: '① 지난달 Raw Material 파일', prevHint: "'raw materials P' 시트가 있는 파일", rd: '② ERP 기간별입고현황', rdHint: '법인별 3개 (대흥·송이애·군자) 를 같이 넣기 — 구분 \'원재료\'만 골라 씀',
+    desc: '물량(kg)·매입액 이번 달 열 채움 (단가·합계는 기존 수식)',
+    rules: ['구분이 \'원재료\'인 입고를 입고공장으로 나눔: 팽이=디에이치아그로·디에이치팜·대흥 북부, 느타리(대흥)=대흥 남부, 느타리(송이애)=송이애(이천), 새송이=이천팜', '품목명으로 행을 맞춰 물량·금액 합계(반품 포함)를 넣음 — 톱밥처럼 \'포\' 단위는 C열 kg(16kg)로 =포수×16 수식', '표고(원/봉): 물량은 미배양 배지(이천 생산입고+원삼 구매)로 넣고, 금액은 생산분 원가가 RD에 없어 비워 둠(경고로 구매액 안내)', '파일에 없는 입고(군자 이천지점 톱밥·소맥피 등, 송이애 배지 대체)는 목록으로 알려 줌', '이번 달 열이 이미 있어야 함 — 새해(1월)는 엑셀에서 열을 먼저 만들어 주세요'] },
   freight: { desc: '집계파일 + 계정별원장 + 지난 검증파일 → 이번 달 검증 시트(현황·운반비)를 붙인 검증파일' },
 };
 const pref = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
@@ -114,6 +120,10 @@ function partRows(kind, r) {
     return `<table class="fr-table"><tr><th>항목</th><th class="r">추가</th><th class="r">금액</th><th>비고</th></tr>
       ${line('비용', p.cost)}${line('수익', p.income)}
       <tr><td>내부거래 집계</td><td class="r">${p.aggRows ? `${p.aggRows}행` : '-'}</td><td></td><td class="sm">${p.y}년 ${p.m}월 묶음</td></tr></table>`;
+  }
+  if (kind === 'energy' || kind === 'rawmat') {
+    return `<table class="fr-table"><tr><th>항목</th><th class="r">채운 칸</th><th>비고</th></tr>
+      ${r.parts.map((p) => `<tr><td>${esc(p.label)}</td><td class="r">${p.rows}</td><td class="sm">${esc(p.note || (p.col ? `${p.col}열 · 금액 합계 ${won(p.total)}` : ''))}</td></tr>`).join('')}</table>`;
   }
   if (kind === 'packing') {
     return `<table class="fr-table"><tr><th>항목</th><th class="r">추가</th><th class="r">금액</th><th>비고</th></tr>

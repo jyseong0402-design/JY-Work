@@ -146,7 +146,7 @@ export const CLOSING_SEED = [
   "name": "전력비, 수도광열비",
   "file": "계획대비계정증감_전력비, 수도광열비_26년07월_v1a 2607 전력비 및 에너지 사용 현황",
   "timing": "전사 전력비 자료",
-  "auto": "",
+  "auto": "energy",
   "needs": [
    {
     "id": "seed08n01",
@@ -161,7 +161,7 @@ export const CLOSING_SEED = [
   "name": "원재료비",
   "file": "0월 Raw Material_v1",
   "timing": "전사 마감 이후",
-  "auto": "",
+  "auto": "rawmat",
   "needs": [
    {
     "id": "seed09n01",

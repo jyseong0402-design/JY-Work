@@ -5,7 +5,7 @@ import { CLOSING_SEED } from './closing-seed.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const AUTO = { '': '연결 없음', freight: '🚚 운반비 검증', arap: '💳 채권·채무', prepay: '💰 선급금', internal: '🔁 내부거래 집계', packing: '📦 포장소모품비' };
+const AUTO = { '': '연결 없음', freight: '🚚 운반비 검증', arap: '💳 채권·채무', prepay: '💰 선급금', internal: '🔁 내부거래 집계', packing: '📦 포장소모품비', energy: '⚡ 전력비·수도광열비', rawmat: '🌾 Raw Material(원재료)' };
 const ym = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 const md = (s) => (s ? `${+s.slice(5, 7)}/${+s.slice(8, 10)}` : '');
 
@@ -221,6 +221,14 @@ export function initBoard({ openAuto } = {}) {
     if (!localStorage.getItem('jywork-closing-seeded')) {
       if (!(store.get().closing || []).length) store.seed('closing', CLOSING_SEED.map((t) => ({ ...t, marks: {} })));
       localStorage.setItem('jywork-closing-seeded', '1');
+    }
+    // 새로 자동화된 자료: 이미 목록이 있는 기기에서도 '바로 만들기' 연결 (연결이 비어 있을 때만, 한 번)
+    if (!localStorage.getItem('jywork-closing-auto2')) {
+      for (const [id, k] of [['seed08', 'energy'], ['seed09', 'rawmat']]) {
+        const t = store.find('closing', id);
+        if (t && !t.auto) store.upsert('closing', { ...t, auto: k });
+      }
+      localStorage.setItem('jywork-closing-auto2', '1');
     }
   } catch { /* 저장 불가 */ }
   $('#bdPrev').onclick = () => shiftMonth(-1);

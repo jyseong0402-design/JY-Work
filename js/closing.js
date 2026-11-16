@@ -139,6 +139,8 @@ export async function detectBook(JSZip, buf) {
   for (const [k, v] of Object.entries(ARAP_KINDS)) if (n.includes(v.cmp) && monthSheets(book, v.suffix).length) kinds.push(k);
   if (n.includes('비용') && n.includes('수익') && n.includes('내부거래 집계')) kinds.push('internal');
   if (n.includes('수불o') && n.includes('수불x')) kinds.push('packing');
+  if (n.some((x) => /raw\s*materials/i.test(x))) kinds.push('rawmat');
+  if (n.some((x) => /전력비/.test(x)) && n.some((x) => /가스|등유|벙커/.test(x))) kinds.push('energy');
   return { kinds, sheets: n };
 }
 
@@ -647,7 +649,31 @@ export async function buildPacking({ XLSX, JSZip, prevBuf, rdFiles }) {
   const Y = maxD.getFullYear(), M = maxD.getMonth() + 1;
   const inMonth = (d) => d.getFullYear() === Y && d.getMonth() + 1 === M;
   // 수불o
-  const recM = rec.rows.filter((r) => inMonth(r.date));
+  let recM = rec.rows.filter((r) => inMonth(r.date));
+  // 수불o에 지금까지 들어간 (구분·입고공장) 조합만 — 전체 RD(제품·상품·원재료 섞임)를 넣어도 안전
+  {
+    const so = await book.sheet('수불o');
+    const hc = {};
+    for (const [c, x] of so.rows.get(3)?.cells || []) hc[norm(book.text(cellInfo(x)))] = c;
+    if (hc['구분'] && hc['입고공장']) {
+      const seen = new Set();
+      for (const rn of so.rows.keys()) if (rn > 4) { const k = `${norm(book.val(so, hc['구분'], rn))}|${norm(book.val(so, hc['입고공장'], rn))}`; if (k !== '|') seen.add(k); }
+      if (seen.size) {
+        const key = (r) => `${norm(r.raw[r.head.indexOf('구분')])}|${norm(r.raw[r.head.indexOf('입고공장')])}`;
+        const skip = recM.filter((r) => !seen.has(key(r)));
+        if (skip.length) {
+          const g = new Map(); skip.forEach((r) => g.set(key(r), (g.get(key(r)) || 0) + 1));
+          report.info.push(`수불o: 지금까지 쓰지 않던 구분·공장 ${skip.length}행은 뺐습니다 (${[...g].sort((a, z) => z[1] - a[1]).slice(0, 5).map(([k, n]) => `${k.replace('|', ' · ')} ${n}`).join(', ')}${g.size > 5 ? ` 외 ${g.size - 5}종` : ''})`);
+          recM = recM.filter((r) => seen.has(key(r)));
+        }
+        // 같은 구분·공장이 여러 RD 파일에 있으면(전용 RD + 전체 RD) 첫 파일 것만 — 이중 집계 방지
+        const owner = new Map();
+        for (const r of recM) if (!owner.has(key(r))) owner.set(key(r), r.src);
+        const dup = recM.filter((r) => owner.get(key(r)) !== r.src);
+        if (dup.length) { report.info.push(`수불o: 같은 구분·공장이 다른 RD에도 있어 ${dup.length}행은 한 번만 셌습니다.`); recM = recM.filter((r) => owner.get(key(r)) === r.src); }
+      }
+    }
+  }
   if (recM.length) {
     const res = await appendRows(book, '수불o', recM.map((r) => ({ get: (h) => { const k = r.head.indexOf(h); return k >= 0 ? r.raw[k] : null; } })), { headRows: [3, 4], dateCol: 'A', Y, M });
     report.parts.push({ kind: 'packing', label: '수불o (기간별입고현황)', rows: res.added, removed: res.removed, total: recM.reduce((t, r) => t + num(r.raw[r.head.indexOf('입고금액')]), 0) });
@@ -677,4 +703,256 @@ export async function buildPacking({ XLSX, JSZip, prevBuf, rdFiles }) {
   report.warnings.push(`'포장소모품비 예산정리' 시트의 ${M}월 금액(백만원)은 손으로 넣는 칸이라 비워 두었습니다.`);
   const data = await book.save({ activeSheet: comp[0] });
   return { data, report, fileName: `Packing_${String(Y).slice(2)}${pad2(M)}.xlsx` };
+}
+
+/* ================= 공통: RD 시트를 A1 기준 표로 ================= */
+function gridOf(XLSX, ws) {
+  const g = [];
+  if (!ws || !ws['!ref']) return g;
+  const R = XLSX.utils.decode_range(ws['!ref']);
+  for (let r = R.s.r; r <= R.e.r; r++) for (let c = R.s.c; c <= R.e.c; c++) {
+    const cell = ws[XLSX.utils.encode_cell({ r, c })];
+    if (!cell || cell.v === undefined || cell.v === null || cell.v === '') continue;
+    (g[r + 1] ||= [])[c + 1] = cell.v;
+  }
+  return g;
+}
+const gv = (g, r, c) => (g[r] ? g[r][c] ?? null : null);
+const isNum = (v) => typeof v === 'number' && isFinite(v);
+const same = (a, b) => Math.abs(a - b) <= Math.max(0.5, Math.abs(a) * 1e-9);
+
+/* ================= ⑦ 전력비·수도광열비 (에너지 사용현황 → 계획대비 계정증감) ================= */
+// 시트 모양: 블록(사용량/단가/요금)마다 '년'·'월' 머리글 행 + 월별 행, 오른쪽에 계량기 열, 그 뒤 Total 열
+// get(r,c) 로 값을 읽는 어떤 표든(RD=SheetJS, 보고서=Book) 같은 방식으로 분석
+function energyLayout(get, maxRow, maxCol) {
+  let yc = 0, mc = 0, hr = 0;
+  for (let r = 1; r <= Math.min(maxRow, 40) && !hr; r++) for (let c = 1; c < maxCol; c++) {
+    if (norm(get(r, c)) === '년' && norm(get(r, c + 1)) === '월') { yc = c; mc = c + 1; hr = r; break; }
+  }
+  if (!hr) return null;
+  // 계량기 열: 월 열 다음 ~ Total/합계 열 앞
+  let end = maxCol;
+  for (let c = mc + 1; c <= maxCol; c++) {
+    let tot = false;
+    for (let r = 1; r <= hr + 1; r++) if (/^total$|^합계$/i.test(norm(get(r, c)))) tot = true;
+    if (tot) { end = c - 1; break; }
+  }
+  const label = (c) => { for (let r = hr + 1; r >= 1; r--) { const v = norm(get(r, c)); if (v && !isNum(get(r, c))) return v; } return ''; };
+  const top = (c) => { for (let r = 1; r <= hr; r++) { const v = norm(get(r, c)); if (v && !isNum(get(r, c))) return v; } return ''; };
+  const meters = [];
+  for (let c = mc + 1; c <= end; c++) meters.push({ c, label: label(c), top: top(c) });
+  const blocks = [];
+  let cur = null, lastY = null;
+  for (let r = 1; r <= maxRow; r++) {
+    const y = get(r, yc), m = get(r, mc);
+    if (norm(y) === '년' && norm(m) === '월') { cur = { hr: r, title: norm(get(r - 1, yc)), rows: new Map() }; blocks.push(cur); lastY = null; continue; }
+    if (!cur) continue;
+    let Y = isNum(y) ? y : (y === null && isNum(m) ? lastY : null);
+    if (isNum(Y) && isNum(m) && m >= 1 && m <= 12 && Y > 2000) { lastY = Y; cur.rows.set(Y * 100 + m, r); }
+  }
+  return { yc, mc, hr, meters, blocks };
+}
+
+export function readEnergyRd(XLSX, files) {
+  const out = []; // {file, sheet, kind:'power'|'gas', L, get}
+  for (const { name, buf } of files) {
+    const wb = XLSX.read(buf, { cellDates: false });
+    for (const sn of wb.SheetNames) {
+      const kind = /전력비/.test(sn) ? 'power' : /가스|등유|벙커/.test(sn) ? 'gas' : null;
+      if (!kind) continue;
+      const g = gridOf(XLSX, wb.Sheets[sn]);
+      let maxCol = 0; for (const r of g) if (r && r.length - 1 > maxCol) maxCol = r.length - 1;
+      const get = (r, c) => gv(g, r, c);
+      const L = energyLayout(get, g.length - 1, maxCol);
+      if (L && L.blocks.length) out.push({ file: name, sheet: sn, kind, L, get });
+    }
+  }
+  return out;
+}
+
+export async function buildEnergy({ XLSX, JSZip, prevBuf, rdFiles }) {
+  const book = await Book.open(JSZip, prevBuf);
+  const report = { warnings: [], info: [], parts: [] };
+  const rds = readEnergyRd(XLSX, rdFiles);
+  report.rdFiles = rdFiles.map((f) => ({ name: f.name, rows: rds.filter((x) => x.file === f.name).length }));
+  if (!rds.length) throw new Error('RD에서 전력비·가스(등유·벙커C유) 사용현황 표를 찾지 못했습니다.');
+  // 이번 달: RD 첫 블록(사용량)에 값이 있는 가장 최근 달
+  let ym = 0;
+  for (const s of rds) {
+    const b = s.L.blocks[0];
+    for (const [k, r] of b.rows) if (k > ym && s.L.meters.some((mt) => { const v = s.get(r, mt.c); return isNum(v) && v !== 0; })) ym = k;
+  }
+  if (!ym) throw new Error('RD 사용량 표에 값이 있는 달이 없습니다.');
+  const Y = Math.floor(ym / 100), M = ym % 100;
+  let first = null;
+  for (const s of book.sheets) {
+    const kind = /전력비/.test(s.name) ? 'power' : /가스|등유|벙커/.test(s.name) ? 'gas' : null;
+    if (!kind) continue;
+    const src = rds.filter((x) => x.kind === kind);
+    if (!src.length) { report.warnings.push(`'${s.name}': 맞는 RD 시트가 없어 건너뛰었습니다.`); continue; }
+    const sh = await book.sheet(s.name);
+    sh.expandShared();
+    const get = (r, c) => book.val(sh, c, r);
+    let L = energyLayout(get, sh.maxRow, sh.maxCol);
+    if (!L) { report.warnings.push(`'${s.name}': 년·월 머리글을 찾지 못했습니다.`); continue; }
+    // 이번 달 행이 없으면 각 블록 맨 위(최근 달 순서)에 한 줄 끼움 — 아래 블록부터
+    const need = L.blocks.filter((b) => !b.rows.has(ym));
+    // 1) 모든 블록에 빈 줄을 먼저 끼우고(아래 블록부터) 2) 최종 위치에서 옆 줄 수식을 복사 — 블록끼리 참조(단가=요금/사용량)가 맞게
+    const ins = [];
+    for (const b of [...need].reverse()) {
+      const keys = [...b.rows.keys()];
+      if (!keys.length) continue;
+      const firstRow = Math.min(...b.rows.values());
+      const desc = b.rows.get(Math.max(...keys)) === firstRow;
+      const at = desc ? firstRow : Math.max(...b.rows.values()) + 1;
+      await book.insertRows(s.name, at, 1);
+      ins.forEach((x) => { if (x.at >= at) x.at++; });
+      ins.push({ at, desc });
+    }
+    for (const { at, desc } of ins) {
+      const d = desc ? -1 : 1;
+      const tRow = sh.rows.get(at - d);
+      const cells = new Map();
+      for (const [c, x] of tRow?.cells || []) {
+        const i = cellInfo(x);
+        const ref = `${colLet(c)}${at}`;
+        if (c === L.yc) cells.set(c, numCell(ref, i.s, Y));
+        else if (c === L.mc) cells.set(c, numCell(ref, i.s, M));
+        else if (i.f !== undefined) cells.set(c, fCell(ref, i.s, shiftRefs(i.f, (q) => ((!q.sheet || q.sheet === s.name) && q.row && !q.rowAbs ? { ...q, row: q.row + d } : q))));
+        else cells.set(c, blankCell(ref, i.s));
+      }
+      sh.rows.set(at, { attrs: (tRow?.attrs || '').replace(/\sr="\d+"/, ` r="${at}"`) || ` r="${at}"`, cells });
+    }
+    if (need.length) { report.info.push(`'${s.name}': ${Y}년 ${M}월 행을 블록마다 새로 넣었습니다(위 행 수식 복사).`); L = energyLayout(get, sh.maxRow, sh.maxCol); }
+    let wrote = 0, kept = 0;
+    const unmatched = [];
+    L.blocks.forEach((b, bi) => {
+      const tr = b.rows.get(ym);
+      if (!tr) return;
+      const hist = [...b.rows.entries()].filter(([k]) => k < ym).sort((a, z) => z[0] - a[0]).slice(0, 12);
+      const occ = new Map();
+      for (const mt of L.meters) {
+        const key = `${mt.label}#${(occ.get(mt.label) || 0) + 1}`; occ.set(mt.label, (occ.get(mt.label) || 0) + 1);
+        const ti = sh.info(mt.c, tr);
+        if (ti && ti.f !== undefined) { kept++; continue; } // 수식 칸(단가 등)은 그대로
+        // 같은 블록 RD 열 중 지난 달 값이 가장 잘 맞는 열
+        let best = null;
+        for (const s2 of src) {
+          const rb = s2.L.blocks[bi];
+          if (!rb) continue;
+          const occ2 = new Map();
+          for (const m2 of s2.L.meters) {
+            const key2 = `${m2.label}#${(occ2.get(m2.label) || 0) + 1}`; occ2.set(m2.label, (occ2.get(m2.label) || 0) + 1);
+            let eq = 0, bad = 0;
+            for (const [k, r] of hist) {
+              const a = get(r, mt.c), r2 = rb.rows.get(k);
+              const v = r2 ? s2.get(r2, m2.c) : null;
+              if (isNum(a) && isNum(v) && a !== 0) { if (same(a, v)) eq++; else bad++; }
+            }
+            const tv = rb.rows.get(ym) ? s2.get(rb.rows.get(ym), m2.c) : null;
+            let score = eq >= 2 && bad <= eq / 4 ? eq * 10 - bad * 30 : -1;
+            if (score < 0 && key2 === key && mt.label) score = 1; // 기록이 없으면 머리글 이름(같은 이름은 순서)으로
+            if (score < 0) continue;
+            if (isNum(tv)) score += 0.5;
+            if (!best || score > best.score) best = { score, v: tv };
+          }
+        }
+        if (!best) { if (isNum(get(hist[0]?.[1], mt.c))) unmatched.push(mt.label || colLet(mt.c)); continue; }
+        const v = isNum(best.v) ? best.v : null;
+        if (v === null && !ti) continue;
+        sh.set(mt.c, tr, (ref) => valCell(ref, sh.style(mt.c, tr), v));
+        if (v !== null) wrote++;
+      }
+    });
+    report.parts.push({ kind: 'energy', label: `${s.name}`, rows: wrote, note: `${Y}년 ${M}월 · 값 ${wrote}칸${kept ? ` · 수식 ${kept}칸 유지` : ''}` });
+    if (unmatched.length) report.warnings.push(`'${s.name}': RD에서 짝을 못 찾은 열 — ${[...new Set(unmatched)].join(', ')} (손으로 확인)`);
+    first ||= s.name;
+  }
+  const rest = book.sheets.filter((s) => !/전력비|가스|등유|벙커/.test(s.name)).map((s) => s.name);
+  if (rest.length) report.info.push(`${rest.join(', ')} 시트는 그대로 두었습니다.`);
+  const data = await book.save({ activeSheet: first });
+  return { data, report, fileName: `계획대비계정증감_전력비·수도광열비_${String(Y).slice(2)}${pad2(M)}.xlsx` };
+}
+
+/* ================= ⑧ Raw Material (기간별입고현황 원재료 → 법인별 원재료 구매 물량·금액) ================= */
+// 구역(D열 제목) → RD 입고공장
+const RM_SECTIONS = [
+  { re: /^팽이/, plants: [/디에이치아그로/, /디에이치팜/, /대흥농산\s*북부/] },
+  { re: /느타리.*대흥/, plants: [/대흥농산\s*남부/] },
+  { re: /느타리.*송이애/, plants: [/^송이애\s*\(이천\)/] },
+  { re: /^새송이/, plants: [/이천팜/] },
+];
+const RM_ALIAS = [['콘콥', '콘컵'], ['케이포박', '케이폭', '케이폭박'], ['면실박', '면실피']];
+const rmKey = (s) => norm(s).replace(/\s/g, '').replace(/\(kg\)$/i, '');
+const rmSame = (a, b) => { a = rmKey(a); b = rmKey(b); return a === b || RM_ALIAS.some((g) => g.includes(a) && g.includes(b)); };
+
+export async function buildRawMaterial({ XLSX, JSZip, prevBuf, rdFiles }) {
+  const book = await Book.open(JSZip, prevBuf);
+  const sname = book.sheets.find((s) => /raw\s*materials/i.test(s.name))?.name;
+  if (!sname) throw new Error("Raw Material 파일이 아닙니다 ('raw materials' 시트 없음).");
+  const report = { warnings: [], info: [], parts: [] };
+  const rec = readReceipts(XLSX, rdFiles);
+  report.rdFiles = rec.files;
+  const rows = rec.rows.map((r) => {
+    const g = (h) => { const k = r.head.indexOf(h); return k >= 0 ? r.raw[k] : null; };
+    return { date: r.date, plant: norm(g('입고공장')), kind: norm(g('구분')), item: norm(g('품목명')), unit: norm(g('단위')), qty: num(g('입고수량')), amt: num(g('입고금액')), how: norm(g('입고구분')) };
+  }).filter((r) => r.kind === '원재료');
+  if (!rows.length) throw new Error('RD(기간별입고현황)에서 구분이 \'원재료\'인 행을 찾지 못했습니다.');
+  const maxD = new Date(Math.max(...rows.map((r) => r.date)));
+  const Y = maxD.getFullYear(), M = maxD.getMonth() + 1;
+  const mrows = rows.filter((r) => r.date.getFullYear() === Y && r.date.getMonth() + 1 === M);
+  const sh = await book.sheet(sname);
+  sh.expandShared();
+  const V = (c, r) => book.val(sh, c, r);
+  // 이번 달 열: 1행 Act, 2행 물량/매입액, 6행 년, 7행 월
+  let qc = 0, ac = 0;
+  for (let c = 1; c <= sh.maxCol; c++) {
+    if (norm(V(c, 1)) !== 'Act' || V(c, 6) !== Y || V(c, 7) !== M) continue;
+    if (norm(V(c, 2)) === '물량') qc = c; else if (norm(V(c, 2)) === '매입액') ac = c;
+  }
+  if (!qc || !ac) throw new Error(`${Y}년 ${M}월 물량·매입액 열이 없습니다 (새해 열은 먼저 엑셀에서 만들어 주세요).`);
+  // 구역·품목 행
+  const items = [];
+  let sec = null;
+  for (let r = 8; r <= sh.maxRow; r++) {
+    const d = norm(V(4, r)), e = norm(V(5, r));
+    if (d && !e) { sec = RM_SECTIONS.find((x) => x.re.test(d)) ? { title: d, cfg: RM_SECTIONS.find((x) => x.re.test(d)) } : (/표고/.test(d) ? { title: d, pyo: r } : null); if (sec?.pyo) items.push({ r, pyo: true }); continue; }
+    if (sec?.cfg && e && !/total|others/i.test(e)) items.push({ r, sec, label: e, mult: (String(V(3, r) || '').match(/(\d+(?:\.\d+)?)\s*kg/i) || [])[1] });
+  }
+  const used = new Set();
+  let wrote = 0;
+  const put = (c, r, v, f) => {
+    const i = sh.info(c, r);
+    if (f) { sh.setF(c, r, f); return; }
+    if (v === null && (!i || i.f !== undefined)) return;
+    sh.set(c, r, (ref) => valCell(ref, i?.s, v));
+  };
+  for (const it of items) {
+    if (it.pyo) {
+      // 표고: 미배양 배지 = 이천 생산입고(kg) + 원삼 구매(EA). 금액 중 생산분 원가는 RD에 없음
+      const pr = mrows.filter((x) => /표고배지/.test(x.item) && /미배양/.test(x.item));
+      pr.forEach((x) => used.add(x));
+      const q = pr.reduce((t, x) => t + x.qty, 0), buy = pr.filter((x) => x.amt).reduce((t, x) => t + x.amt, 0);
+      if (q) { put(qc, it.r, q); wrote++; }
+      report.warnings.push(`표고(${it.r}행): 물량 ${Math.round(q).toLocaleString()}(미배양 배지 생산입고+구매)은 넣었고, 금액은 RD에 생산분 원가가 없어 비워 둠 — 구매분 ${Math.round(buy).toLocaleString()}원 + 이천 생산분 원가를 넣어 주세요.`);
+      continue;
+    }
+    const hit = mrows.filter((x) => it.sec.cfg.plants.some((p) => p.test(x.plant)) && rmSame(x.item, it.label));
+    hit.forEach((x) => used.add(x));
+    const q = hit.reduce((t, x) => t + x.qty, 0), a = hit.reduce((t, x) => t + x.amt, 0);
+    const pos = hit.some((x) => x.unit === '포');
+    if (!hit.length) { put(qc, it.r, null); put(ac, it.r, null); continue; }
+    if (pos && it.mult) put(qc, it.r, null, `${Math.round(q * 1000) / 1000}*${it.mult}`);
+    else put(qc, it.r, Math.round(q));
+    put(ac, it.r, a ? Math.round(a * 100) / 100 : null);
+    if (pos && !it.mult) report.warnings.push(`${it.sec.title} ${it.label}: RD 단위가 '포'인데 kg 환산값(C열)이 없어 포 수량 그대로 넣었습니다.`);
+    wrote++;
+  }
+  const left = mrows.filter((x) => !used.has(x) && !/표고배지.*배양완료/.test(x.item));
+  const agg = new Map();
+  for (const x of left) { const k = `${x.plant} · ${x.item}(${x.unit})`; const o = agg.get(k) || { q: 0, a: 0 }; o.q += x.qty; o.a += x.amt; agg.set(k, o); }
+  if (agg.size) report.info.push(`파일에 넣지 않은 원재료 입고: ${[...agg].map(([k, o]) => `${k} ${Math.round(o.q).toLocaleString()} / ${Math.round(o.a).toLocaleString()}원`).join(' · ')}`);
+  report.parts.push({ kind: 'rawmat', label: `${sname} ${Y}년 ${M}월`, rows: wrote, col: `${colLet(qc)}·${colLet(ac)}`, total: mrows.filter((x) => used.has(x)).reduce((t, x) => t + x.amt, 0) });
+  const data = await book.save({ activeSheet: sname });
+  return { data, report, fileName: `${M}월 Raw Material_${String(Y).slice(2)}${pad2(M)}.xlsx` };
 }
