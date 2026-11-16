@@ -7,6 +7,7 @@ import { initFreight } from './freight-ui.js';
 import { initClosing, openAutoType } from './closing-ui.js';
 import { initBoard, homeClosingHTML } from './board.js';
 import { initRdVault } from './rdvault.js';
+import { initRdAsk } from './rdask.js';
 import { inkdb } from './inkdb.js';
 import { sync, loadInk, saveInk, flushInk, parseConfig, getConfig } from './sync.js';
 import { exportExcel, importExcel } from './excel.js';
@@ -1120,6 +1121,7 @@ initFreight();
 initClosing();
 initBoard({ openAuto: (type) => openAutoType(type) });
 initRdVault();
+initRdAsk();
 
 /* ---------- 시작 ---------- */
 function renderAll() {

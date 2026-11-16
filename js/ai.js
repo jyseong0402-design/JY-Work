@@ -112,3 +112,8 @@ export async function aiTranscribe(images) {
     prompt: `손글씨 필기 ${images.length}쪽을 순서대로 텍스트로 옮겨주세요.`,
   });
 }
+
+// 구조화된 답(JSON)이 필요한 기능에서 쓰는 공용 함수
+export async function aiJson({ system, prompt, schema, maxTokens = 4000 }) {
+  return ask({ system, prompt, schema, maxTokens });
+}

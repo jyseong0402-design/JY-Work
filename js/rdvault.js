@@ -252,3 +252,6 @@ export function initRdVault() {
   });
   load();
 }
+
+// 💬 RD에 물어보기에서 보관함 내용을 씀
+export const vaultState = () => ({ files: st.files, month: st.month });
