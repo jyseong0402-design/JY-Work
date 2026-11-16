@@ -75,6 +75,144 @@ async function classify(XLSX, name, buf) {
   return { types, period, month };
 }
 
+
+/* ---------- 📁 폴더 연결 (PC 크롬·엣지: File System Access) ----------
+   연도 폴더(예: 2026년)를 한 번 고르면: 'N월_RD' 폴더 → RD 읽기, 'N-1월' 폴더 → 지난달 완성본, 'N월' 폴더 → 만든 파일 저장 */
+const fsOk = () => typeof window !== 'undefined' && 'showDirectoryPicker' in window;
+const fold = { root: null, perm: 'none', prevNames: {} };
+const fdb = () => openDb('jywork-folders', 'h');
+async function getRoot() { const d = await fdb(); return new Promise((res) => { const q = d.transaction('h').objectStore('h').get('root'); q.onsuccess = () => res(q.result || null); q.onerror = () => res(null); }); }
+const putRoot = (h) => tx(fdb(), 'h', 'readwrite', (s) => s.put(h, 'root'));
+async function checkPerm(ask) {
+  if (!fold.root) { fold.perm = 'none'; return false; }
+  const opt = { mode: 'readwrite' };
+  let p = await fold.root.queryPermission(opt);
+  if (p !== 'granted' && ask) p = await fold.root.requestPermission(opt);
+  fold.perm = p;
+  return p === 'granted';
+}
+const mNum = (ym0) => +ym0.split('-')[1];
+const prevYmOf = (ym0) => { const [y, m] = ym0.split('-').map(Number); return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`; };
+async function subDir(re, create) {
+  for await (const [name, h] of fold.root.entries()) if (h.kind === 'directory' && re.test(name.trim())) return h;
+  return create ? fold.root.getDirectoryHandle(create, { create: true }) : null;
+}
+const rdDirRe = (m) => new RegExp(`^0?${m}월[ _-]*RD$`, 'i');
+const outDirRe = (m) => new RegExp(`^0?${m}월$`);
+async function listXlsx(dir) {
+  const out = [];
+  if (!dir) return out;
+  for await (const [name, h] of dir.entries()) if (h.kind === 'file' && /\.xls[xm]?$/i.test(name) && !name.startsWith('~$')) out.push(await h.getFile());
+  return out;
+}
+// 지난달 폴더에서 자료별 완성본 찾기 (시트 구성으로 판단, 같은 종류가 여럿이면 최근 수정본)
+async function prevFromFolder() {
+  const pm = mNum(prevYmOf(st.month));
+  if (mNum(st.month) === 1) return 0; // 1월은 전년도 폴더라 연결 범위 밖
+  const dir = await subDir(outDirRe(pm));
+  const files = await listXlsx(dir);
+  if (!files.length) return 0;
+  const { default: JSZip } = await import('./vendor/jszip.mjs');
+  const best = {};
+  for (const f of files) {
+    try {
+      const buf = await f.arrayBuffer();
+      const d = await detectBook(JSZip, buf);
+      const kinds = [];
+      if (d.kinds.includes('ar') || d.kinds.includes('ap')) kinds.push('arap');
+      if (d.kinds.includes('prepay') && !kinds.includes('arap')) kinds.push('prepay');
+      if (d.kinds.includes('internal')) kinds.push('internal');
+      if (d.kinds.includes('packing')) kinds.push('packing');
+      if (d.sheets.some((n) => /^운반비\d+월$/.test(n)) && d.sheets.includes('계정원장')) kinds.push('freight');
+      for (const k of kinds) if (!best[k] || f.lastModified > best[k].f.lastModified) best[k] = { f, buf };
+    } catch { /* 엑셀이 아니거나 잠김 */ }
+  }
+  let n = 0;
+  for (const [k, { f, buf }] of Object.entries(best)) {
+    await putSaved(k, { name: f.name, data: new Uint8Array(buf), at: Date.now(), fromFolder: prevYmOf(st.month) });
+    fold.prevNames[k] = f.name;
+    n++;
+  }
+  for (const o of OUTPUTS) { try { st.saved[o.kind] = await getSaved(o.kind); } catch { /* 무시 */ } }
+  return n;
+}
+// 'N월_RD' 폴더의 RD를 보관함으로 (이 달로 보관, 이미 넣은 같은 파일은 건너뜀)
+async function rdFromFolder() {
+  const dir = await subDir(rdDirRe(mNum(st.month)));
+  if (!dir) return { found: false, added: 0 };
+  const files = await listXlsx(dir);
+  const fresh = files.filter((f) => !st.files.some((x) => x.month === st.month && x.name === f.name && x.size === f.size && (x.lastModified || 0) >= f.lastModified));
+  if (fresh.length) await addFiles(fresh, { forceMonth: st.month });
+  return { found: true, added: fresh.length, total: files.length, name: dir.name };
+}
+// 만든 파일 이름: 지난달 파일 이름의 달 표기를 이번 달로 (없으면 앱 기본 이름)
+export function renameMonth(name, fromYm, toYm) {
+  if (!name) return null;
+  const [fy, fm] = fromYm.split('-').map(Number), [ty, tm] = toYm.split('-').map(Number);
+  const yy = (y) => String(y).slice(2), mm = (m) => String(m).padStart(2, '0');
+  const pairs = [
+    [`${yy(fy)}${mm(fm)}`, `${yy(ty)}${mm(tm)}`], [`${fy}.${mm(fm)}`, `${ty}.${mm(tm)}`], [`${fy}.${fm}`, `${ty}.${tm}`],
+    [`${yy(fy)}년${mm(fm)}월`, `${yy(ty)}년${mm(tm)}월`], [`${yy(fy)}년 ${fm}월`, `${yy(ty)}년 ${tm}월`], [`${yy(fy)}년${fm}월`, `${yy(ty)}년${tm}월`],
+    [`${fy}년 ${fm}월`, `${ty}년 ${tm}월`], [`${fy}년${mm(fm)}월`, `${ty}년${mm(tm)}월`],
+  ];
+  for (const [a, b] of pairs) if (name.includes(a)) return name.split(a).join(b);
+  const re = new RegExp(`(^|[^0-9])0?${fm}월`);
+  if (re.test(name)) return name.replace(re, (m0, p1) => `${p1}${tm}월`);
+  return null;
+}
+async function saveToFolder(fileName, data) {
+  const dir = await subDir(outDirRe(mNum(st.month)), `${mNum(st.month)}월`);
+  let name = fileName;
+  // 같은 이름 파일이 이미 있으면 덮어쓰지 않고 '_자동' 붙여 저장
+  try { await dir.getFileHandle(name); name = name.replace(/(\.xlsx)$/i, '_자동$1'); } catch { /* 없음 */ }
+  const fh = await dir.getFileHandle(name, { create: true });
+  const w = await fh.createWritable();
+  await w.write(data);
+  await w.close();
+  return `${dir.name}\\${name}`;
+}
+function renderFolder() {
+  const box = $('#rdFolder');
+  if (!box) return;
+  if (!fsOk()) { box.innerHTML = '<p class="muted sm">📁 폴더 연결은 PC의 크롬·엣지에서만 됩니다. 이 기기에서는 위 칸에 파일을 넣어 주세요.</p>'; return; }
+  const m = mNum(st.month), pm = mNum(prevYmOf(st.month));
+  if (!fold.root) {
+    box.innerHTML = `<div class="rd-fold"><div><b>📁 폴더 연결</b><div class="muted sm">연도 폴더(예: <code>2026년</code>)를 한 번 고르면 <code>${m}월_RD</code>의 RD를 읽고, <code>${pm}월</code>의 지난달 완성본을 쓰고, 만든 파일을 <code>${m}월</code> 폴더에 저장합니다.</div></div><button class="btn primary" id="rdPick">연도 폴더 선택</button></div>`;
+    return;
+  }
+  if (fold.perm !== 'granted') {
+    box.innerHTML = `<div class="rd-fold"><div><b>📁 연결된 폴더: ${esc(fold.root.name)}</b><div class="muted sm">브라우저를 새로 열면 보안상 한 번 허용이 필요합니다.</div></div><span><button class="btn primary" id="rdGrant">폴더 접근 허용</button> <button class="btn sm" id="rdPick">다른 폴더</button></span></div>`;
+    return;
+  }
+  box.innerHTML = `<div class="rd-fold"><div><b>📁 ${esc(fold.root.name)}</b> <span class="muted sm">· RD: <code>${m}월_RD</code> · 지난달: <code>${pm}월</code> · 저장: <code>${m}월</code></span><div class="sm" id="rdFoldMsg">${esc(fold.msg || '')}</div></div>
+    <span><button class="btn primary" id="rdFoldRun">⚡ 폴더 RD 읽고 만들기</button> <button class="btn sm" id="rdFoldRead">폴더 다시 읽기</button> <button class="btn sm" id="rdPick">다른 폴더</button></span></div>`;
+}
+async function folderRead() {
+  fold.msg = '폴더를 읽는 중…'; renderFolder();
+  try {
+    const r = await rdFromFolder();
+    const n = await prevFromFolder();
+    const pm = mNum(prevYmOf(st.month));
+    fold.msg = `${r.found ? `${r.name}: RD ${r.total}개 중 새 파일 ${r.added}개 보관` : `${mNum(st.month)}월_RD 폴더가 없습니다`} · ${pm}월 폴더에서 지난달 완성본 ${n}개 찾음`;
+  } catch (e) { fold.msg = '⚠ 폴더를 읽지 못했습니다: ' + (e.message || e); }
+  render();
+}
+async function initFolder() {
+  if (!fsOk()) { renderFolder(); return; }
+  try { fold.root = await getRoot(); } catch { fold.root = null; }
+  if (fold.root) await checkPerm(false).catch(() => {});
+  renderFolder();
+  // 이미 허용된 상태로 열리면, 이 달 RD 폴더에 새 파일이 있는지 알려 줌
+  if (fold.perm === 'granted') {
+    try {
+      const dir = await subDir(rdDirRe(mNum(st.month)));
+      const files = await listXlsx(dir);
+      const fresh = files.filter((f) => !st.files.some((x) => x.month === st.month && x.name === f.name && x.size === f.size));
+      if (fresh.length) { fold.msg = `🔔 ${dir.name}에 새 RD ${fresh.length}개 — '폴더 RD 읽고 만들기'를 누르세요`; renderFolder(); }
+    } catch { /* 무시 */ }
+  }
+}
+
 /* ---------- 화면 ---------- */
 const st = { month: ym(new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1)), files: [], saved: {}, outs: [], busy: false };
 // 앱이 만든 파일 이름(ARAP_2611.xlsx 등)에서 그 파일의 달 → 보관함 달보다 같거나 최근이면 '지난달 파일'로 쓸 수 없음
@@ -113,12 +251,13 @@ function render() {
         <td class="sm">${sv ? `↺ ${esc(sv.name)}` : '<span class="muted">없음</span>'} <button class="btn sm" data-rd-prev="${o.kind}">${sv ? '바꾸기' : '지난달 파일 넣기'}</button></td>
         <td class="sm">${ok ? '<b class="ok">만들 수 있음</b>' : sv && tooNew(sv) ? (fileYm(sv.name) === st.month ? `<b class="ok">✓ 이 달 자료 만듦</b> <span class="muted">(${esc(sv.name)})</span>` : `<span class="plus">보관된 파일이 ${monthLabel(fileYm(sv.name))} 것이라 이 달 자료는 만들 수 없음 — 다시 만들려면 '바꾸기'로 그 전달 완성본을 넣어 주세요</span>`) : miss.length ? `<span class="muted">${miss.map((t) => RD_TYPES[t]).join('·')} 필요</span>` : '<span class="muted">지난달 파일 필요</span>'}</td></tr>`;
     }).join('')}</table>`;
+  renderFolder();
   const btn = $('#rdRun');
   btn.disabled = st.busy || !ready;
   btn.textContent = st.busy ? '만드는 중…' : `⚡ 가능한 자료 ${ready}개 한꺼번에 만들기`;
 }
 
-async function addFiles(list) {
+async function addFiles(list, { forceMonth } = {}) {
   if (!list.length) return;
   $('#rdMsg').textContent = '파일 종류를 확인하는 중…';
   const XLSX = await loadXLSX();
@@ -128,8 +267,8 @@ async function addFiles(list) {
     const buf = await f.arrayBuffer();
     const c = await classify(XLSX, f.name, buf);
     // 날짜가 있는 RD(계정별원장·입고현황·집계)는 그 달에, 날짜가 없는 거래처원장은 보고 있는 달에 보관
-    const month = c.month || st.month;
-    const rec = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, month, name: f.name, size: f.size, types: c.types, period: c.period, addedAt: Date.now(), data: buf };
+    const month = forceMonth || c.month || st.month;
+    const rec = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, month, name: f.name, size: f.size, lastModified: f.lastModified || 0, types: c.types, period: c.period, addedAt: Date.now(), data: buf };
     // 같은 달·같은 이름은 바꿔 넣기
     for (const old of st.files.filter((x) => x.month === month && x.name === f.name)) await rdDel(old.id);
     await rdPut(rec);
@@ -137,7 +276,7 @@ async function addFiles(list) {
     msgs.push(`${f.name}: ${c.types.length ? c.types.map((t) => RD_TYPES[t]).join('+') : '알 수 없는 파일'}${month !== st.month ? ` → ${monthLabel(month)}에 보관` : ''}`);
   }
   // 넣은 RD가 다른 달 데이터면 그 달 화면으로 바로 이동
-  const moved = months.size === 1 && !months.has(st.month);
+  const moved = !forceMonth && months.size === 1 && !months.has(st.month);
   if (moved) st.month = [...months][0];
   $('#rdMsg').textContent = msgs.join(' / ') + (moved ? ` — ${monthLabel(st.month)} 데이터 화면으로 이동했습니다` : '');
   st.files = await rdAll();
@@ -192,10 +331,14 @@ async function runAll() {
         }
         st.outs.push({ kind: o.kind, label: o.label, out });
         await putSaved(o.kind, { name: out.fileName, data: out.data, at: Date.now() }).catch(() => {});
+        if (fold.root && fold.perm === 'granted') {
+          const nm = renameMonth(fold.prevNames[o.kind] || sv.name, prevYmOf(st.month), st.month) || out.fileName;
+          try { out.savedTo = await saveToFolder(nm, out.data); } catch (err) { out.saveErr = err.message || String(err); }
+        }
         const w = out.report.warnings || [];
         const scopeBad = w.filter((x) => /범위 확인/.test(x));
         const scopeOk = (out.report.info || []).filter((x) => /범위 확인 ✓/.test(x));
-        cards.push(`<div class="rd-res"><div class="rd-res-h"><span>✅ <b>${o.label}</b> → ${esc(out.fileName)}</span><button class="btn sm primary" data-rd-out="${st.outs.length - 1}">⬇ 내려받기</button></div>
+        cards.push(`<div class="rd-res"><div class="rd-res-h"><span>✅ <b>${o.label}</b> → ${esc(out.fileName)}${out.savedTo ? ` <span class="ok sm">📁 ${esc(out.savedTo)} 저장됨</span>` : out.saveErr ? ` <span class="plus sm">폴더 저장 실패: ${esc(out.saveErr)}</span>` : ''}</span><button class="btn sm primary" data-rd-out="${st.outs.length - 1}">⬇ 내려받기</button></div>
           ${scopeBad.map((x) => `<div class="rd-scope bad">${esc(x)}</div>`).join('')}${scopeOk.map((x) => `<div class="rd-scope ok sm">${esc(x)}</div>`).join('')}
           ${w.length ? `<details><summary class="sm">확인할 것 ${w.length}건</summary><ul class="fr-notes">${w.map((x) => `<li>⚠ ${esc(x)}</li>`).join('')}</ul></details>` : '<div class="muted sm">확인할 것 없음</div>'}</div>`);
       } catch (e) {
@@ -233,6 +376,16 @@ export function initRdVault() {
   $('#rdPrev').onclick = () => { const [y, m] = st.month.split('-').map(Number); st.month = ym(new Date(y, m - 2, 1)); render(); };
   $('#rdNext').onclick = () => { const [y, m] = st.month.split('-').map(Number); st.month = ym(new Date(y, m, 1)); render(); };
   $('#rdRun').onclick = runAll;
+  $('#rdFolder')?.addEventListener('click', async (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    try {
+      if (b.id === 'rdPick') { const h = await window.showDirectoryPicker({ id: 'jywork-year', mode: 'readwrite' }); fold.root = h; await putRoot(h); await checkPerm(true); fold.msg = ''; await folderRead(); }
+      else if (b.id === 'rdGrant') { if (await checkPerm(true)) await folderRead(); else renderFolder(); }
+      else if (b.id === 'rdFoldRead') await folderRead();
+      else if (b.id === 'rdFoldRun') { await folderRead(); await runAll(); }
+    } catch (err) { if (err?.name !== 'AbortError') { fold.msg = '⚠ ' + (err.message || err); renderFolder(); } }
+  });
   const prevIn = $('#rdPrevIn');
   let prevKind = null;
   prevIn.addEventListener('change', () => { const f = prevIn.files[0]; prevIn.value = ''; if (f && prevKind) setPrev(prevKind, f); });
@@ -250,7 +403,7 @@ export function initRdVault() {
     else if (b.id === 'rdZip') zipAll();
     else if (b.dataset.rdMonth) { st.month = b.dataset.rdMonth; render(); }
   });
-  load();
+  load().then(initFolder);
 }
 
 // 💬 RD에 물어보기에서 보관함 내용을 씀

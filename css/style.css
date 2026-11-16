@@ -847,3 +847,6 @@ dialog.dlg-make { width: min(1000px, calc(100vw - 24px)); padding: 0; }
 .home-grid.wide .home-side { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .home-grid.wide .home-side .card { margin-bottom: 0; }
 @media (max-width: 1000px) { .home-grid.wide .home-side { grid-template-columns: 1fr; } }
+.rd-fold { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.rd-fold code { background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 0 5px; font-size: 12.5px; }
+.rd-fold-card:empty { display: none; }
