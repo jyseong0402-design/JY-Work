@@ -672,13 +672,10 @@ function setInfoOpen(v) {
 }
 $('#infoToggle').onclick = () => setInfoOpen(!fMeeting.classList.contains('info-open'));
 
-/* ----- 전체 화면: 위쪽 줄과 요약창을 숨기고 메모장만, 기기 상태바도 숨김 ----- */
+/* ----- 넓게 보기: 위쪽 줄과 요약창을 숨기고 메모장만 (기기 상태창·알림창은 그대로 쓸 수 있게 브라우저 전체화면은 쓰지 않음) ----- */
 function setFocus(v) {
   fMeeting.classList.toggle('focus', v);
-  try {
-    if (v && !document.fullscreenElement) document.documentElement.requestFullscreen?.({ navigationUI: 'hide' })?.catch(() => {});
-    if (!v && document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
-  } catch { /* 지원 안 하는 브라우저 */ }
+  try { if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {}); } catch { /* 지원 안 하는 브라우저 */ }
   requestAnimationFrame(() => pad.layout(true));
 }
 $('#focusToggle').onclick = () => setFocus(!fMeeting.classList.contains('focus'));
@@ -755,6 +752,8 @@ async function openMeeting(id, preset = {}) {
   renderPrevBox();
   setInfoOpen(!id ? true : pref('jy-info-open', '0') === '1');
   setTab(id && m.content && !m.inkPages ? 'text' : pref('jy-ed-tab', 'ink'));
+  // 예전 버전에서 켜진 전체화면이 남아 있으면 끔 (상단 알림창이 안 내려오는 원인)
+  try { if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {}); } catch { /* 무시 */ }
   dlgMeeting.showModal();
   if (id && m.inkPages) {
     try { pad.load(await loadInk(m)); } catch { toast('필기를 불러오지 못했습니다.'); }
