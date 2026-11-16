@@ -91,6 +91,8 @@ async function load() {
 function render() {
   if (!$('#view-rd')) return;
   $('#rdMonth').textContent = `${monthLabel(st.month)} 데이터`;
+  const others = [...new Set(st.files.map((f) => f.month))].filter((m) => m !== st.month).sort();
+  $('#rdOther').innerHTML = others.length ? `다른 달에 보관된 RD: ${others.map((m) => `<button class="btn sm" data-rd-month="${m}">${monthLabel(m)} (${st.files.filter((f) => f.month === m).length})</button>`).join(' ')}` : '';
   const files = st.files.filter((f) => f.month === st.month).sort((a, b) => a.addedAt - b.addedAt);
   $('#rdFiles').innerHTML = files.length
     ? `<table class="fr-table"><tr><th>파일</th><th>자동 인식</th><th>기간</th><th class="r">크기</th><th>올린 날</th><th></th></tr>
@@ -121,6 +123,7 @@ async function addFiles(list) {
   $('#rdMsg').textContent = '파일 종류를 확인하는 중…';
   const XLSX = await loadXLSX();
   const msgs = [];
+  const months = new Set();
   for (const f of list) {
     const buf = await f.arrayBuffer();
     const c = await classify(XLSX, f.name, buf);
@@ -130,9 +133,13 @@ async function addFiles(list) {
     // 같은 달·같은 이름은 바꿔 넣기
     for (const old of st.files.filter((x) => x.month === month && x.name === f.name)) await rdDel(old.id);
     await rdPut(rec);
+    months.add(month);
     msgs.push(`${f.name}: ${c.types.length ? c.types.map((t) => RD_TYPES[t]).join('+') : '알 수 없는 파일'}${month !== st.month ? ` → ${monthLabel(month)}에 보관` : ''}`);
   }
-  $('#rdMsg').textContent = msgs.join(' / ');
+  // 넣은 RD가 다른 달 데이터면 그 달 화면으로 바로 이동
+  const moved = months.size === 1 && !months.has(st.month);
+  if (moved) st.month = [...months][0];
+  $('#rdMsg').textContent = msgs.join(' / ') + (moved ? ` — ${monthLabel(st.month)} 데이터 화면으로 이동했습니다` : '');
   st.files = await rdAll();
   render();
 }
@@ -238,6 +245,7 @@ export function initRdVault() {
     } else if (b.dataset.rdPrev) { prevKind = b.dataset.rdPrev; prevIn.click(); }
     else if (b.dataset.rdOut !== undefined) { const o = st.outs[+b.dataset.rdOut]; if (o) download(o.out.fileName, o.out.data); }
     else if (b.id === 'rdZip') zipAll();
+    else if (b.dataset.rdMonth) { st.month = b.dataset.rdMonth; render(); }
   });
   load();
 }

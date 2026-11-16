@@ -1,9 +1,13 @@
 // 앱 버전과 변경 내역
 // ※ 업데이트할 때마다 APP_VERSION을 올리고 CHANGES 맨 위에 내용을 추가하세요.
 //    (앱이 이 값을 보고 '새 버전 적용됨' 알림과 좌측 하단 버전을 표시합니다)
-export const APP_VERSION = '1.12.0';
+export const APP_VERSION = '1.12.1';
 
 export const CHANGES = [
+  {
+    v: '1.12.1', date: '2026-11-16',
+    items: ['RD 보관함: 넣은 RD가 다른 달 데이터면 그 달 화면으로 자동 이동, 다른 달에 보관된 RD 바로가기 버튼'],
+  },
   {
     v: '1.12.0', date: '2026-11-16',
     items: [
