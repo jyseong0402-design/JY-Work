@@ -20,6 +20,7 @@
   · 오른쪽 표: Y열=1월…(Y+M-1)=M월. 후행물류비 표는 당월 열 추가(수식 끝 +수기값은 제거·경고), 선행물류비 표는 지난달 열 수식을 당월 열로 이동
   · 운반비N월 = 지난달 시트 복사 + H열 금액 교체, U열 '제안)' 사유, 계정원장에 N월 행(+Q~V 수식) 추가, mapping 추가 지원
 
+- 메모(2026-11-18~): 누적/낱장 구분 없음. 예전 series 기록은 migrateSeries(빈 기록 삭제·나머지 series='' 일반 메모), 일정→회의메모는 eventId 같은 메모 하나를 이어서 씀. 필기 못 불러오면 inkBlocked로 저장 멈춤, inkdb '<id>~prev'에 이전 판, 설정 ✍️ 필기 점검(inkReport/restoreInk), 클라우드 ink는 700KB 조각(part)
 - 메뉴(2026-11-16~): 홈(dashboard: 달력 #calMode 달력/목록, #homeSearch→search 뷰, #homeClosing=board.homeClosingHTML) · 메모(meetings) · 월마감 현황(board) · RD 보관함(rd) · 자료생성(auto) · 설정. tasks/search 뷰는 메뉴 없이 [data-go-view]로 이동
 - `js/rdvault.js` 📥 RD 보관함: IndexedDB 'jywork-rd'(기기별, 요금 없음) 월별 보관, classify로 거래처원장/계정별원장/기간별입고현황/운반비 집계 인식(날짜 있는 RD는 그 달로), 지난달 파일=자료생성과 같은 저장소(jywork-closing/kind, jywork-freight/'last'), 파일명 _YYMM이 보관함 달 이상이면 사용 안 함, 한꺼번에 만들기+zip
 - RD 보관함 📁 폴더 연결(rdvault.js, File System Access, PC 크롬·엣지): 연도 폴더 핸들을 IndexedDB 'jywork-folders'에 보관, 'N월_RD'→RD(그 달로 강제 보관), 'N-1월'→지난달 완성본(detectBook·운반비 시트로 종류 판단, 최근 수정본)→putSaved, 결과는 'N월' 폴더에 renameMonth(지난달 이름의 달 표기 교체) 이름으로 저장(같은 이름 있으면 _자동)

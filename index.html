@@ -79,18 +79,12 @@
       <!-- 회의메모 -->
       <section id="view-meetings" class="view">
         <header class="vh">
-          <h1>회의메모</h1>
+          <h1>메모</h1>
           <div class="actions">
-            <button class="btn" data-new="series">📒 누적 노트 만들기</button>
-            <button class="btn primary" data-new="meeting">+ 새 회의메모</button>
+            <button class="btn primary" data-new="meeting">+ 새 메모</button>
           </div>
         </header>
         <div class="toolbar mtool">
-          <div class="seg" id="mFilter">
-            <button type="button" data-mf="all" class="on">전체</button>
-            <button type="button" data-mf="series">누적 노트</button>
-            <button type="button" data-mf="single">낱장 메모</button>
-          </div>
           <input type="search" id="meetingFilter" placeholder="제목·참석자·태그·내용 검색" />
           <div class="seg" id="mView">
             <button type="button" data-mv="grid" class="on" title="노트 표지로 보기">▦</button>
@@ -424,7 +418,6 @@
           <span class="more">
             <button type="button" class="tbb" id="moreBtn" data-icon="more" title="더보기"></button>
             <div class="menu" id="moreMenu" role="menu">
-              <button type="button" id="edAppend">➕ 이어서 기록 <small>이 메모에 날짜별로 계속 쌓기</small></button>
               <button type="button" id="edSeries" hidden>📒 노트 전체 기록 보기 <small>날짜별 목록·엑셀 저장·이름 바꾸기</small></button>
               <button type="button" id="edCopy">📋 요약 복사</button>
               <hr />
@@ -438,7 +431,7 @@
       </div>
       <div class="ed-meta">
         <label>날짜<input type="date" name="date" required /></label>
-        <label>📒 누적 노트<input name="series" list="seriesList" placeholder="이어서 쌓을 노트 (예: 주간회의, 프로젝트A)" autocomplete="off" /></label>
+        <input type="hidden" name="series" />
         <label>참석자<input name="attendees" placeholder="쉼표로 구분" /></label>
         <label>태그<input name="tags" placeholder="예: 프로젝트A, 예산" /></label>
         <datalist id="seriesList"></datalist>
@@ -509,7 +502,6 @@
     <div class="row-end">
       <button class="btn" id="viewEdit">수정</button>
       <button class="btn" id="viewCopy">요약 복사</button>
-      <button class="btn" id="viewAppend" title="이 메모를 누적 노트로 만들고 오늘 기록을 이어서 씁니다">➕ 이어서 기록</button>
       <button class="btn primary" data-close>닫기</button>
     </div>
   </dialog>

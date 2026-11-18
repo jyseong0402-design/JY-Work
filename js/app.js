@@ -78,7 +78,7 @@ function meetingItem(m, q) {
   const sum = m.summary || (m.content || '').slice(0, 140) || (m.inkPages ? '필기 메모' : '');
   return `<div class="item" data-open="meetingView" data-id="${m.id}">
     <div class="when">${fmt(m.date)}</div>
-    <div class="body"><div class="title">${m.series ? `<span class="tag series" style="--c:${seriesColor(m.series)}">📒 ${esc(m.series)}</span> ` : ''}${highlight(m.title, q)}</div>
+    <div class="body"><div class="title">${highlight(m.title, q)}</div>
       <div class="sub">${highlight(sum, q)}</div>
       <div>${tags}${m.decisions?.length ? `<span class="tag green">결정 ${m.decisions.length}</span>` : ''}${m.actions?.length ? `<span class="tag red">할일 ${m.actions.length}</span>` : ''}${m.inkPages ? `<span class="tag yellow">✍️ 필기 ${m.inkPages}쪽</span>` : ''}${m.summary ? '' : '<span class="tag gray">요약 전</span>'}</div>
     </div></div>`;
@@ -263,47 +263,51 @@ $('#calToday').onclick = () => {
 const meetingText = (m) => [m.series, m.title, m.attendees, m.tags, m.content, m.summary, (m.decisions || []).join(' '), (m.keywords || []).join(' ')].join(' ').toLowerCase();
 const pref = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
 const setPref = (k, v) => { try { localStorage.setItem(k, v); } catch { /* 무시 */ } };
-let mFilter = pref('jy-mfilter', 'all');
 let mView = pref('jy-mview', 'grid');
 
 function renderMeetings() {
-  $$('#mFilter [data-mf]').forEach((b) => b.classList.toggle('on', b.dataset.mf === mFilter));
   $$('#mView [data-mv]').forEach((b) => b.classList.toggle('on', b.dataset.mv === mView));
   const q = $('#meetingFilter').value.trim();
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
   const all = store.get().meetings;
-  const pick = (m) => (mFilter === 'all' || (mFilter === 'series' ? !!m.series : !m.series));
-  // 검색 중이거나 목록 보기면 회차까지 펼친 목록
+  const recent = (a, b) => (b.updatedAt || b.date || '').localeCompare(a.updatedAt || a.date || '');
+  // 검색 중이거나 목록 보기면 목록
   if (words.length || mView === 'list') {
-    const list = all.filter((m) => pick(m) && words.every((w) => meetingText(m).includes(w))).sort((a, b) => b.date.localeCompare(a.date));
+    const list = all.filter((m) => words.every((w) => meetingText(m).includes(w))).sort(recent);
     $('#meetingList').className = 'list';
-    $('#meetingList').innerHTML = listHTML(list, meetingItem, q, q ? '검색 결과가 없습니다.' : '아직 회의메모가 없습니다.');
+    $('#meetingList').innerHTML = listHTML(list, meetingItem, q, q ? '검색 결과가 없습니다.' : '아직 메모가 없습니다.');
     return;
   }
-  const cards = [`<button type="button" class="nb nb-new" data-new="${mFilter === 'series' ? 'series' : 'meeting'}"><span>＋</span><small>${mFilter === 'series' ? '누적 노트' : '새 회의메모'}</small></button>`];
-  if (mFilter !== 'single') {
-    for (const g of seriesList()) {
-      cards.push(coverHTML({
-        color: seriesColor(g.name), title: g.name, sub: `기록 ${g.items.length}개`,
-        attrs: `data-series="${esc(g.name)}"`, ink: g.items.some((x) => x.inkPages),
-        foot: `<b>📒 누적 노트</b><span>최근 ${fmt(g.last.date)}${g.open.length ? ` · <em>할일 ${g.open.length}</em>` : ''}</span>`,
-      }));
-    }
-  }
-  if (mFilter !== 'series') {
-    for (const m of all.filter((x) => !x.series).sort((a, b) => b.date.localeCompare(a.date))) {
-      cards.push(coverHTML({
-        color: '#7d8597', title: m.title || '제목 없음', sub: '',
-        attrs: `data-open="meetingView" data-id="${m.id}"`, ink: !!m.inkPages,
-        foot: `<b>${m.summary ? '요약됨' : '낱장 메모'}</b><span>${fmt(m.date)}</span>`,
-      }));
-    }
+  // 최근에 고친 메모가 앞에
+  const cards = ['<button type="button" class="nb nb-new" data-new="meeting"><span>＋</span><small>새 메모</small></button>'];
+  for (const m of [...all].sort(recent)) {
+    cards.push(coverHTML({
+      color: seriesColor(m.title || ''), title: m.title || '제목 없음', sub: '',
+      attrs: `data-open="meetingView" data-id="${m.id}"`, ink: !!m.inkPages,
+      foot: `<b>${m.inkPages ? `✍️ ${m.inkPages}쪽` : m.summary ? '요약됨' : '메모'}</b><span>${fmt(m.date)}</span>`,
+    }));
   }
   $('#meetingList').className = 'nb-grid';
-  $('#meetingList').innerHTML = cards.join('') + (cards.length === 1 ? '<div class="empty nb-empty">정기회의나 계속 이어지는 업무는 “📒 누적 노트”로 만들면 날짜별 기록이 한 권에 계속 쌓입니다.</div>' : '');
+  $('#meetingList').innerHTML = cards.join('');
 }
 $('#meetingFilter').addEventListener('input', renderMeetings);
-$('#mFilter').addEventListener('click', (e) => { const b = e.target.closest('[data-mf]'); if (b) { mFilter = b.dataset.mf; setPref('jy-mfilter', mFilter); renderMeetings(); } });
+// 예전 '누적 노트'의 날짜별 기록 정리 (2026-11-18): 빈 기록은 지우고, 내용 있는 기록은 일반 메모로
+let migrating = false;
+function migrateSeries() {
+  if (migrating) return;
+  const olds = store.get().meetings.filter((m) => m.series);
+  if (!olds.length) return;
+  migrating = true;
+  try {
+    const empty = (m) => !(m.content || '').trim() && !m.inkPages && !(m.summary || '').trim() && !(m.decisions || []).length && !(m.actions || []).length;
+    for (const m of olds) {
+      if (empty(m)) { store.remove('meetings', m.id); continue; }
+      const same = olds.filter((x) => x.series === m.series && !empty(x)).length;
+      const title = same > 1 && (!m.title || m.title === m.series) ? `${m.series} (${+m.date.slice(5, 7)}/${+m.date.slice(8, 10)})` : (m.title || m.series);
+      store.upsert('meetings', { id: m.id, series: '', title });
+    }
+  } finally { migrating = false; }
+}
 $('#mView').addEventListener('click', (e) => { const b = e.target.closest('[data-mv]'); if (b) { mView = b.dataset.mv; setPref('jy-mview', mView); renderMeetings(); } });
 
 /* ---------- 누적 노트 (날짜별 기록) ---------- */
@@ -595,12 +599,9 @@ $('[data-meeting]', fEvent).onclick = () => {
   const saved = store.upsert('events', o);
   dlgEvent.close();
   const day = occ || saved.date;
-  // 반복 회의는 같은 이름의 누적 노트에 날짜별로 쌓이게
-  const existing = store.get().meetings.find((m) => m.eventId === saved.id && m.date === day);
-  openMeeting(existing?.id, {
-    title: saved.title, date: day, attendees: saved.attendees, tags: saved.category, eventId: saved.id,
-    ...(saved.repeat ? { series: saved.title } : {}),
-  });
+  // 이 일정의 메모는 하나: 이미 있으면 그 메모를 열어 이어서 씀 (반복 회의도 같은 메모)
+  const existing = store.get().meetings.filter((m) => m.eventId === saved.id).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))[0];
+  openMeeting(existing?.id, { title: saved.title, date: day, attendees: saved.attendees, tags: saved.category, eventId: saved.id });
 };
 
 /* ---------- 회의메모 편집기 (펜 필기 + 텍스트 + 요약) ---------- */
@@ -637,7 +638,7 @@ function scheduleSave(delay = 1200) {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => saveMeeting(), delay);
 }
-const autoTitle = (o) => o.series || `회의메모 ${fmt(o.date)}`;
+const autoTitle = (o) => `메모 ${fmt(o.date)}`;
 
 let inkBlocked = false, inkBlockedWarned = false;
 function saveMeeting({ final = false } = {}) {
@@ -745,28 +746,9 @@ $('#edCopy').onclick = async () => {
   if (!m) { toast('먼저 내용을 적어주세요.'); return; }
   try { await navigator.clipboard.writeText(summaryText(m)); toast('요약을 복사했습니다. 메일·메신저에 붙여넣으세요.'); } catch { toast('복사할 수 없습니다.'); }
 };
-$('#edAppend').onclick = () => {
-  const m = saveMeeting({ final: true });
-  if (!m) { toast('먼저 내용을 적어주세요.'); return; }
-  let name = m.series;
-  if (!name) {
-    name = m.title;
-    store.upsert('meetings', { id: m.id, series: name });
-    fMeeting.elements.series.value = name;
-    toast(`“${name}” 누적 노트로 묶었습니다.`);
-  }
-  const today = store.get().meetings.find((x) => x.series === name && x.date === todayStr());
-  if (today && today.id === m.id) {
-    renderPrevBox();
-    toast('오늘 기록은 지금 이 메모에 이어서 쓰면 됩니다. 다른 날 다시 누르면 새 기록이 추가됩니다.');
-    return;
-  }
-  startSeriesMeeting(name);
-};
-
 /* ----- 누적 노트: 지난 기록 요약과 남은 할일을 옆에 보여줌 ----- */
 function renderPrevBox() {
-  const name = fMeeting.elements.series.value.trim();
+  const name = ''; // 누적 노트 없음 (2026-11-18): 지난 기록 상자는 표시 안 함
   const box = $('#prevBox');
   const curId = fMeeting.elements.id.value;
   const items = name ? store.get().meetings.filter((m) => m.series === name && m.id !== curId).sort((a, b) => b.date.localeCompare(a.date)) : [];
@@ -784,7 +766,7 @@ function renderPrevBox() {
       ${m.decisions?.length ? `<ul>${m.decisions.slice(0, 3).map((d) => `<li>${esc(d)}</li>`).join('')}</ul>` : ''}</div>`).join('') +
     (items.length > 4 ? `<button type="button" class="btn sm" data-series="${esc(name)}">전체 ${items.length}개 기록 보기</button>` : '');
 }
-fMeeting.elements.series.addEventListener('change', () => {
+if (0) fMeeting.elements.series.addEventListener('change', () => {
   const name = fMeeting.elements.series.value.trim();
   const last = store.get().meetings.filter((m) => m.series === name).sort((a, b) => b.date.localeCompare(a.date))[0];
   if (last) { // 같은 노트의 지난 참석자·태그를 비어 있을 때만 채움
@@ -915,7 +897,6 @@ function openMeetingView(id) {
   if (!m) return;
   viewId = id;
   $('#viewBody').innerHTML = `<div class="detail">
-    ${m.series ? `<button type="button" class="tag series" style="--c:${seriesColor(m.series)}" data-series="${esc(m.series)}">📒 ${esc(m.series)} 노트 열기</button>` : ''}
     <h2>${esc(m.title)}</h2>
     <div class="muted sm">${fmt(m.date)} · ${esc(m.attendees || '참석자 미기재')} ${m.summarizedBy ? `· <span class="tag gray">${esc(m.summarizedBy)}</span>` : ''}</div>
     <div>${splitList(m.tags).map((t) => `<span class="tag">${esc(t)}</span>`).join('')}${(m.keywords || []).map((k) => `<span class="tag gray">#${esc(k)}</span>`).join('')}</div>
@@ -928,19 +909,6 @@ function openMeetingView(id) {
   if (m.inkPages) loadInk(m).then((d) => renderInkPreview($('#viewInk'), d)).catch(() => {});
 }
 $('#viewEdit').onclick = () => { dlgView.close(); openMeeting(viewId); };
-// 아무 메모나 누적 노트로: 이 메모를 노트의 첫 기록으로 묶고, 오늘 기록을 이어서 씀
-$('#viewAppend').onclick = () => {
-  const m = store.find('meetings', viewId);
-  if (!m) return;
-  let name = m.series;
-  if (!name) {
-    name = m.title || `회의메모 ${fmt(m.date)}`;
-    store.upsert('meetings', { id: m.id, series: name });
-    toast(`“${name}” 누적 노트로 묶었습니다.`);
-  }
-  dlgView.close();
-  startSeriesMeeting(name);
-};
 $('#viewCopy').onclick = async () => {
   try { await navigator.clipboard.writeText(summaryText(store.find('meetings', viewId))); toast('요약을 복사했습니다. 메일·메신저에 붙여넣으세요.'); } catch { toast('복사할 수 없습니다.'); }
 };
@@ -981,7 +949,6 @@ document.addEventListener('click', (e) => {
     const k = nw.dataset.new;
     if (k === 'event') openEvent(null, nw.dataset.date);
     if (k === 'meeting') openMeeting(null);
-    if (k === 'series') newSeries();
     if (k === 'task') openTask(null);
     return;
   }
@@ -1230,6 +1197,9 @@ try {
   const WEEKLY_ON = true;
   if (WEEKLY_ON && !localStorage.getItem('jywork-weekly-seeded')) { store.seed('events', WEEKLY_SEED); localStorage.setItem('jywork-weekly-seeded', '1'); }
 } catch { /* 저장 불가 */ }
+// 예전 누적 노트 기록 정리: 시작할 때 + 다른 기기에서 받은 뒤
+migrateSeries();
+store.subscribe(() => setTimeout(migrateSeries, 0));
 setCalMode((() => { try { return localStorage.getItem('jy-calmode2') || 'week'; } catch { return 'week'; } })());
 runPreset('week');
 const startView = location.hash.slice(1);
