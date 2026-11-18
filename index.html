@@ -413,7 +413,7 @@
         </div>
         <div class="tb-right">
           <button type="button" class="tbb" id="sumToggle" data-icon="ai" title="요약·AI"><i class="dot" id="sumDot"></i></button>
-          <button type="button" class="tbb" id="infoToggle" data-icon="info" title="날짜·노트·참석자·태그"></button>
+          <button type="button" class="tbb" id="infoToggle" data-icon="info" title="날짜·참석자·태그" hidden></button>
           <button type="button" class="tbb" id="focusToggle" data-icon="full" title="메모장만 크게 (넓게 보기)"></button>
           <span class="more">
             <button type="button" class="tbb" id="moreBtn" data-icon="more" title="더보기"></button>
@@ -429,7 +429,7 @@
           </span>
         </div>
       </div>
-      <div class="ed-meta">
+      <div class="ed-meta" hidden>
         <label>날짜<input type="date" name="date" required /></label>
         <input type="hidden" name="series" />
         <label>참석자<input name="attendees" placeholder="쉼표로 구분" /></label>
