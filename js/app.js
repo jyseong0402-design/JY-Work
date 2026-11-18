@@ -1196,8 +1196,8 @@ store.subscribe(renderAll);
 renderAll();
 // 주단위 고정 회의: 기기마다 처음 한 번 등록 (이후 수정·삭제는 일정에서)
 try {
-  // 주단위 고정 회의 자동 등록: 사용자 확인 전이라 꺼 둠 (WEEKLY_ON = true로 켜기)
-  const WEEKLY_ON = false;
+  // 주단위 고정 회의 자동 등록 (이름 없이 넣기로 사용자 결정 2026-11-18) — 기기마다 처음 한 번
+  const WEEKLY_ON = true;
   if (WEEKLY_ON && !localStorage.getItem('jywork-weekly-seeded')) { store.seed('events', WEEKLY_SEED); localStorage.setItem('jywork-weekly-seeded', '1'); }
 } catch { /* 저장 불가 */ }
 setCalMode((() => { try { return localStorage.getItem('jy-calmode2') || 'week'; } catch { return 'week'; } })());
