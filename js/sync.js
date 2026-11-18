@@ -142,39 +142,98 @@ function listen() {
 }
 
 /* ---------- 필기(펜) 동기화: 쪽 단위로 저장 ---------- */
+// 한 문서는 1MB 제한이 있어서, 획이 많은 쪽은 여러 조각(part)으로 나눠 저장
+const PART_BYTES = 700000;
+function splitStrokes(strokes) {
+  const parts = [];
+  let cur = [], size = 2;
+  for (const st of strokes || []) {
+    const len = JSON.stringify(st).length + 1;
+    if (cur.length && size + len > PART_BYTES) { parts.push(cur); cur = []; size = 2; }
+    cur.push(st); size += len;
+  }
+  parts.push(cur);
+  return parts;
+}
 export async function pushInk(mid, ink) {
   if (!user) return;
   const pages = ink?.pages || [];
-  const ops = pages.map((p, i) => ({
-    ref: fb.doc(inkCol(), `${mid}_${i}`),
-    data: { mid, i, n: pages.length, rev: ink.rev || '', ls: p.ls || 0, strokes: JSON.stringify(p.strokes) },
-  }));
+  const ops = [];
+  const keep = new Set();
+  pages.forEach((p, i) => {
+    const parts = splitStrokes(p.strokes);
+    parts.forEach((chunk, k) => {
+      const id = k ? `${mid}_${i}_p${k}` : `${mid}_${i}`;
+      keep.add(id);
+      ops.push({ ref: fb.doc(inkCol(), id), data: { mid, i, n: pages.length, part: k, parts: parts.length, rev: ink.rev || '', ls: p.ls || 0, strokes: JSON.stringify(chunk) } });
+    });
+  });
   const existing = await fb.getDocs(fb.query(inkCol(), fb.where('mid', '==', mid)));
-  existing.forEach((d) => { if (d.data().i >= pages.length) ops.push({ ref: d.ref, delete: true }); });
+  // 새로 쓰기 전에 지우지 않음: 쓰기가 끝난 뒤 남는 옛 조각만 정리
   await writeMany(ops);
+  const stale = [];
+  existing.forEach((d) => { if (!keep.has(d.id)) stale.push({ ref: d.ref, delete: true }); });
+  if (stale.length) await writeMany(stale);
   await inkdb.put(mid, { ...ink, synced: true });
 }
-
-export async function fetchInk(mid) {
-  if (!user) return null;
+async function cloudInk(mid) {
   const snap = await fb.getDocs(fb.query(inkCol(), fb.where('mid', '==', mid)));
   if (snap.empty) return null;
-  const pages = [];
-  let rev = '';
+  const byPage = [];
+  let rev = '', bytes = 0;
   snap.forEach((d) => {
     const x = d.data();
-    pages[x.i] = { strokes: JSON.parse(x.strokes || '[]'), ls: x.ls || 0 };
-    rev = x.rev;
+    bytes += (x.strokes || '').length;
+    (byPage[x.i] ||= { ls: x.ls || 0, parts: [] }).parts[x.part || 0] = JSON.parse(x.strokes || '[]');
+    if ((x.rev || '') > rev) rev = x.rev || '';
   });
-  const ink = { pages: pages.filter(Boolean), rev, synced: true };
+  const pages = byPage.filter(Boolean).map((p) => ({ ls: p.ls, strokes: p.parts.flat().filter(Boolean) }));
+  return { pages, rev, bytes, docs: snap.size };
+}
+export async function fetchInk(mid) {
+  if (!user) return null;
+  const c = await cloudInk(mid);
+  if (!c) return null;
+  const ink = { pages: c.pages, rev: c.rev, synced: true };
   await inkdb.put(mid, ink);
   return ink;
 }
-
+// ✍️ 필기 점검: 필기가 있다고 표시된 메모마다 이 기기·클라우드에 실제로 남은 획 수
+const strokeCount = (ink) => (ink?.pages || []).reduce((t, p) => t + (p.strokes?.length || 0), 0);
+export async function inkReport() {
+  const ms = store.get().meetings.filter((m) => m.inkPages).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const out = [];
+  for (const m of ms) {
+    const local = await inkdb.get(m.id).catch(() => null);
+    const prev = await inkdb.get(m.id + '~prev').catch(() => null);
+    let cloud = null, cloudErr = '';
+    if (user) { try { cloud = await cloudInk(m.id); } catch (e) { cloudErr = errMsg(e); } }
+    out.push({ id: m.id, title: m.title, date: m.date, pages: m.inkPages, rev: m.inkRev || '',
+      local: local ? { strokes: strokeCount(local), rev: local.rev || '', synced: !!local.synced } : null,
+      prev: prev ? { strokes: strokeCount(prev), rev: prev.rev || '' } : null,
+      cloud: cloud ? { strokes: strokeCount(cloud), rev: cloud.rev, bytes: cloud.bytes, docs: cloud.docs } : null, cloudErr });
+  }
+  return { signedIn: !!user, email: state.email, error: state.error, items: out };
+}
+// 복구: 고른 쪽(이 기기 / 이전 판 / 클라우드)의 필기를 이 메모의 필기로 되돌리고 양쪽에 저장
+export async function restoreInk(mid, from) {
+  let ink = null;
+  if (from === 'cloud') { const c = await cloudInk(mid); ink = c && { pages: c.pages, rev: c.rev }; }
+  else ink = await inkdb.get(from === 'prev' ? mid + '~prev' : mid);
+  if (!ink || !strokeCount(ink)) throw new Error('되돌릴 필기가 없습니다.');
+  const rev = new Date().toISOString();
+  const m = store.find('meetings', mid);
+  const pages = ink.pages.filter((p) => p.strokes?.length).length;
+  const data = { pages: ink.pages, rev, synced: false };
+  await inkdb.put(mid, data);
+  if (m) store.upsert('meetings', { id: mid, inkPages: pages, inkRev: rev });
+  if (user) await pushInk(mid, data);
+  return pages;
+}
 async function uploadPendingInk() {
   const all = await inkdb.all().catch(() => ({}));
   for (const [mid, ink] of Object.entries(all)) {
-    if (ink && !ink.synced && store.find('meetings', mid)) await pushInk(mid, ink);
+    if (ink && !ink.synced && !mid.endsWith('~prev') && store.find('meetings', mid)) await pushInk(mid, ink);
   }
 }
 
@@ -193,10 +252,17 @@ export async function saveInk(mid, ink, { immediate = false } = {}) {
   const p = inkPending.get(mid);
   if (p) { clearTimeout(p.timer); inkPending.delete(mid); }
   if (!ink) {
+    try { const old = await inkdb.get(mid); if (strokeCount(old)) await inkdb.put(mid + '~prev', old); } catch { /* 무시 */ }
     await inkdb.del(mid);
     if (user) track(fb.getDocs(fb.query(inkCol(), fb.where('mid', '==', mid))).then((s) => writeMany(s.docs.map((d) => ({ ref: d.ref, delete: true })))));
     return;
   }
+  // 덮어쓰기 전 판을 하나 보관 (획이 더 많았던 판은 계속 지킴)
+  try {
+    const old = await inkdb.get(mid);
+    const keep = await inkdb.get(mid + '~prev');
+    if (strokeCount(old) && strokeCount(old) >= strokeCount(keep) && old.rev !== ink.rev) await inkdb.put(mid + '~prev', old);
+  } catch { /* 무시 */ }
   await inkdb.put(mid, { ...ink, synced: false });
   if (!user) return;
   const run = () => { inkPending.delete(mid); track(pushInk(mid, ink)); };

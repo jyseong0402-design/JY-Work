@@ -9,7 +9,7 @@ import { initBoard, homeClosingHTML } from './board.js';
 import { initRdVault } from './rdvault.js';
 import { initRdAsk } from './rdask.js';
 import { inkdb } from './inkdb.js';
-import { sync, loadInk, saveInk, flushInk, parseConfig, getConfig } from './sync.js';
+import { sync, loadInk, saveInk, flushInk, parseConfig, getConfig, inkReport, restoreInk } from './sync.js';
 import { exportExcel, importExcel } from './excel.js';
 import { APP_VERSION, CHANGES, cmpVersion } from './version.js';
 import { expandEvents, repeatLabel } from './recur.js';
@@ -639,6 +639,7 @@ function scheduleSave(delay = 1200) {
 }
 const autoTitle = (o) => o.series || `회의메모 ${fmt(o.date)}`;
 
+let inkBlocked = false, inkBlockedWarned = false;
 function saveMeeting({ final = false } = {}) {
   clearTimeout(saveTimer);
   saveTimer = null;
@@ -654,6 +655,11 @@ function saveMeeting({ final = false } = {}) {
   }
   const prev = o.id ? store.find('meetings', o.id) : null;
   // 필기는 이번에 실제로 바뀌었을 때만 저장 (불러오는 중이거나 못 불러왔을 때 지우는 일 방지)
+  // 필기가 있다고 표시된 메모인데 못 불러왔으면, 새로 쓴 획으로 원래 필기를 덮어쓰지 않음
+  if (inkBlocked && pad.dirty) {
+    pad.dirty = false;
+    if (!inkBlockedWarned) { inkBlockedWarned = true; alert('이 메모의 원래 필기를 불러오지 못해 필기 저장을 멈췄습니다 (원래 필기 보호).\n설정 → ✍️ 필기 점검에서 확인해 주세요.'); }
+  }
   const inkChanged = pad.dirty;
   const inkPages = inkChanged ? pad.pageCount() : (prev?.inkPages || 0);
   const inkRev = inkChanged ? (inkPages ? new Date().toISOString() : '') : (prev?.inkRev || '');
@@ -806,8 +812,13 @@ async function openMeeting(id, preset = {}) {
   // 예전 버전에서 켜진 전체화면이 남아 있으면 끔 (상단 알림창이 안 내려오는 원인)
   try { if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {}); } catch { /* 무시 */ }
   dlgMeeting.showModal();
+  inkBlocked = false; inkBlockedWarned = false;
   if (id && m.inkPages) {
-    try { pad.load(await loadInk(m)); } catch { toast('필기를 불러오지 못했습니다.'); }
+    inkBlocked = true; // 불러오기 전에는 저장하지 않음
+    let ink = null;
+    try { ink = await loadInk(m); } catch { /* 아래에서 안내 */ }
+    const n = (ink?.pages || []).reduce((t, p) => t + (p.strokes?.length || 0), 0);
+    if (n) { pad.load(ink); inkBlocked = false; } else toast('⚠ 필기를 불러오지 못했습니다 — 원래 필기를 지키려고 이 메모의 필기 저장을 멈췄습니다. 설정 → ✍️ 필기 점검');
     if (!m.content) setTab('ink');
   }
 }
@@ -1049,6 +1060,33 @@ $('#jsonImport').onchange = async (e) => {
   } catch (err) { alert('복원 실패: ' + err.message); }
   e.target.value = '';
 };
+// ✍️ 필기 점검·복구
+const inkRow = (x) => {
+  const L = x.local, C = x.cloud, P = x.prev;
+  const best = Math.max(L?.strokes || 0, C?.strokes || 0, P?.strokes || 0);
+  const ok = L?.strokes && L.strokes === best;
+  const btn = (from, n, label) => (n && n === best && !ok ? `<button class="btn sm primary" data-ink-restore="${x.id}" data-from="${from}">${label}</button>` : '');
+  return `<tr><td>${esc(x.title || '')}<div class="muted sm">${fmt(x.date)} · 표시 ${x.pages}쪽</div></td>
+    <td class="r">${L ? `${L.strokes}획${L.synced ? '' : ' <span class="muted sm">(미전송)</span>'}` : '<span class="muted">없음</span>'}</td>
+    <td class="r">${P ? `${P.strokes}획` : '<span class="muted">-</span>'}</td>
+    <td class="r">${C ? `${C.strokes}획 <span class="muted sm">${Math.round(C.bytes / 1024)}KB</span>` : x.cloudErr ? `<span class="minus sm">${esc(x.cloudErr)}</span>` : '<span class="muted">없음</span>'}</td>
+    <td>${ok ? '<span class="ok">✓ 정상</span>' : best ? `${btn('local', L?.strokes, '이 기기 것으로')}${btn('prev', P?.strokes, '이전 판으로')}${btn('cloud', C?.strokes, '클라우드 것으로')}` : '<span class="minus">어디에도 없음</span>'}</td></tr>`;
+};
+async function runInkCheck() {
+  const box = $('#inkCheckOut');
+  box.innerHTML = '<p class="muted sm">확인하는 중…</p>';
+  try {
+    const r = await inkReport();
+    box.innerHTML = `<p class="sm">${r.signedIn ? `☁️ 로그인됨 (${esc(r.email)})` : '<b class="minus">☁️ 로그인 안 됨 — 클라우드 필기는 확인할 수 없습니다 (위에서 로그인 후 다시 점검)</b>'}${r.error ? ` · <span class="minus">최근 동기화 오류: ${esc(r.error)}</span>` : ''}</p>
+      ${r.items.length ? `<div class="fr-scroll"><table class="fr-table"><tr><th>메모</th><th class="r">이 기기</th><th class="r">이전 판</th><th class="r">클라우드</th><th>상태</th></tr>${r.items.map(inkRow).join('')}</table></div>` : '<p class="muted">필기가 있는 메모가 없습니다.</p>'}`;
+  } catch (e) { box.innerHTML = `<p class="minus">점검 실패: ${esc(e.message || e)}</p>`; }
+}
+$('#inkCheck').onclick = runInkCheck;
+$('#inkCheckOut').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-ink-restore]');
+  if (!b || !confirm('이 메모의 필기를 선택한 쪽 내용으로 되돌릴까요?')) return;
+  try { const n = await restoreInk(b.dataset.inkRestore, b.dataset.from); toast(`필기 ${n}쪽을 되돌렸습니다.`); runInkCheck(); } catch (err) { alert(err.message || err); }
+});
 $('#wipe').onclick = () => {
   const cloud = sync.signedIn() ? '\n(로그인 중이라 다른 기기와 클라우드에서도 삭제됩니다)' : '';
   if (confirm('모든 일정·회의메모·할일을 삭제합니다. 먼저 백업하셨나요?' + cloud) && confirm('정말 삭제할까요? 되돌릴 수 없습니다.')) {
