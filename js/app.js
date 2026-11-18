@@ -219,36 +219,28 @@ function renderWeek() {
   const allDay = evs.filter((e) => toMin(e.start) === null);
   let h0 = 9, h1 = 18;
   for (const e of timed) { const a = toMin(e.start), b = toMin(e.end) ?? a + 60; h0 = Math.min(h0, Math.floor(a / 60)); h1 = Math.max(h1, Math.ceil(b / 60)); }
-  const PX = 64;
   const we = new Date(weekStart); we.setDate(we.getDate() + 6);
   $('#calTitle').textContent = `${weekStart.getMonth() + 1}/${weekStart.getDate()} ~ ${we.getMonth() + 1}/${we.getDate()} 주간`;
   const today = todayStr();
   const head = shown.map((ds) => { const d = parseD(ds); return `<div class="wk-dh ${ds === today ? 'today' : ''}">${DOW[d.getDay()]} <span>${d.getMonth() + 1}/${d.getDate()}</span></div>`; }).join('');
-  const hours = [...Array(h1 - h0)].map((_, i) => `<div class="wk-hr" style="top:${i * PX}px"><span>${h0 + i}:00</span></div>`).join('');
-  const cols = shown.map((ds) => {
-    // 겹치는 일정은 나란히
-    const list = timed.filter((e) => e.date === ds).map((e) => ({ e, a: toMin(e.start), b: Math.max(toMin(e.end) ?? toMin(e.start) + 60, toMin(e.start) + 30) })).sort((x, y) => x.a - y.a || y.b - x.b);
-    const lanes = [];
-    let cluster = [], clusterEnd = -1;
-    const flush = () => { const n = Math.max(1, ...cluster.map((c) => c.lane + 1)); cluster.forEach((c) => { c.n = n; }); cluster = []; };
-    for (const it of list) {
-      if (it.a >= clusterEnd) { flush(); lanes.length = 0; clusterEnd = -1; }
-      let l = lanes.findIndex((end) => end <= it.a);
-      if (l < 0) { l = lanes.length; lanes.push(0); }
-      lanes[l] = it.b; it.lane = l; cluster.push(it); clusterEnd = Math.max(clusterEnd, it.b);
-    }
-    flush();
-    const blocks = list.map(({ e, a, b, lane, n }) => {
-      const [bg, fg] = CAT_COLORS[e.category] || ['var(--primary-soft)', 'var(--primary)'];
-      return `<div class="wk-ev ${e.done ? 'done' : ''}" data-open="event" data-id="${e.id}" data-occ="${e.occ || ''}" title="${esc(`${e.start}~${e.end || ''} ${e.title}${e.attendees ? ' · ' + e.attendees : ''}`)}"
-        style="top:${((a - h0 * 60) / 60) * PX + 1}px;height:${((b - a) / 60) * PX - 3}px;left:calc(${(lane / n) * 100}% + 2px);width:calc(${100 / n}% - 4px);background:${bg};color:${fg}">
-        <b>${esc(e.title)}</b><small>${esc(e.start)}${e.end ? '~' + esc(e.end) : ''}${e.attendees ? ' · ' + esc(e.attendees) : ''}</small></div>`;
+  // 시간대(1시간)마다 한 줄: 그 시간에 시작하는 일정을 위아래로 쌓음 (줄 높이는 가장 많은 날에 맞춰 늘어남)
+  const card = (e) => {
+    const [bg, fg] = CAT_COLORS[e.category] || ['var(--primary-soft)', 'var(--primary)'];
+    return `<div class="wk-ev ${e.done ? 'done' : ''}" data-open="event" data-id="${e.id}" data-occ="${e.occ || ''}" title="${esc(`${e.start}~${e.end || ''} ${e.title}${e.attendees ? ' · ' + e.attendees : ''}`)}" style="background:${bg};color:${fg}">
+      <b>${esc(e.title)}</b><small>${esc(e.start)}${e.end ? '~' + esc(e.end) : ''}${e.attendees ? ' · ' + esc(e.attendees) : ''}</small></div>`;
+  };
+  let rows = '';
+  for (let h = h0; h < h1; h++) {
+    rows += `<div class="wk-hcell">${h}:00</div>`;
+    rows += shown.map((ds) => {
+      const list = timed.filter((e) => e.date === ds && Math.floor(toMin(e.start) / 60) === h).sort((x, y) => toMin(x.start) - toMin(y.start));
+      return `<div class="wk-col${ds === today ? ' today' : ''}" data-date="${ds}">${list.map(card).join('')}</div>`;
     }).join('');
-    return `<div class="wk-col" data-date="${ds}">${blocks}</div>`;
-  }).join('');
+  }
+  const body = `<div class="wk-body">${rows}</div>`;
   const alld = allDay.length ? `<div class="wk-all"><span class="muted sm">종일</span>${allDay.map((e) => `<button class="tag gray" data-open="event" data-id="${e.id}" data-occ="${e.occ || ''}">${fmt(e.date)} ${esc(e.title)}</button>`).join('')}</div>` : '';
   $('#wk').style.setProperty('--days', shown.length);
-  $('#wk').innerHTML = `${alld}<div class="wk-head"><div></div>${head}</div><div class="wk-body" style="height:${(h1 - h0) * PX}px"><div class="wk-hours">${hours}</div>${cols}</div>
+  $('#wk').innerHTML = `${alld}<div class="wk-head"><div></div>${head}</div>${body}
     <div class="wk-legend">${Object.entries(CAT_COLORS).map(([k, [bg, fg]]) => `<span style="background:${bg};color:${fg}">${k}</span>`).join('')}<span class="muted sm">· 빈 칸을 두 번 누르면 그 날 일정 추가</span></div>`;
 }
 $('#wk').addEventListener('dblclick', (e) => { const c = e.target.closest('.wk-col'); if (c && !e.target.closest('.wk-ev')) openEvent(null, c.dataset.date); });
