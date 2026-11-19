@@ -4,7 +4,7 @@
 // 📄 양식(완성본 파일)은 이 기기 IndexedDB에만 보관 (forms.js)
 import { store, uid, todayStr } from './store.js';
 import { CLOSING_SEED, SEED_OLD, NEED_OLD } from './closing-seed.js';
-import { fillName, matchFiles, formMetaAll, formPut, formGetFile, formDel } from './forms.js';
+import { fillName, matchFiles, formMetaAll, formPut, formGetFile, formDel, folderOk, getWorkRoot, pickWorkRoot, workPerm, openPath, listFiles } from './forms.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -275,6 +275,58 @@ async function bulkForms(files) {
   msg.innerHTML = `📄 양식 ${ok.length}개 등록${ok.length ? `<details><summary>등록한 것 보기</summary><ul class="bd-msglist">${ok.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></details>` : ''}${unmatched.length ? `<details><summary>업무와 맞지 않은 파일 ${unmatched.length}개 (로우데이터·받은 파일 등)</summary><ul class="bd-msglist">${unmatched.map((f) => `<li>${esc(f.name)}</li>`).join('')}</ul></details>` : ''}`;
 }
 
+/* ---------- 📁 폴더에서 자동 등록: 업무마다 저장 위치(결산월로 채움)를 열어 규칙에 맞는 완성본을 양식으로 ---------- */
+async function folderLabel() {
+  const b = $('#bdAutoReg');
+  if (!b) return;
+  if (!folderOk()) { b.title = 'PC 크롬·엣지에서만 됩니다 (탭은 📂 버튼으로 직접 고르기)'; return; }
+  const h = await getWorkRoot();
+  $('#bdRootName').innerHTML = h ? `연결: <b>${esc(h.name)}</b> <button class="linkbtn" id="bdRootChange">바꾸기</button>` : '';
+  const c = $('#bdRootChange');
+  if (c) c.onclick = () => autoFromFolder(true);
+}
+async function autoFromFolder(change) {
+  const msg = $('#bdLoadMsg');
+  if (!folderOk()) { msg.textContent = '⚠ 폴더 자동 등록은 PC의 크롬·엣지에서만 됩니다. 탭에서는 📂 버튼으로 파일을 직접 골라 주세요.'; return; }
+  let root = change ? null : await getWorkRoot();
+  try {
+    if (!root) {
+      if (!change && !confirm("처음 한 번 '업무' 폴더를 골라 주세요.\n(바탕화면\\업무 — 업무마다 적힌 저장 위치를 이 폴더 기준으로 찾습니다. 읽기만 하고 파일을 바꾸지 않습니다)")) return;
+      root = await pickWorkRoot();
+      await folderLabel();
+    }
+    if (!(await workPerm(root, true))) { msg.textContent = '⚠ 폴더 읽기를 허용해야 찾을 수 있습니다.'; return; }
+  } catch (e) { if (e?.name !== 'AbortError') msg.textContent = `⚠ 폴더를 열지 못했습니다: ${e.message || e}`; return; }
+
+  const close = closeOf(ui.month);
+  const tasks = list().filter((t) => t.file && t.folder);
+  const groups = new Map();
+  for (const t of tasks) { const p = fillName(t.folder, close); if (!groups.has(p)) groups.set(p, []); groups.get(p).push(t); }
+  const ok = [], same = [], miss = [], noDir = [];
+  let k = 0;
+  for (const [path, ts] of groups) {
+    msg.textContent = `📁 폴더 확인 중… (${++k}/${groups.size}) ${path}`;
+    const dir = await openPath(root, path).catch(() => null);
+    if (!dir) { noDir.push(`${path} (${ts.map((t) => t.name).join(', ')})`); continue; }
+    const files = [];
+    for (const { h } of await listFiles(dir)) { try { files.push(await h.getFile()); } catch { /* 잠긴 파일 */ } }
+    const { matched } = matchFiles(ts, files, close);
+    for (const t of ts) {
+      const m = matched.find((x) => x.t.id === t.id);
+      if (!m) { miss.push(`${t.name} — ${fillName(t.file, close)}`); continue; }
+      const cur = ui.forms[t.id];
+      if (cur && cur.name === m.f.name && cur.lastModified === m.f.lastModified) { same.push(t.name); continue; }
+      if (await putForm(t.id, m.f)) ok.push(`${t.name} ← ${m.f.name}${m.hit ? '' : ' (이번 결산월 파일이 없어 가장 최근 파일)'}`);
+    }
+  }
+  render();
+  const ul = (a) => `<ul class="bd-msglist">${a.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`;
+  msg.innerHTML = `📁 ${monthLabel(close)} 마감 폴더에서 양식 <b>${ok.length}</b>개 등록${same.length ? ` · 이미 최신 ${same.length}개` : ''}`
+    + (ok.length ? `<details><summary>등록한 것</summary>${ul(ok)}</details>` : '')
+    + (miss.length ? `<details><summary>폴더에 파일이 없는 업무 ${miss.length}개</summary>${ul(miss)}</details>` : '')
+    + (noDir.length ? `<details><summary>찾지 못한 폴더 ${noDir.length}개</summary>${ul(noDir)}</details>` : '');
+}
+
 /* ---------- 📊 파일 생성 팝업: 백업자료 생성 화면을 그대로 띄움 ---------- */
 let mkTask = null;
 async function openMake(taskId) {
@@ -344,6 +396,13 @@ export function initBoard({ openAuto, setPrev } = {}) {
       upgradeSeed();
       localStorage.setItem('jywork-closing-v3', '1');
     }
+    // 1.19.1: Sales estimate 완성본 위치를 부속자료 폴더로 (손대지 않았을 때만)
+    if (!localStorage.getItem('jywork-closing-v4')) {
+      const t = store.find('closing', 'seed16');
+      const s = CLOSING_SEED.find((x) => x.id === 'seed16');
+      if (t && t.folder === '6.전략기획\\영업추정') store.upsert('closing', { id: t.id, folder: s.folder, note: s.note });
+      localStorage.setItem('jywork-closing-v4', '1');
+    }
   } catch { /* 저장 불가 */ }
   $('#bdPrev').onclick = () => shiftMonth(-1);
   $('#bdNext').onclick = () => shiftMonth(1);
@@ -367,6 +426,8 @@ export function initBoard({ openAuto, setPrev } = {}) {
     if (await putForm(id, f)) render();
   };
   $('#bdForms').onclick = () => $('#bdFormsIn').click();
+  $('#bdAutoReg').onclick = () => autoFromFolder(false);
+  folderLabel();
   $('#bdFormsIn').onchange = async (e) => {
     const fs = [...e.target.files]; e.target.value = '';
     if (fs.length) await bulkForms(fs);

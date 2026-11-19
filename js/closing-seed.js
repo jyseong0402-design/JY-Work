@@ -99,8 +99,8 @@ export const CLOSING_SEED = [
   needs: [
    { id: 'seed15n01', name: '통합 Capex Actual (0. 통합 Capex Actual {YYYY}. v4({M}월))', dept: '', person: '김해정차장님' },
   ] },
- { id: 'seed16', order: 16, name: 'Sales estimate', file: '{YY}년 {MM+1}월 Sales estimate_v1', folder: '6.전략기획\\영업추정', timing: 'PPT', auto: '',
-  note: '파일명 뒤에 영업 회의 날짜가 붙음 (예: _영업1021) · 완성본은 부속자료 폴더에도 복사',
+ { id: 'seed16', order: 16, name: 'Sales estimate', file: '{YY}년 {MM+1}월 Sales estimate_v1', folder: P, timing: 'PPT', auto: '',
+  note: '파일명 뒤에 영업 회의 날짜가 붙음 (예: _영업1021) · 작업 폴더는 6.전략기획\\영업추정, 완성본은 부속자료 폴더에 복사',
   needs: [
    { id: 'seed16n01', name: '영업 추정 (YYMMDD_Montly estmate_drag_v1)', dept: '', person: '강준모 상무님, 김성수 상무님' },
    { id: 'seed16n02', name: '매출통합 (데일리리포트 매출 Master)', dept: '전략기획', person: '', rd: true },
