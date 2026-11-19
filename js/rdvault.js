@@ -14,6 +14,7 @@ const RD_TYPES = { partner: '거래처원장', account: '계정별원장', recei
 // 자료별: 필요한 RD 종류, 지난달 파일 보관 위치
 const OUTPUTS = [
   { kind: 'arap', label: '💳 채권·채무', need: ['partner'] },
+  { kind: 'arapList', label: '💳 채권·채무 (송이애 원장형)', need: ['partner'] },
   { kind: 'prepay', label: '💰 선급금', need: ['partner'] },
   { kind: 'internal', label: '🔁 내부거래 집계', need: ['account'] },
   { kind: 'freight', label: '🚚 운반비 검증', need: ['account', 'agg'] },
@@ -130,7 +131,8 @@ async function prevFromFolder() {
       const buf = await f.arrayBuffer();
       const d = await detectBook(JSZip, buf);
       const kinds = [];
-      if (d.kinds.includes('ar') || d.kinds.includes('ap')) kinds.push('arap');
+      if (d.kinds.includes('arapList')) kinds.push('arapList');
+      else if (d.kinds.includes('ar') || d.kinds.includes('ap')) kinds.push('arap');
       if (d.kinds.includes('prepay') && !kinds.includes('arap')) kinds.push('prepay');
       if (d.kinds.includes('internal')) kinds.push('internal');
       if (d.kinds.includes('packing')) kinds.push('packing');
@@ -301,7 +303,7 @@ async function setPrev(kind, file) {
   const buf = await file.arrayBuffer();
   if (kind !== 'freight') {
     const d = await detectBook(JSZip, buf).catch(() => ({ kinds: [] }));
-    const okKind = kind === 'arap' ? d.kinds.some((k) => k === 'ar' || k === 'ap') : d.kinds.includes(kind);
+    const okKind = kind === 'arap' ? !d.kinds.includes('arapList') && d.kinds.some((k) => k === 'ar' || k === 'ap') : d.kinds.includes(kind);
     if (!okKind) { alert(`'${file.name}'은(는) ${OUTPUTS.find((o) => o.kind === kind).label.slice(2)} 파일이 아닙니다.`); return; }
   }
   await putSaved(kind, { name: file.name, data: new Uint8Array(buf), at: Date.now() });

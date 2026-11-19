@@ -19,7 +19,7 @@ const idbAll = async () => { const d = await idb(); return new Promise((res, rej
 // ── 백업자료 종류 목록 ──────────────────────────────────────────
 // 새 자료를 추가할 때: 여기 한 줄 + closing.js에 만드는 함수(build) + index.html 드롭다운 <option> 하나
 const TYPES = {
-  arap: { build: () => buildArAp, prev: '① 지난달 채권·채무 파일', prevHint: '매출비교·매입비교 시트가 있는 파일', rd: '② ERP 거래처원장', rdHint: '전체계정 그대로 OK — 외상매출금·외상매입금만 골라 씀 · ⚠ 법인 범위는 지난달과 같게 (기초 잔액으로 자동 대조)',
+  arap: { build: () => buildArAp, prev: '① 지난달 채권·채무 파일', prevHint: '매출비교·매입비교 시트가 있는 파일', rd: '② ERP 거래처원장', rdHint: '전체계정 그대로 OK — 외상매출금·외상매입금만 골라 씀 · ⚠ 법인 범위는 지난달과 같게 (기초 잔액으로 자동 대조) · 대흥(비교표형)·송이애/군자(원장형) 모두 가능',
     desc: '매출채권·매입채무 월 시트 + 매출비교·매입비교 이번 달 열',
     rules: ['거래처원장에서 외상매출금(11110401)·외상매입금(12100101) 행만 골라 \'YY년MM월매출채권/매입채무\' 시트를 새로 만듦 (지난달 시트 서식 그대로)', '매출비교·매입비교에 이번 달 열을 끼워 넣음 — 기존 열·수식은 그대로, 오른쪽 차액 열만 이번 달 기준으로 옮김', '목록에 없는 거래처는 끝에 B열 \'신규\'로 추가 → 구분을 바꿔 주세요', '거래처원장에는 날짜가 없어 지난달 시트의 다음 달로 만듦', '이번 RD의 기초 잔액이 지난달 시트의 잔액과 다르면 \'법인 범위가 다를 수 있음\'으로 경고 (차이 큰 거래처 표시)'] },
   prepay: { build: () => buildArAp, prev: '① 지난달 선급금 파일', prevHint: '선급금증감 시트가 있는 파일', rd: '② ERP 거래처원장', rdHint: '전체계정 그대로 OK — 선급금만 골라 씀 · ⚠ 법인 범위는 지난달과 같게 (기초 잔액으로 자동 대조)',
@@ -125,6 +125,10 @@ function partRows(kind, r) {
     return `<table class="fr-table"><tr><th>항목</th><th class="r">채운 칸</th><th>비고</th></tr>
       ${r.parts.map((p) => `<tr><td>${esc(p.label)}</td><td class="r">${p.rows}</td><td class="sm">${esc(p.note || (p.col ? `${p.col}열 · 금액 합계 ${won(p.total)}` : ''))}</td></tr>`).join('')}</table>`;
   }
+  if (r.parts[0]?.kind === 'arapList') {
+    return `<table class="fr-table"><tr><th>시트</th><th>달</th><th class="r">추가 행</th><th class="r">잔액 합계</th><th>비고</th></tr>
+      ${r.parts.map((p) => `<tr><td>${esc(p.sheet)}</td><td>${esc(p.month)}</td><td class="r">${p.rows}</td><td class="r">${won(p.balance)}</td><td class="sm">${p.removed ? `기존 ${p.removed}행 교체` : ''}</td></tr>`).join('')}</table>`;
+  }
   if (kind === 'packing') {
     return `<table class="fr-table"><tr><th>항목</th><th class="r">추가</th><th class="r">금액</th><th>비고</th></tr>
       ${r.parts.map((p) => `<tr><td>${esc(p.label)}</td><td class="r">${p.rows !== null && p.rows !== undefined ? `${p.rows}행` : `${esc(p.col)}열~`}</td><td class="r">${p.total !== undefined ? won(p.total) : ''}</td><td class="sm">${p.removed ? `기존 ${p.removed}행 교체` : ''}${p.summaryCol ? `요약 ${esc(p.summaryCol)}열 추가` : ''}</td></tr>`).join('')}</table>`;
@@ -159,7 +163,9 @@ async function run() {
     outs.push(out);
     $('#clResult').innerHTML = resultCard(kind, state.prev.file.name, out, 0);
     window.dispatchEvent(new CustomEvent('backup:made', { detail: { type: kind, fileName: out.fileName } }));
-    try { await idbPut(kind, { name: out.fileName, data: out.data, at: Date.now() }); state.saved[kind] = { name: out.fileName, data: out.data }; } catch { /* 저장 공간 */ }
+    // 송이애 원장형은 대흥 채권·채무와 따로 보관 (RD 보관함의 'arapList' 칸)
+    const slot = out.report.parts[0]?.kind === 'arapList' ? 'arapList' : kind;
+    try { await idbPut(slot, { name: out.fileName, data: out.data, at: Date.now() }); state.saved[slot] = { name: out.fileName, data: out.data }; } catch { /* 저장 공간 */ }
   } catch (e) {
     console.error(e);
     $('#clResult').innerHTML = `<div class="card err-card"><h2>만들지 못했습니다</h2><p>${esc(e.message || e)}</p></div>`;

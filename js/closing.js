@@ -138,6 +138,7 @@ export async function detectBook(JSZip, buf) {
   const kinds = [];
   for (const [k, v] of Object.entries(ARAP_KINDS)) if (n.includes(v.cmp) && monthSheets(book, v.suffix).length) kinds.push(k);
   if (n.includes('비용') && n.includes('수익') && n.includes('내부거래 집계')) kinds.push('internal');
+  if (n.includes('매출채권') && n.includes('매입채무') && n.includes('맵핑')) kinds.push('ar', 'ap', 'arapList');
   if (n.includes('수불o') && n.includes('수불x')) kinds.push('packing');
   if (n.some((x) => /raw\s*materials/i.test(x))) kinds.push('rawmat');
   if (n.some((x) => /전력비/.test(x)) && n.some((x) => /가스|등유|벙커/.test(x))) kinds.push('energy');
@@ -349,8 +350,34 @@ async function addArApMonth(book, kind, rd, target, report) {
 // 채권채무·선급금 파일 만들기
 export async function buildArAp({ XLSX, JSZip, prevBuf, rdFiles, target }) {
   const book = await Book.open(JSZip, prevBuf);
+  if (book.has('매출채권') && book.has('매입채무') && book.has('맵핑') && !book.has('매출비교')) return buildArApList({ XLSX, book, rdFiles });
+  // RD가 여러 법인 것이면(보관함 등) 지난달 잔액과 기초가 가장 잘 맞는 파일만 사용
+  const pickInfo = [];
+  if (rdFiles.length > 1) {
+    const prevBal = new Map();
+    for (const K of Object.values(ARAP_KINDS)) {
+      const ms = monthSheets(book, K.suffix);
+      if (!ms.length) continue;
+      const tpl = await book.sheet(ms[ms.length - 1].name);
+      for (const rn of tpl.rows.keys()) { const nm = norm(book.text(tpl.info('C', rn))); if (rn >= 3 && nm) prevBal.set(`${K.suffix}|${nm}`, (prevBal.get(`${K.suffix}|${nm}`) || 0) + num(book.val(tpl, 'I', rn))); }
+    }
+    let best = null;
+    for (const f of rdFiles) {
+      const rows = readPartnerLedgers(XLSX, [f]).rows;
+      let hit = 0, tot = 0;
+      for (const r of rows) {
+        const K = Object.values(ARAP_KINDS).find((k) => k.codes.includes(r.acctCode) || k.names.includes(r.acctName));
+        if (!K) continue;
+        const pv = prevBal.get(`${K.suffix}|${norm(r.name)}`);
+        if (pv === undefined && !r.open) continue;
+        tot++; if (pv !== undefined && Math.abs(pv - r.open) < 1) hit++;
+      }
+      if (tot && (!best || hit / tot > best.score)) best = { f, score: hit / tot };
+    }
+    if (best) { pickInfo.push(`RD ${rdFiles.length}개 중 지난달 잔액과 기초가 맞는 '${best.f.name}'를 썼습니다.`); rdFiles = [best.f]; }
+  }
   const rd = readPartnerLedgers(XLSX, rdFiles);
-  const report = { warnings: [], info: [], parts: [], rdFiles: rd.files };
+  const report = { warnings: [], info: [...pickInfo], parts: [], rdFiles: rd.files };
   if (!rd.rows.length) throw new Error('RD에서 거래처원장(거래처명·계정·잔액 열)을 찾지 못했습니다.');
   const kinds = Object.keys(ARAP_KINDS).filter((k) => book.has(ARAP_KINDS[k].cmp) && monthSheets(book, ARAP_KINDS[k].suffix).length);
   if (!kinds.length) throw new Error('채권채무(매입비교·매출비교) 또는 선급금(선급금증감) 파일이 아닙니다.');
@@ -955,4 +982,90 @@ export async function buildRawMaterial({ XLSX, JSZip, prevBuf, rdFiles }) {
   report.parts.push({ kind: 'rawmat', label: `${sname} ${Y}년 ${M}월`, rows: wrote, col: `${colLet(qc)}·${colLet(ac)}`, total: mrows.filter((x) => used.has(x)).reduce((t, x) => t + x.amt, 0) });
   const data = await book.save({ activeSheet: sname });
   return { data, report, fileName: `${M}월 Raw Material_${String(Y).slice(2)}${pad2(M)}.xlsx` };
+}
+
+/* ================= ⑬ 채권·채무 원장형 (송이애·군자 등) ================= */
+// '매출채권'·'매입채무' 시트 = 달마다 거래처원장 행을 아래로 붙임 (A열 'YYYY.M.'), J·K열은 수식(맵핑 구분·증감)
+const LIST_KINDS = [
+  { sheet: '매출채권', label: '매출채권(외상매출금)', codes: ['11110401', '1110401'], names: ['외상매출금'], mapCol: 'A' },
+  { sheet: '매입채무', label: '매입채무(외상매입금)', codes: ['12100101', '2100101'], names: ['외상매입금'], mapCol: 'H' },
+];
+async function buildArApList({ XLSX, book, rdFiles }) {
+  const report = { warnings: [], info: [], parts: [] };
+  const corp = (norm(book.val(await book.sheet('매출채권'), 'A', 2)).match(/거래처원장\s*-\s*(\S+)/) || [])[1] || '';
+  // RD 파일별로 읽어 두고, 지난달 잔액과 기초가 가장 잘 맞는 파일(=같은 법인)을 고름
+  const perFile = rdFiles.map((f) => ({ f, rd: readPartnerLedgers(XLSX, [f]) })).filter((x) => x.rd.rows.length);
+  if (!perFile.length) throw new Error('RD에서 거래처원장(거래처명·계정·잔액 열)을 찾지 못했습니다.');
+  report.rdFiles = perFile.map((x) => ({ name: x.f.name, rows: x.rd.rows.length }));
+  const prevMonth = async (k) => {
+    const sh = await book.sheet(k.sheet);
+    const rows = [...sh.rows.keys()].filter((r) => r >= 5 && norm(book.val(sh, 'C', r))).sort((a, b) => a - b);
+    if (!rows.length) return null;
+    const lastV = norm(book.val(sh, 'A', rows[rows.length - 1]));
+    const mine = rows.filter((r) => norm(book.val(sh, 'A', r)) === lastV);
+    const bal = new Map();
+    for (const r of mine) bal.set(norm(book.val(sh, 'C', r)), (bal.get(norm(book.val(sh, 'C', r))) || 0) + num(book.val(sh, 'I', r)));
+    return { sh, lastV, first: mine[0], last: rows[rows.length - 1], bal };
+  };
+  const prevs = [];
+  for (const k of LIST_KINDS) prevs.push(await prevMonth(k));
+  const isK = (k, r) => k.codes.includes(r.acctCode) || k.names.includes(r.acctName);
+  let best = null;
+  for (const x of perFile) {
+    let hit = 0, tot = 0;
+    LIST_KINDS.forEach((k, i) => {
+      const pv = prevs[i]; if (!pv) return;
+      for (const r of x.rd.rows.filter((r) => isK(k, r))) { if (!r.open && !pv.bal.get(norm(r.name))) continue; tot++; if (Math.abs((pv.bal.get(norm(r.name)) || 0) - r.open) < 1) hit++; }
+    });
+    const score = tot ? hit / tot : 0;
+    if (!best || score > best.score) best = { ...x, score, hit, tot };
+  }
+  if (perFile.length > 1) report.info.push(`RD ${perFile.length}개 중 지난달 잔액과 기초가 맞는 '${best.f.name}'를 썼습니다.`);
+  if (best.tot && best.score < 0.9) report.warnings.unshift(`범위 확인: RD 기초가 지난달 잔액과 ${best.hit}/${best.tot}곳만 맞습니다 — ${corp || '이 법인'} 전체로 조회한 거래처원장인지 확인해 주세요.`);
+  else if (best.tot) report.info.push(`범위 확인 ✓ RD 기초 = 지난달 잔액 (${best.hit}/${best.tot}곳 일치)`);
+  let Y = 0, M = 0;
+  for (let i = 0; i < LIST_KINDS.length; i++) {
+    const k = LIST_KINDS[i], pv = prevs[i];
+    if (!pv) { report.warnings.push(`'${k.sheet}' 시트에서 지난달 행을 찾지 못했습니다.`); continue; }
+    const items = best.rd.rows.filter((r) => isK(k, r));
+    if (!items.length) { report.warnings.push(`RD에 ${k.label} 행이 없어 '${k.sheet}'는 그대로 두었습니다.`); continue; }
+    const m = pv.lastV.match(/^(\d{4})\.(\d{1,2})\.?$/);
+    if (!m) throw new Error(`'${k.sheet}' A열의 달 표시('${pv.lastV}')를 읽지 못했습니다.`);
+    [Y, M] = nextYm(+m[1], +m[2]);
+    const label = `${Y}.${M}.`;
+    const sh = pv.sh;
+    sh.expandShared();
+    // 같은 달을 다시 만들면 그 달 행을 지우고 새로
+    let base = pv.last, removed = 0;
+    if (pv.lastV === label) { for (let r = pv.first; r <= pv.last; r++) { sh.rows.delete(r); removed++; } base = pv.first - 1; }
+    const tplRn = pv.lastV === label ? base : pv.last;
+    const tpl = new Map(sh.rows.get(tplRn)?.cells || []);
+    const tplAttrs = (sh.rows.get(tplRn)?.attrs || '').replace(/\s(thickBot|thickTop)="1"/g, '');
+    let rn = base;
+    const mapSh = await book.sheet('맵핑');
+    const mapped = new Set();
+    for (const r of mapSh.rows.keys()) { const v = norm(book.val(mapSh, k.mapCol, r)); if (v) mapped.add(v); }
+    const fresh = [];
+    for (const it of items) {
+      rn++;
+      const vals = { A: label, B: it.code === null || it.code === undefined ? null : (/^\d+$/.test(String(it.code)) ? Number(it.code) : String(it.code)), C: it.name,
+        D: /^\d+$/.test(it.acctCode) ? Number(it.acctCode) : it.acctCode, E: it.acctName, F: it.open, G: it.dr || null, H: it.cr || null, I: it.bal };
+      const cells = new Map();
+      // 코드 열은 지난 행이 글자면 글자, 숫자면 숫자로
+      for (const c of ['B', 'D']) { const ti = cellInfo(tpl.get(colNum(c))); if (vals[c] !== null && ti && (ti.t === 's' || ti.t === 'inlineStr' || ti.t === 'str')) vals[c] = String(vals[c]); }
+      for (const c of ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I']) cells.set(colNum(c), valCell(`${c}${rn}`, styleOfXml(tpl.get(colNum(c))), vals[c]));
+      for (const c of ['J', 'K']) {
+        const i = cellInfo(tpl.get(colNum(c)));
+        if (i?.f !== undefined) cells.set(colNum(c), fCell(`${c}${rn}`, i.s, shiftRefs(i.f, (q) => ((!q.sheet || q.sheet === k.sheet) && q.row && !q.rowAbs ? { ...q, row: q.row + (rn - tplRn) } : q))));
+      }
+      sh.rows.set(rn, { attrs: tplAttrs.replace(/\sr="\d+"/, ` r="${rn}"`) || ` r="${rn}"`, cells });
+      if (!mapped.has(norm(it.name)) && (it.open || it.dr || it.cr || it.bal)) fresh.push(it.name);
+    }
+    report.parts.push({ kind: 'arapList', label: k.label, sheet: k.sheet, rows: items.length, removed, balance: items.reduce((t, r) => t + r.bal, 0), month: label });
+    if (fresh.length) report.warnings.push(`'${k.sheet}': 맵핑 시트에 없는 거래처 ${fresh.length}곳 — 구분(J열)이 비어 있으니 맵핑 ${k.mapCol}열에 추가해 주세요: ${[...new Set(fresh)].slice(0, 8).join(', ')}${fresh.length > 8 ? ' 외' : ''}`);
+  }
+  if (!report.parts.length) throw new Error('RD에 외상매출금·외상매입금 행이 없어 만든 내용이 없습니다.');
+  report.info.push('오른쪽 요약표(구분별 합계)는 손대지 않았습니다.');
+  const data = await book.save({ activeSheet: '매출채권' });
+  return { data, report, fileName: `(${corp || 'AR_AP'}) ${String(Y).slice(2)}년${pad2(M)}월 거래처별 외상매입매출_${String(Y).slice(2)}${pad2(M)}.xlsx` };
 }
