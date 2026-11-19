@@ -741,12 +741,23 @@ form.focus #focusToggle { background: rgba(255, 255, 255, .12); }
 .bd-form label span, .bd-nhead span { display: block; font-size: 12px; color: var(--muted); margin-bottom: 3px; }
 .bd-form input, .bd-form select, .bd-nrow input { width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); margin: 0; }
 .bd-nform { padding: 0 14px 12px 60px; }
-.bd-nhead, .bd-nrow { display: grid; grid-template-columns: 1.5fr .8fr 1fr 40px 40px; gap: 8px; align-items: center; margin-bottom: 6px; }
+.bd-nhead, .bd-nrow { display: grid; grid-template-columns: 1.5fr .8fr 1fr 44px 40px 40px; gap: 8px; align-items: center; margin-bottom: 6px; }
+.bd-folder { color: var(--muted); font-size: 12px; margin-top: 2px; word-break: break-all; }
+.bd-note { white-space: pre-line; font-size: 13px; color: var(--muted); padding: 0 14px 8px 60px; margin-top: -4px; }
+.tag.rd { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); font-size: 11px; font-weight: 700; padding: 1px 6px; margin: 0; }
+.bd-formstat { grid-column: 1 / -1; }
+.bd-wide { grid-column: 1 / -1; }
+.bd-form textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); resize: vertical; }
+.bd-formfile { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+.bd-formfile > span:first-child { font-size: 12px; color: var(--muted); }
+.bd-rdchk { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: var(--muted); cursor: pointer; }
+.bd-rdchk input { width: 16px; height: 16px; margin: 0; }
+.bd-msglist { margin: 4px 0 0; padding-left: 18px; font-size: 12.5px; max-height: 220px; overflow: auto; }
 .bd-add { border: 0; background: none; color: var(--primary); font-weight: 600; cursor: pointer; padding: 6px 0; font-size: 14px; }
 @media (max-width: 900px) {
   .bd-stats { grid-template-columns: repeat(2, 1fr); }
   .bd-row { grid-template-columns: 30px 1fr; } .bd-timing, .bd-need-sum { grid-column: 2; } .bd-acts { grid-column: 1 / -1; justify-content: flex-start; }
-  .bd-needs, .bd-form, .bd-nform { padding-left: 14px; } .bd-form { grid-template-columns: 1fr; }
+  .bd-needs, .bd-form, .bd-nform, .bd-note { padding-left: 14px; } .bd-form { grid-template-columns: 1fr; }
   .bd-need { grid-template-columns: 24px 1fr; } .bd-dept, .bd-prod, .bd-rdate { grid-column: 2; } .bd-need-h { display: none; }
 }
 .bd-foot { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0 16px; }

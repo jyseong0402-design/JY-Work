@@ -181,7 +181,10 @@
           <button class="btn sm" id="bdLoad">📥 목록 파일 불러오기</button>
           <button class="btn sm" id="bdSave">💾 목록 파일로 저장</button>
           <input type="file" id="bdLoadIn" accept=".json,application/json" hidden />
-          <span class="muted sm" id="bdLoadMsg">목록 파일은 이 기기에서만 읽고, 내용은 내 계정에만 저장됩니다.</span>
+          <button class="btn sm" id="bdForms" title="지난달 폴더의 완성본 파일들을 한꺼번에 고르면 파일명 규칙으로 업무를 찾아 양식으로 등록합니다">📂 완성본으로 양식 한꺼번에 등록</button>
+          <input type="file" id="bdFormsIn" multiple hidden />
+          <input type="file" id="bdFormIn" hidden />
+          <span class="muted sm" id="bdLoadMsg">목록은 내 계정에 저장되고, 📄 양식 파일은 이 기기 브라우저에만 보관됩니다 (서버로 보내지 않음).</span>
         </div>
       </section>
 

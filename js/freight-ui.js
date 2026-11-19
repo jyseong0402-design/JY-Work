@@ -28,6 +28,9 @@ function render() {
   $('#frHint').innerHTML = miss.length ? `${miss.join(' · ')}을(를) 넣어 주세요` : '<span class="ok">✓ 준비 완료 — 파일 만들기를 누르세요</span>';
 }
 
+// 월마감 현황에 등록한 양식(지난 검증파일)을 ③ 칸에 넣기
+export function setFreightPrev(file) { state.prev = file; render(); }
+
 function bindDrop(zoneSel, inputSel, onFiles) {
   const z = $(zoneSel), inp = $(inputSel);
   z.addEventListener('click', (e) => { if (!e.target.closest('button')) inp.click(); });

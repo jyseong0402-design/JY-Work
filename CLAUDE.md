@@ -30,6 +30,8 @@
   · 원칙: 기존 서식·수식 절대 유지, 이번 달만 추가(손대지 않은 시트는 원본 그대로 저장). 검증은 rd/integrity.py 방식(원래 셀 서식·수식 비교)
 - `js/board.js` 📋 월마감 현황(view-board): store kind 'closing' = 업무 {name,file,timing,auto,needs[{id,name,dept,person}](예전 producer는 needOf가 사람/조직으로 나눠 읽음),order,marks{'YYYY-MM':{done,recv{needId:date}}}}
   · 기본 목록 js/closing-seed.js(고정 id seedNN, 사용자가 공개 저장소 노출을 알고 넣기로 함 2026-11-15): 기기마다 처음 한 번 store.seed(오래된 updatedAt → 다른 기기 수정·삭제가 이김). 📥/💾 목록 파일(JSON)은 백업용. 담당자·target·done은 사이트에 두지 않음
+  · (2026-11-19~) file=파일명 규칙({YYYY}{YY}{MM}{M}{YYMM}{END}{Mon}, {MM+1} 가능), folder=저장 위치, note=작업 메모, needs[].rd=직접 뽑는 로우데이터. 보는 달=일하는 달, 이름은 전달(결산월)로 채움(closeOf). 기존 기기는 'jywork-closing-v3' 한 번 upgradeSeed(SEED_OLD/NEED_OLD와 같을 때만 교체, seed26~ 추가)
+  · `js/forms.js` 📄 양식: IndexedDB 'jywork-forms'(files/meta, key=업무 id, 기기별). 📂 한꺼번에 등록 = matchFiles(파일명 규칙 정규식, 뒤에 붙은 말 적은 것→최근 달→최근 수정본). 📊 파일 생성 열 때 xlsx 양식이 있으면 setClosingPrev/setFreightPrev로 ① 지난달 파일에 넣음
   · 📊 파일 생성 = #dlgMake 팝업: #view-auto의 .auto-pick/.auto-panel을 팝업으로 옮겼다가 닫으면 되돌림, 생성 완료 시 window 'backup:made' 이벤트
 - `js/closing.js` 월마감 엔진 / `js/closing-ui.js` 화면 / `js/xlsxkit.js` 공용 XML 편집(열·행 삽입 시 수식 참조 이동, 시트 추가)
   · 채권채무: 거래처원장 11110401·12100101 → 'YY년MM월매출채권/매입채무' + 매출비교·매입비교 열 삽입(차액 열 이동, 새 거래처 '신규' 행)

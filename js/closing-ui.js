@@ -31,7 +31,7 @@ const TYPES = {
   packing: { build: () => buildPacking, prev: '① 지난달 포장소모품비 파일', prevHint: '수불o·수불x 시트가 있는 파일', rd: '② ERP RD', rdHint: '기간별입고현황 + 계정별원장 (전체계정 그대로 OK)',
     desc: '수불o·수불x 이번 달 행 + 회사별 시트 이번 달 열',
     rules: ['기간별입고현황 → 수불o, 계정별원장의 포장 계정(Mapping P열) → 수불x 맨 아래에 이번 달 행만 붙임', '회사별 시트에 이번 달 3칸(수불o·수불x 판관·제조) + 월별 요약 열 추가 (기존 열은 오른쪽으로 밀릴 뿐 수식·서식 그대로)', '\'포장소모품비 예산정리\' 시트는 손으로 넣는 칸이라 비워 둠', 'RD 날짜로 이번 달을 정하고, 같은 달을 다시 만들면 그 달 행만 새로 바꿈'] },
-  energy: { build: () => buildEnergy, prev: '① 지난달 전력비·수도광열비 파일', prevHint: '전력비·가스 등유 벙커c유 등 시트가 있는 \'계획대비계정증감\' 파일', rd: '② 전력비 및 에너지 사용현황', rdHint: '담당자에게 받는 사용현황 파일 2개 (대흥 / 송이애·새송이·용인) 를 같이 넣기',
+  energy: { build: () => buildEnergy, prev: '① 지난달 전력비·수도광열비 파일', prevHint: '전력비·가스 등유 벙커c유 등 시트가 있는 \'닥터애그_전력비 및 에너지 사용 현황\' 파일', rd: '② 전력비 및 에너지 사용현황', rdHint: '담당자에게 받는 사용현황 파일 2개 (대흥 / 송이애·새송이·용인) 를 같이 넣기',
     desc: '전력비·가스(등유·벙커C유) 시트 이번 달 행 — 사용량·요금 칸 채움, 단가·합계는 기존 수식',
     rules: ['RD 사용현황 파일의 계량기 열을 지난 달 값이 같은 열끼리 자동으로 짝지어 이번 달 사용량·요금을 옮김 (열 순서·이름이 달라도 OK)', '단가·합계·Total 칸은 원래 수식 그대로 (값을 덮지 않음)', '이번 달 행이 없으면(새해 1월 등) 블록마다 맨 위에 한 줄 끼우고 위 행 수식을 복사', 'RD에서 짝을 못 찾은 계량기 열은 경고로 알려 줌 — 손으로 확인', '계약전력·bgt 시트는 그대로'] },
   rawmat: { build: () => buildRawMaterial, prev: '① 지난달 Raw Material 파일', prevHint: "'raw materials P' 시트가 있는 파일", rd: '② ERP 기간별입고현황', rdHint: '법인별 3개 (대흥·송이애·군자) 를 같이 넣기 — 구분 \'원재료\'만 골라 씀',
@@ -179,6 +179,8 @@ async function run() {
 }
 
 export function openAutoType(m) { setMode(m); }
+// 월마감 현황에 등록한 양식(지난달 완성본)을 ① 칸에 넣기
+export function setClosingPrev(file) { $('#clResult').innerHTML = ''; return setPrev(file); }
 
 export function initClosing() {
   if (!$('#view-auto')) return;

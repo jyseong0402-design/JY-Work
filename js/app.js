@@ -4,7 +4,8 @@ import { aiSummarize, aiAnswer, aiTranscribe, aiEnabled } from './ai.js';
 import { InkPad, renderInkPreview } from './ink.js';
 import { icon } from './icons.js';
 import { initFreight } from './freight-ui.js';
-import { initClosing, openAutoType } from './closing-ui.js';
+import { initClosing, openAutoType, setClosingPrev } from './closing-ui.js';
+import { setFreightPrev } from './freight-ui.js';
 import { initBoard, homeClosingHTML } from './board.js';
 import { initRdVault } from './rdvault.js';
 import { initRdAsk } from './rdask.js';
@@ -1174,7 +1175,7 @@ setTimeout(checkUpdate, 5000);
 
 initFreight();
 initClosing();
-initBoard({ openAuto: (type) => openAutoType(type) });
+initBoard({ openAuto: (type) => openAutoType(type), setPrev: (type, file) => (type === 'freight' ? setFreightPrev(file) : setClosingPrev(file)) });
 initRdVault();
 initRdAsk();
 
