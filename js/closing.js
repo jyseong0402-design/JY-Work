@@ -139,6 +139,7 @@ export async function detectBook(JSZip, buf) {
   for (const [k, v] of Object.entries(ARAP_KINDS)) if (n.includes(v.cmp) && monthSheets(book, v.suffix).length) kinds.push(k);
   if (n.includes('비용') && n.includes('수익') && n.includes('내부거래 집계')) kinds.push('internal');
   if (n.includes('매출채권') && n.includes('매입채무') && n.includes('맵핑')) kinds.push('ar', 'ap', 'arapList');
+  if (n.includes('닥터애그(CAPEX Actual)')) kinds.push('capex');
   if (n.includes('수불o') && n.includes('수불x')) kinds.push('packing');
   if (n.some((x) => /raw\s*materials/i.test(x))) kinds.push('rawmat');
   if (n.some((x) => /전력비/.test(x)) && n.some((x) => /가스|등유|벙커/.test(x))) kinds.push('energy');
@@ -1068,4 +1069,115 @@ async function buildArApList({ XLSX, book, rdFiles }) {
   report.info.push('오른쪽 요약표(구분별 합계)는 손대지 않았습니다.');
   const data = await book.save({ activeSheet: '매출채권' });
   return { data, report, fileName: `(${corp || 'AR_AP'}) ${String(Y).slice(2)}년${pad2(M)}월 거래처별 외상매입매출_${String(Y).slice(2)}${pad2(M)}.xlsx` };
+}
+
+/* ================= ⑮ CAPEX 재분류 검증 (대흥 통합 Capex Actual → 닥터애그(CAPEX Actual)) ================= */
+// 대흥 파일 'CAPEX 닥터애그…' 시트: C 구분1 · D 구분2 · F 투자내역 · 월 열(1~12월, 원) → 검증파일 맨 아래에 그 달 행(A 연도·B 월·E·F·I·그 달 열, 천원)
+export function readCapexSource(XLSX, files) {
+  for (const { name, buf } of files) {
+    const wb = XLSX.read(buf, { cellDates: true });
+    const sn = wb.SheetNames.find((x) => /^CAPEX\s*닥터애그/.test(x));
+    if (!sn) continue;
+    const g = gridOf(XLSX, wb.Sheets[sn]);
+    let hr = 0, cInv = 0, cG1 = 0, cG2 = 0, m1 = 0;
+    for (let r = 1; r <= 10 && !hr; r++) {
+      const row = g[r] || [];
+      const ix = row.findIndex((v) => norm(v) === '투자내역');
+      if (ix > 0) { hr = r; cInv = ix; cG1 = row.findIndex((v) => norm(v) === '구분1'); cG2 = row.findIndex((v) => norm(v) === '구분2'); m1 = ix + 1; }
+    }
+    if (!hr) continue;
+    return { name, sheet: sn, get: (r, c) => gv(g, r, c), maxRow: g.length - 1, hr, cInv, cG1, cG2, m1 };
+  }
+  return null;
+}
+
+export async function buildCapex({ XLSX, JSZip, prevBuf, rdFiles }) {
+  const book = await Book.open(JSZip, prevBuf);
+  const SN = '닥터애그(CAPEX Actual)';
+  if (!book.has(SN)) throw new Error(`CAPEX 재분류 검증 파일이 아닙니다 ('${SN}' 시트 없음).`);
+  const src = readCapexSource(XLSX, rdFiles);
+  if (!src) throw new Error("대흥 '통합 Capex Actual' 파일('CAPEX 닥터애그' 시트)을 RD 칸에 넣어 주세요.");
+  const report = { warnings: [], info: [], parts: [], rdFiles: [{ name: src.name, rows: src.maxRow }] };
+  const sh = await book.sheet(SN);
+  sh.expandShared();
+  const V = (c, r) => book.val(sh, c, r);
+  // 지난 마지막 달
+  const rows = [...sh.rows.keys()].filter((r) => r >= 9 && typeof V(1, r) === 'number' && typeof V(2, r) === 'number').sort((a, b) => a - b);
+  if (!rows.length) throw new Error(`'${SN}'에서 연도·월(A·B열)이 있는 행을 찾지 못했습니다.`);
+  const lastRn = rows[rows.length - 1];
+  const [ly, lm] = [V(1, lastRn), V(2, lastRn)];
+  // 이번 달: 원본 파일에서 지난달 다음 달 열에 금액이 있으면 그 달 (같은 달을 다시 만들면 그 달 교체)
+  const amt = (M, r) => num(src.get(r, src.m1 + M - 1));
+  const srcRows = (M) => { const o = []; for (let r = src.hr + 1; r <= src.maxRow; r++) if (norm(src.get(r, src.cInv)) && amt(M, r)) o.push(r); return o; };
+  let [Y, M] = nextYm(ly, lm);
+  if (Y !== ly) throw new Error(`${Y}년 1월은 검증파일에 새해 열(${Y} Actual)을 먼저 만든 뒤 진행해 주세요.`);
+  if (!srcRows(M).length && srcRows(lm).length) { M = lm; report.info.push(`원본에 ${lm + 1}월 금액이 아직 없어 ${lm}월을 다시 만들었습니다.`); }
+  const picked = srcRows(M);
+  if (!picked.length) throw new Error(`원본 파일에 ${M}월 금액이 있는 행이 없습니다.`);
+  // 검증파일의 '{Y} Actual' 블록에서 M월 열
+  let start = 0;
+  for (let c = 1; c <= sh.maxCol && !start; c++) if (norm(V(c, 3)) === `${Y} Actual`) start = c;
+  if (!start) throw new Error(`'${SN}' 3행에서 '${Y} Actual' 열을 찾지 못했습니다.`);
+  const mc = start + M - 1;
+  // 같은 달 행이 이미 있으면 지우고 다시
+  const same = rows.filter((r) => V(1, r) === Y && V(2, r) === M);
+  let base = lastRn;
+  if (same.length) { for (const r of same) sh.rows.delete(r); base = same[0] - 1; report.info.push(`기존 ${M}월 ${same.length}행을 새로 바꿨습니다.`); }
+  const tplRn = same.length ? base : lastRn;
+  const tpl = sh.rows.get(tplRn);
+  const st = (c) => styleOfXml(tpl?.cells.get(c)) ?? styleOfXml(tpl?.cells.get(9));
+  // 금액 칸 서식 = 본보기 행의 금액 칸(그 행의 달 열) 서식
+  const tplM = V(1, tplRn) === Y ? start + V(2, tplRn) - 1 : mc;
+  const amtStyle = styleOfXml(tpl?.cells.get(tplM)) ?? st(mc);
+  const dVal = V(4, tplRn);
+  // 재분류 배우기: 지난달들의 원본 구분 → 검증파일에서 고친 구분 (투자내역·달·금액이 같은 행끼리)
+  const txt = (v) => String(v ?? '').trim();
+  const learn = { g1: new Map(), g2: new Map() };
+  const vRows = rows.filter((r) => V(1, r) === Y && V(2, r) < M);
+  for (let m = 1; m < M; m++) {
+    const done = new Map();
+    for (const r of vRows) if (V(2, r) === m) { const k = `${norm(V(9, r))}|${Math.round(num(V(start + m - 1, r)))}`; if (!done.has(k)) done.set(k, r); }
+    for (const r of srcRows(m)) {
+      const vr = done.get(`${norm(src.get(r, src.cInv))}|${Math.round(amt(m, r) / 1000)}`);
+      if (!vr) continue;
+      for (const [k, sc, vc] of [['g1', src.cG1, 5], ['g2', src.cG2, 6]]) {
+        const a = norm(src.get(r, sc)), b = norm(V(vc, vr));
+        if (!a || !b) continue;
+        const cnt = learn[k].get(a) || new Map(); cnt.set(b, (cnt.get(b) || 0) + 1); learn[k].set(a, cnt);
+      }
+    }
+  }
+  const cats = { g1: new Set(), g2: new Set() };
+  for (const r of rows) { const a = norm(V(5, r)), b = norm(V(6, r)); if (a) cats.g1.add(a); if (b) cats.g2.add(b); }
+  const changed = [], unknown = new Set();
+  const classify = (k, v, inv) => {
+    if (!v) return null;
+    const c = learn[k].get(v);
+    let out = c ? [...c].sort((a, z) => z[1] - a[1])[0][0] : null;
+    if (!out && cats[k].has(v)) out = v;
+    if (!out) out = [...cats[k]].filter((x) => v.startsWith(x)).sort((a, z) => z.length - a.length)[0] || null;
+    if (!out) { unknown.add(v); return v; }
+    if (out !== v) changed.push(`${inv}: ${v} → ${out}`);
+    return out;
+  };
+  let rn = base, total = 0;
+  for (const r of picked) {
+    rn++;
+    const cells = new Map();
+    const put = (c, v) => cells.set(c, valCell(`${colLet(c)}${rn}`, st(c), v));
+    put(1, Y); put(2, M);
+    if (dVal !== null && dVal !== '') put(4, dVal);
+    const inv = txt(src.get(r, src.cInv));
+    put(5, classify('g1', norm(src.get(r, src.cG1)), inv)); put(6, classify('g2', norm(src.get(r, src.cG2)), inv)); put(9, inv);
+    const a = Math.round(amt(M, r)) / 1000;
+    cells.set(mc, valCell(`${colLet(mc)}${rn}`, amtStyle, a)); total += a;
+    sh.rows.set(rn, { attrs: (tpl?.attrs || '').replace(/\sr="\d+"/, ` r="${rn}"`) || ` r="${rn}"`, cells });
+  }
+  sh.xml = sh.xml.replace(/(<autoFilter ref="[A-Z]+\d+:[A-Z]+)(\d+)"/, (m0, a, e) => (+e >= base ? `${a}${rn}"` : m0));
+  report.parts.push({ kind: 'capex', label: `${SN} ${Y}년 ${M}월`, rows: picked.length, note: `${colLet(mc)}열 · 합계 ${Math.round(total).toLocaleString()}천원` });
+  report.warnings.push('송이애(CAPEX Actual)·군자(CAPEX Actual)는 각 법인 KPI 파일을 보고 손으로 넣어 주세요.');
+  if (changed.length) report.info.push(`재분류 ${changed.length}건 (지난 달들의 검증 기록대로): ${[...new Set(changed.map((x) => x.split(': ')[1]))].join(', ')}`);
+  if (unknown.size) report.warnings.push(`검증파일에 없던 분류라 그대로 둔 것: ${[...unknown].join(', ')} — 맞는 분류로 E·F열을 고쳐 주세요.`);
+  const data = await book.save({ activeSheet: SN });
+  return { data, report, fileName: `${Y}년${pad2(M)}월_Dr.AG_Capex_재분류_검증_${String(Y).slice(2)}${pad2(M)}.xlsx` };
 }

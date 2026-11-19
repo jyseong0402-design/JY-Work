@@ -5,7 +5,7 @@ import { CLOSING_SEED } from './closing-seed.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const AUTO = { '': '연결 없음', freight: '🚚 운반비 검증', arap: '💳 채권·채무', prepay: '💰 선급금', internal: '🔁 내부거래 집계', packing: '📦 포장소모품비', energy: '⚡ 전력비·수도광열비', rawmat: '🌾 Raw Material(원재료)' };
+const AUTO = { '': '연결 없음', freight: '🚚 운반비 검증', arap: '💳 채권·채무', prepay: '💰 선급금', internal: '🔁 내부거래 집계', packing: '📦 포장소모품비', energy: '⚡ 전력비·수도광열비', rawmat: '🌾 Raw Material(원재료)', capex: '🏗 CAPEX 재분류 검증' };
 const ym = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 const md = (s) => (s ? `${+s.slice(5, 7)}/${+s.slice(8, 10)}` : '');
 
