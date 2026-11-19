@@ -1,4 +1,4 @@
-import { store, settings, todayStr } from './store.js';
+import { store, settings, todayStr, uid } from './store.js';
 import { localSummarize } from './summarize.js';
 import { aiSummarize, aiAnswer, aiTranscribe, aiEnabled } from './ai.js';
 import { InkPad, renderInkPreview } from './ink.js';
@@ -10,7 +10,8 @@ import { initBoard, homeClosingHTML } from './board.js';
 import { initRdVault } from './rdvault.js';
 import { initRdAsk } from './rdask.js';
 import { inkdb } from './inkdb.js';
-import { sync, loadInk, saveInk, flushInk, parseConfig, getConfig, inkReport, restoreInk } from './sync.js';
+import { sync, loadInk, saveInk, flushInk, parseConfig, getConfig, inkReport, restoreInk, savePhoto, getPhoto, removePhoto } from './sync.js';
+import { shrinkImage } from './photos.js';
 import { exportExcel, importExcel } from './excel.js';
 import { APP_VERSION, CHANGES, cmpVersion } from './version.js';
 import { expandEvents, repeatLabel } from './recur.js';
@@ -81,7 +82,7 @@ function meetingItem(m, q) {
     <div class="when">${fmt(m.date)}</div>
     <div class="body"><div class="title">${highlight(m.title, q)}</div>
       <div class="sub">${highlight(sum, q)}</div>
-      <div>${tags}${m.decisions?.length ? `<span class="tag green">결정 ${m.decisions.length}</span>` : ''}${m.actions?.length ? `<span class="tag red">할일 ${m.actions.length}</span>` : ''}${m.inkPages ? `<span class="tag yellow">✍️ 필기 ${m.inkPages}쪽</span>` : ''}${m.summary ? '' : '<span class="tag gray">요약 전</span>'}</div>
+      <div>${tags}${m.decisions?.length ? `<span class="tag green">결정 ${m.decisions.length}</span>` : ''}${m.actions?.length ? `<span class="tag red">할일 ${m.actions.length}</span>` : ''}${m.inkPages ? `<span class="tag yellow">✍️ 필기 ${m.inkPages}쪽</span>` : ''}${m.photos?.length ? `<span class="tag gray">📷 ${m.photos.length}</span>` : ''}${m.summary ? '' : '<span class="tag gray">요약 전</span>'}</div>
     </div></div>`;
 }
 
@@ -285,7 +286,7 @@ function renderMeetings() {
     cards.push(coverHTML({
       color: seriesColor(m.title || ''), title: m.title || '제목 없음', sub: '',
       attrs: `data-open="meetingView" data-id="${m.id}"`, ink: !!m.inkPages,
-      foot: `<b>${m.inkPages ? `✍️ ${m.inkPages}쪽` : m.summary ? '요약됨' : '메모'}</b><span>${fmt(m.date)}</span>`,
+      foot: `<b>${m.inkPages ? `✍️ ${m.inkPages}쪽` : m.summary ? '요약됨' : '메모'}${m.photos?.length ? ` · 📷${m.photos.length}` : ''}</b><span>${fmt(m.date)}</span>`,
     }));
   }
   $('#meetingList').className = 'nb-grid';
@@ -642,11 +643,12 @@ function scheduleSave(delay = 1200) {
 const autoTitle = (o) => `메모 ${fmt(o.date)}`;
 
 let inkBlocked = false, inkBlockedWarned = false;
+let curPhotos = []; // 지금 열린 메모의 사진 목록 [{id, name, at}] (사진 자체는 photos.js / sync.js)
 function saveMeeting({ final = false } = {}) {
   clearTimeout(saveTimer);
   saveTimer = null;
   const o = read(fMeeting);
-  const empty = !o.content && pad.isEmpty() && !o.summary && !o.decisions && !o.actions && !o.title;
+  const empty = !o.content && pad.isEmpty() && !o.summary && !o.decisions && !o.actions && !o.title && !curPhotos.length;
   if (!o.id && empty) { setSaveState('idle'); return null; } // 아무것도 안 쓴 새 메모는 저장하지 않음
   if (!o.id) delete o.id;
   if (!o.title) o.title = autoTitle(o);
@@ -665,7 +667,7 @@ function saveMeeting({ final = false } = {}) {
   const inkChanged = pad.dirty;
   const inkPages = inkChanged ? pad.pageCount() : (prev?.inkPages || 0);
   const inkRev = inkChanged ? (inkPages ? new Date().toISOString() : '') : (prev?.inkRev || '');
-  const item = { ...o, inkPages, inkRev, decisions: lines(o.decisions), actions: textToActions(o.actions), keywords: splitList(o.keywords) };
+  const item = { ...o, inkPages, inkRev, photos: curPhotos.map((p) => ({ ...p })), decisions: lines(o.decisions), actions: textToActions(o.actions), keywords: splitList(o.keywords) };
   const sig = JSON.stringify(item);
   let m = prev;
   if (sig !== lastSaved || inkChanged) {
@@ -787,6 +789,8 @@ async function openMeeting(id, preset = {}) {
   $('#sumDot').classList.toggle('on', !!m.summary);
   $('#btnAiSum').title = aiEnabled() ? '' : '설정에서 API 키를 넣으면 사용할 수 있습니다';
   pad.load(null);
+  curPhotos = (m.photos || []).map((p) => ({ ...p }));
+  renderPhotos();
   lastSaved = id ? JSON.stringify(read(fMeeting)) : '';
   setSaveState(id ? 'idle' : 'idle');
   renderPrevBox();
@@ -815,6 +819,104 @@ function closeMeeting() {
 }
 $('[data-cancel]', fMeeting).onclick = closeMeeting;
 dlgMeeting.addEventListener('cancel', (e) => { e.preventDefault(); closeMeeting(); });
+
+/* ----- 메모 사진: 📷 버튼(탭은 카메라·갤러리), PC는 붙여넣기(Ctrl+V)·끌어놓기 ----- */
+const photoThumb = (el, rec) => { el.innerHTML = rec ? `<img src="${rec.data}" alt="" />` : '☁ 아직<br>못 받음'; };
+function renderPhotos() {
+  const box = $('#photoStrip');
+  const was = !box.hidden;
+  box.hidden = !curPhotos.length;
+  box.innerHTML = curPhotos.map((p, i) => `<button type="button" class="ph" data-ph="${p.id}" title="사진 ${i + 1} 크게 보기">…</button>`).join('');
+  for (const p of curPhotos) {
+    getPhoto(p.id).then((rec) => { const el = box.querySelector(`[data-ph="${p.id}"]`); if (el) photoThumb(el, rec); })
+      .catch(() => { const el = box.querySelector(`[data-ph="${p.id}"]`); if (el) photoThumb(el, null); });
+  }
+  if (was !== !box.hidden && dlgMeeting.open) requestAnimationFrame(() => pad.layout(true));
+}
+async function addPhotos(files) {
+  const imgs = [...(files || [])].filter((f) => /^image\//.test(f.type));
+  if (!imgs.length) return;
+  setSaveState('pending');
+  const recs = [];
+  for (const f of imgs) {
+    try {
+      const s = await shrinkImage(f);
+      recs.push({ id: 'ph' + uid(), name: f.name || '붙여넣은 사진', at: new Date().toISOString(), ...s });
+    } catch (e) { toast(e.message || '사진을 열 수 없습니다.'); }
+  }
+  if (!recs.length) { setSaveState('idle'); return; }
+  curPhotos.push(...recs.map(({ id, name, at }) => ({ id, name, at })));
+  const m = saveMeeting(); // 새 메모면 여기서 만들어짐
+  if (!m) return;
+  try {
+    for (const r of recs) await savePhoto({ ...r, mid: m.id });
+  } catch {
+    setSaveState('error');
+    alert('사진을 저장하지 못했습니다. 저장 공간을 확인해주세요.');
+  }
+  renderPhotos();
+  toast(`사진 ${recs.length}장을 붙였습니다.`);
+}
+$('#photoBtn').onclick = () => $('#photoIn').click();
+$('#photoIn').onchange = (e) => { addPhotos(e.target.files); e.target.value = ''; };
+dlgMeeting.addEventListener('paste', (e) => {
+  const files = [...(e.clipboardData?.files || [])].filter((f) => /^image\//.test(f.type));
+  if (!files.length) return;
+  e.preventDefault();
+  addPhotos(files);
+});
+dlgMeeting.addEventListener('dragover', (e) => {
+  if (![...(e.dataTransfer?.items || [])].some((i) => i.kind === 'file')) return;
+  e.preventDefault();
+  dlgMeeting.classList.add('drop-on');
+});
+dlgMeeting.addEventListener('dragleave', (e) => { if (!dlgMeeting.contains(e.relatedTarget)) dlgMeeting.classList.remove('drop-on'); });
+dlgMeeting.addEventListener('drop', (e) => {
+  dlgMeeting.classList.remove('drop-on');
+  if (!e.dataTransfer?.files?.length) return;
+  e.preventDefault();
+  addPhotos(e.dataTransfer.files);
+});
+
+// 크게 보기 · 저장 · 삭제
+const dlgPhoto = $('#dlgPhoto');
+let pvCur = null; // { rec, list, onDelete }
+async function openPhoto(pid, list, onDelete) {
+  const rec = await getPhoto(pid).catch(() => null);
+  if (!rec) { toast('이 사진을 아직 받지 못했습니다. 인터넷 연결·로그인을 확인해주세요.'); return; }
+  pvCur = { rec, onDelete };
+  const i = list.findIndex((p) => p.id === pid);
+  $('#pvImg').src = rec.data;
+  $('#pvInfo').textContent = `${i + 1} / ${list.length}${rec.w ? ` · ${rec.w}×${rec.h}` : ''}`;
+  $('#pvDel').hidden = !onDelete;
+  dlgPhoto.showModal();
+}
+$('#pvClose').onclick = () => dlgPhoto.close();
+dlgPhoto.addEventListener('click', (e) => { if (e.target === dlgPhoto) dlgPhoto.close(); });
+$('#pvSave').onclick = () => {
+  if (!pvCur) return;
+  const a = document.createElement('a');
+  const base = (fMeeting.elements.title.value || store.find('meetings', pvCur.rec.mid)?.title || '메모').replace(/[\\/:*?"<>|]/g, '_');
+  a.href = pvCur.rec.data;
+  a.download = `${base}_사진.jpg`;
+  a.click();
+};
+$('#pvDel').onclick = () => {
+  if (!pvCur?.onDelete || !confirm('이 사진을 메모에서 삭제할까요?')) return;
+  pvCur.onDelete(pvCur.rec.id);
+  dlgPhoto.close();
+};
+$('#photoStrip').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-ph]');
+  if (!b) return;
+  openPhoto(b.dataset.ph, curPhotos, (pid) => {
+    curPhotos = curPhotos.filter((p) => p.id !== pid);
+    removePhoto(pid);
+    saveMeeting();
+    renderPhotos();
+    toast('사진을 삭제했습니다.');
+  });
+});
 
 function applySummary(r, by) {
   fMeeting.elements.summary.value = r.summary || '';
@@ -875,10 +977,12 @@ fMeeting.addEventListener('submit', (ev) => {
 });
 $('[data-del]', fMeeting).onclick = () => {
   const id = fMeeting.elements.id.value;
-  if (id && confirm('이 회의메모(필기 포함)와 연결된 할일을 삭제할까요?')) {
+  if (id && confirm('이 회의메모(필기·사진 포함)와 연결된 할일을 삭제할까요?')) {
     clearTimeout(saveTimer);
     store.remove('meetings', id);
     saveInk(id, null).catch(() => {});
+    for (const p of curPhotos) removePhoto(p.id);
+    curPhotos = [];
     pad.dirty = false;
     dlgMeeting.close();
     toast('삭제했습니다.');
@@ -905,9 +1009,19 @@ function openMeetingView(id) {
     <h3>결정사항</h3>${m.decisions?.length ? `<ul>${m.decisions.map((d) => `<li>${esc(d)}</li>`).join('')}</ul>` : '<div class="muted">없음</div>'}
     <h3>할일</h3>${m.actions?.length ? `<ul>${m.actions.map((a) => `<li>${esc(a.text)} ${a.owner ? `<span class="tag">${esc(a.owner)}</span>` : ''}${a.due ? `<span class="tag gray">~${fmt(a.due)}</span>` : ''}</li>`).join('')}</ul>` : '<div class="muted">없음</div>'}
     ${m.inkPages ? `<h3>펜 필기 (${m.inkPages}쪽)</h3><div id="viewInk" class="ink-preview"></div>` : ''}
+    ${m.photos?.length ? `<h3>사진 (${m.photos.length}장)</h3><div id="viewPhotos" class="view-photos"></div>` : ''}
     ${m.content ? `<h3>텍스트 메모</h3><div class="raw">${esc(m.content)}</div>` : ''}</div>`;
   dlgView.showModal();
   if (m.inkPages) loadInk(m).then((d) => renderInkPreview($('#viewInk'), d)).catch(() => {});
+  for (const p of m.photos || []) {
+    getPhoto(p.id).then((rec) => {
+      if (!rec || viewId !== id) return;
+      const img = new Image();
+      img.src = rec.data; img.alt = '';
+      img.onclick = () => openPhoto(p.id, m.photos);
+      $('#viewPhotos')?.append(img);
+    }).catch(() => {});
+  }
 }
 $('#viewEdit').onclick = () => { dlgView.close(); openMeeting(viewId); };
 $('#viewCopy').onclick = async () => {

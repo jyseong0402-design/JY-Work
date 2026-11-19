@@ -4,6 +4,7 @@
 // - 데이터 경로: users/{내 계정}/items, users/{내 계정}/ink  (보안 규칙으로 본인만 접근)
 import { store, settings, nowIso, KINDS } from './store.js';
 import { inkdb } from './inkdb.js';
+import { photodb } from './photos.js';
 import defaultConfig from './firebase-config.js';
 
 const SDK = './vendor/firebase.mjs';
@@ -31,6 +32,7 @@ export const getConfig = () => parseConfig(settings.get().firebase) || defaultCo
 
 const itemsCol = () => fb.collection(db, 'users', user.uid, 'items');
 const inkCol = () => fb.collection(db, 'users', user.uid, 'ink');
+const photoCol = () => fb.collection(db, 'users', user.uid, 'photos');
 const docId = (kind, id) => `${kind}_${id}`;
 const clean = (o) => JSON.parse(JSON.stringify(o)); // undefined 제거
 
@@ -112,13 +114,19 @@ async function initialMerge() {
   if (toLocal.length) await applyRemoteItems(toLocal);
   await writeMany(toRemote);
   await uploadPendingInk();
+  await uploadPendingPhotos().catch(() => {});
   return { down: toLocal.length, up: toRemote.length };
 }
 
 async function applyRemoteItems(list) {
   store.applyRemote(list);
   // 다른 기기에서 지운 회의의 필기도 삭제
-  for (const r of list) if (r.kind === 'meetings' && r.deleted) await inkdb.del(r.id).catch(() => {});
+  const gone = list.filter((r) => r.kind === 'meetings' && r.deleted).map((r) => r.id);
+  for (const id of gone) await inkdb.del(id).catch(() => {});
+  if (gone.length) { // 지운 메모의 사진도 이 기기에서 삭제
+    const all = await photodb.all().catch(() => []);
+    for (const p of all) if (gone.includes(p.mid)) await photodb.del(p.id).catch(() => {});
+  }
 }
 
 /* ---------- 실시간: 다른 기기에서 바뀐 내용 받기 ---------- */
@@ -274,6 +282,50 @@ export function flushInk() {
     clearTimeout(p.timer);
     inkPending.delete(mid);
     if (user) track(pushInk(mid, p.ink));
+  }
+}
+
+/* ---------- 메모 사진: 사진 1장 = 문서 1개(1MB 제한 넘으면 700KB 조각) ---------- */
+async function pushPhoto(rec) {
+  if (!user) return;
+  const parts = [];
+  for (let i = 0; i < rec.data.length; i += PART_BYTES) parts.push(rec.data.slice(i, i + PART_BYTES));
+  await writeMany(parts.map((data, k) => ({
+    ref: fb.doc(photoCol(), k ? `${rec.id}_p${k}` : rec.id),
+    data: { pid: rec.id, mid: rec.mid, name: rec.name || '', w: rec.w || 0, h: rec.h || 0, at: rec.at || '', part: k, parts: parts.length, data },
+  })));
+  await photodb.put({ ...rec, synced: true });
+}
+async function fetchPhoto(pid) {
+  const snap = await fb.getDocs(fb.query(photoCol(), fb.where('pid', '==', pid)));
+  if (snap.empty) return null;
+  let head = null;
+  const parts = [];
+  snap.forEach((d) => { const x = d.data(); parts[x.part || 0] = x.data || ''; if (!x.part) head = x; });
+  if (!head || parts.filter((p) => p != null).length !== head.parts) return null; // 아직 다 올라오지 않음
+  const rec = { id: pid, mid: head.mid, name: head.name, w: head.w, h: head.h, at: head.at, data: parts.join(''), synced: true };
+  await photodb.put(rec);
+  return rec;
+}
+// 이 기기에 저장하고 클라우드에 올림
+export async function savePhoto(rec) {
+  await photodb.put({ ...rec, synced: false });
+  if (user) track(pushPhoto(rec));
+}
+// 이 기기에 없으면 클라우드에서 받아옴
+export async function getPhoto(pid) {
+  const local = await photodb.get(pid).catch(() => null);
+  if (local || !user) return local || null;
+  return fetchPhoto(pid);
+}
+export async function removePhoto(pid) {
+  await photodb.del(pid).catch(() => {});
+  if (user) track(fb.getDocs(fb.query(photoCol(), fb.where('pid', '==', pid))).then((s) => writeMany(s.docs.map((d) => ({ ref: d.ref, delete: true })))));
+}
+async function uploadPendingPhotos() {
+  for (const p of await photodb.all()) {
+    const m = store.find('meetings', p.mid);
+    if (!p.synced && m && (m.photos || []).some((x) => x.id === p.id)) await pushPhoto(p);
   }
 }
 

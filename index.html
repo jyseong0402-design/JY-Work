@@ -418,6 +418,8 @@
           <button type="button" class="tbb" data-tab="text" data-icon="text" title="키보드로 입력 (다시 누르면 필기)"></button>
         </div>
         <div class="tb-right">
+          <button type="button" class="tbb" id="photoBtn" data-icon="photo" title="사진 첨부 (PC는 붙여넣기·끌어놓기도 됨)"></button>
+          <input type="file" id="photoIn" accept="image/*" multiple hidden />
           <button type="button" class="tbb" id="sumToggle" data-icon="ai" title="요약·AI"><i class="dot" id="sumDot"></i></button>
           <button type="button" class="tbb" id="infoToggle" data-icon="info" title="날짜·참석자·태그" hidden></button>
           <button type="button" class="tbb" id="focusToggle" data-icon="full" title="메모장만 크게 (넓게 보기)"></button>
@@ -445,6 +447,7 @@
       <button type="button" class="focus-exit" id="focusExit" title="넓게 보기 끝내기">⤡ 나가기</button>
       <div class="ed-body">
         <div class="ed-note">
+          <div class="photo-strip" id="photoStrip" hidden></div>
           <div class="tabpane" data-pane="ink"><div id="inkHost" class="ink-host"></div></div>
           <div class="tabpane" data-pane="text">
             <textarea name="content" class="paper lined" placeholder="자유롭게 적으세요.&#10;'결정', '확정' → 결정사항&#10;'@이름', '담당', '~까지' → 할일로 자동 인식"></textarea>
@@ -468,6 +471,17 @@
         </aside>
       </div>
     </form>
+  </dialog>
+
+  <!-- 메모 사진 크게 보기 -->
+  <dialog id="dlgPhoto" class="photo-view">
+    <img id="pvImg" alt="첨부 사진" />
+    <div class="pv-bar">
+      <span id="pvInfo" class="muted sm"></span>
+      <button type="button" class="btn sm" id="pvSave">⬇ 저장</button>
+      <button type="button" class="btn sm danger" id="pvDel">🗑 삭제</button>
+      <button type="button" class="btn sm primary" id="pvClose">닫기</button>
+    </div>
   </dialog>
 
   <!-- 누적 노트 -->
