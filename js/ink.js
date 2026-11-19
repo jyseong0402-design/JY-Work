@@ -28,7 +28,47 @@ const COLORS = [
 const HL_COLORS = [['#ffe14d', '노랑'], ['#7be495', '연두'], ['#ff9ec7', '분홍']];
 const SIZES = [[2, '가늘게'], [3.5, '보통'], [6, '굵게']];
 
+/* ---- 쪽에 넣은 사진: 획 목록에 { t:'img', pid, x, y, w, h } 로 들어감 (사진 자체는 photos.js) ---- */
+let imgSource = null; // pid → dataURL (app.js가 연결)
+const imgCache = new Map(); // pid → { img, fail, cbs }
+export function setImageSource(fn) { imgSource = fn; }
+function imgOf(pid, onload) {
+  let e = imgCache.get(pid);
+  if (e?.fail) { imgCache.delete(pid); e = null; } // 못 받았던 사진은 다음에 다시 시도
+  if (!e) {
+    e = { img: null, fail: false, cbs: new Set() };
+    imgCache.set(pid, e);
+    Promise.resolve(imgSource?.(pid)).then((src) => {
+      if (!src) { e.fail = true; return; }
+      const im = new Image();
+      im.onload = () => { e.img = im; e.cbs.forEach((f) => f()); e.cbs.clear(); };
+      im.onerror = () => { e.fail = true; };
+      im.src = src;
+    }).catch(() => { e.fail = true; });
+  }
+  if (!e.img && onload) e.cbs.add(onload);
+  return e.img;
+}
+export const isImg = (s) => s.t === 'img';
+function drawImg(ctx, s, scale, onload) {
+  const img = imgOf(s.pid, onload);
+  const [x, y, w, h] = [s.x * scale, s.y * scale, s.w * scale, s.h * scale];
+  if (img) { ctx.drawImage(img, x, y, w, h); return; }
+  ctx.save();
+  ctx.fillStyle = 'rgba(120,120,120,.15)'; ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = 'rgba(120,120,120,.5)'; ctx.setLineDash([6, 4]); ctx.strokeRect(x, y, w, h);
+  ctx.fillStyle = '#888'; ctx.font = `${Math.max(12, 16 * scale)}px sans-serif`; ctx.textAlign = 'center';
+  ctx.fillText('📷 사진 불러오는 중…', x + w / 2, y + h / 2);
+  ctx.restore();
+}
+// 사진을 먼저(아래) 그리고 그 위에 필기
+export function drawAll(ctx, strokes, scale, onload) {
+  for (const s of strokes) if (isImg(s)) drawImg(ctx, s, scale, onload);
+  for (const s of strokes) if (!isImg(s)) drawStroke(ctx, s, scale);
+}
+
 export function drawStroke(ctx, s, scale) {
+  if (isImg(s)) return;
   const p = s.p;
   if (!p || p.length < 3) return;
   ctx.save();
@@ -83,7 +123,7 @@ export function renderInkPreview(container, data) {
       cv.height = Math.round(PAGE_H * scale * dpr);
       const ctx = cv.getContext('2d');
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      page.strokes.forEach((s) => drawStroke(ctx, s, scale));
+      drawAll(ctx, page.strokes, scale, paint);
     };
     requestAnimationFrame(paint);
   }
@@ -122,6 +162,7 @@ export class InkPad {
       <button type="button" class="tbb tool" data-tool="pen" title="펜">${icon('pen')}</button>
       <button type="button" class="tbb tool" data-tool="hl" title="형광펜">${icon('hl')}</button>
       <button type="button" class="tbb tool" data-tool="eraser" title="지우개 (S펜 버튼을 누르고 문질러도 지워짐)">${icon('eraser')}</button>
+      <button type="button" class="tbb tool" data-tool="select" title="사진 옮기기·크기 조절 (사진을 누르세요)">${icon('select')}</button>
       <span class="pal-wrap">
         <button type="button" class="tbb cur-color" data-act="palette" title="색·굵기"><i></i></button>
         <div class="palette" role="dialog" aria-label="색·굵기">
@@ -150,8 +191,9 @@ export class InkPad {
     if (d.color) { this.tool.c = d.color; this.tool.t = 'pen'; }
     if (d.hcolor) { this.tool.hc = d.hcolor; this.tool.t = 'hl'; }
     if (d.size) this.tool.w = +d.size;
+    if (this.tool.t !== 'select') this.deselect();
     if (d.act === 'palette') {
-      if (this.tool.t === 'eraser') this.tool.t = 'pen';
+      if (this.tool.t === 'eraser' || this.tool.t === 'select') this.tool.t = 'pen';
       this.palette.classList.toggle('open');
     }
     if (d.act === 'undo') this.undo();
@@ -215,7 +257,7 @@ export class InkPad {
       const ctx = cv.getContext('2d');
       ctx.fillStyle = '#fff';
       ctx.fillRect(0, 0, cv.width, cv.height);
-      p.strokes.forEach((s) => drawStroke(ctx, s, scale));
+      drawAll(ctx, p.strokes, scale);
       return cv.toDataURL('image/png').split(',')[1];
     });
   }
@@ -223,7 +265,11 @@ export class InkPad {
   /* ---- 실행취소 ---- */
   push(action) { this.undoStack.push(action); this.redoStack = []; if (this.undoStack.length > 300) this.undoStack.shift(); }
   apply(a, reverse) {
-    if (a.type === 'add') {
+    this.deselect();
+    if (a.type === 'imgmove') {
+      Object.assign(a.s, reverse ? a.from : a.to);
+      this.redraw(a.page);
+    } else if (a.type === 'add') {
       const list = this.pages[a.page].strokes;
       if (reverse) list.splice(list.indexOf(a.stroke), 1); else list.push(a.stroke);
       this.redraw(a.page);
@@ -251,7 +297,92 @@ export class InkPad {
   }
 
   /* ---- 화면 ---- */
+  /* ---- 사진 넣기·고르기 ---- */
+  imageIds() {
+    const ids = new Set();
+    for (const p of this.pages) for (const s of p.strokes) if (isImg(s)) ids.add(s.pid);
+    return ids;
+  }
+  // 지금 보고 있는 쪽의 보이는 위치에 넣고, 바로 옮기기·크기 조절 상태로
+  insertImage(pid, w0 = 800, h0 = 600, { select = true } = {}) {
+    const els = [...this.pagesEl.children];
+    const box = this.pagesEl.getBoundingClientRect();
+    let page = 0;
+    els.forEach((el, i) => { const r = el.getBoundingClientRect(); if (r.top <= box.top + box.height / 2) page = i; });
+    const r = els[page]?.getBoundingClientRect();
+    const k = Math.min(1, 700 / w0, 700 / h0);
+    let w = w0 * k, h = h0 * k;
+    if (!this.scale) this.scale = 1;
+    let y = r ? Math.max(40, (box.top - r.top) / this.scale + 40) : 40;
+    if (y + h > PAGE_H - 20) y = Math.max(20, PAGE_H - 20 - h);
+    if (y + h > PAGE_H - 20) { const f = (PAGE_H - 40) / h; w *= f; h *= f; y = 20; }
+    const s = { t: 'img', pid, x: Math.round((PAGE_W - w) / 2), y: Math.round(y), w: Math.round(w), h: Math.round(h) };
+    this.pages[page].strokes.push(s);
+    this.push({ type: 'add', page, stroke: s });
+    this.redraw(page);
+    this.changed();
+    if (select) { this.tool.t = 'select'; this.syncTools(); this.selectImg(page, s); }
+    return s;
+  }
+  deselect() { this.sel?.el.remove(); this.sel = null; }
+  selectImg(page, s) {
+    this.deselect();
+    const host = this.pagesEl.children[page];
+    if (!host) return;
+    const el = document.createElement('div');
+    el.className = 'img-sel';
+    el.innerHTML = '<span class="img-bar"><button type="button" data-a="zoom" title="크게 보기·저장">🔍</button><button type="button" data-a="del" title="사진 빼기">🗑</button></span><i class="rs" title="크기 조절"></i>';
+    host.appendChild(el);
+    this.sel = { el, page, s };
+    const place = () => Object.assign(el.style, { left: s.x * this.scale + 'px', top: s.y * this.scale + 'px', width: s.w * this.scale + 'px', height: s.h * this.scale + 'px' });
+    this.sel.place = place;
+    place();
+    el.querySelector('[data-a=zoom]').onclick = () => this.opts.onImageOpen?.(s.pid);
+    el.querySelector('[data-a=del]').onclick = () => {
+      const list = this.pages[page].strokes;
+      const i = list.indexOf(s);
+      if (i < 0) return;
+      list.splice(i, 1);
+      this.push({ type: 'erase', page, removed: [{ s, i }] });
+      this.deselect();
+      this.redraw(page);
+      this.changed();
+    };
+    // 끌어서 옮기기 / 오른쪽 아래 모서리로 크기 조절(비율 유지)
+    el.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('button')) return;
+      e.preventDefault(); e.stopPropagation();
+      el.setPointerCapture(e.pointerId);
+      const resize = !!e.target.closest('.rs');
+      const from = { x: s.x, y: s.y, w: s.w, h: s.h };
+      const sx = e.clientX, sy = e.clientY;
+      const mv = (ev) => {
+        const dx = (ev.clientX - sx) / this.scale, dy = (ev.clientY - sy) / this.scale;
+        if (resize) {
+          const w = Math.max(60, Math.min(PAGE_W - from.x, from.w + Math.max(dx, dy * from.w / from.h)));
+          s.w = Math.round(w); s.h = Math.round(w * from.h / from.w);
+        } else {
+          s.x = Math.round(Math.max(-s.w / 2, Math.min(PAGE_W - s.w / 2, from.x + dx)));
+          s.y = Math.round(Math.max(0, Math.min(PAGE_H - 40, from.y + dy)));
+        }
+        place();
+        this.redraw(page);
+      };
+      const end = () => {
+        el.removeEventListener('pointermove', mv);
+        el.removeEventListener('pointerup', end);
+        el.removeEventListener('pointercancel', end);
+        const to = { x: s.x, y: s.y, w: s.w, h: s.h };
+        if (JSON.stringify(to) !== JSON.stringify(from)) { this.push({ type: 'imgmove', page, s, from, to }); this.changed(); }
+      };
+      el.addEventListener('pointermove', mv);
+      el.addEventListener('pointerup', end);
+      el.addEventListener('pointercancel', end);
+    });
+  }
+
   renderPages() {
+    this.deselect();
     this.pagesEl.innerHTML = '';
     this.pages.forEach((_, i) => {
       const el = document.createElement('div');
@@ -285,6 +416,7 @@ export class InkPad {
       });
       this.redraw(i);
     });
+    this.sel?.place();
   }
 
   ctxOf(i, live) {
@@ -296,7 +428,7 @@ export class InkPad {
     const ctx = this.ctxOf(i);
     if (!ctx || !this.scale) return;
     ctx.clearRect(0, 0, PAGE_W * this.scale + 1, PAGE_H * this.scale + 1);
-    this.pages[i].strokes.forEach((s) => drawStroke(ctx, s, this.scale));
+    if (this.pages[i]) drawAll(ctx, this.pages[i].strokes, this.scale, () => this.redraw(i));
   }
 
   /* ---- 입력 ---- */
@@ -321,6 +453,7 @@ export class InkPad {
       let hit = false;
       for (let i = list.length - 1; i >= 0; i--) {
         const s = list[i];
+        if (isImg(s)) continue; // 사진은 지우개로 지우지 않음 (사진 옮기기 도구의 🗑)
         const rr = r + s.w / 2;
         for (let k = 0; k < s.p.length; k += 3) {
           if (Math.abs(s.p[k] - x) < rr && Math.abs(s.p[k + 1] - y) < rr) {
@@ -343,7 +476,15 @@ export class InkPad {
         this.syncTools();
       }
       if (mode) return; // 이미 다른 포인터로 작업 중 (멀티터치 무시)
-      if (e.pointerType === 'touch' && !this.fingerDraw) {
+      if (this.tool.t === 'select') { // 사진 고르기: 사진을 누르면 선택, 빈 곳은 선택 해제(손가락은 스크롤)
+        const [x, y] = pt(e);
+        const list = this.pages[pageIndex].strokes;
+        const hit = [...list].reverse().find((s) => isImg(s) && x >= s.x && x <= s.x + s.w && y >= s.y && y <= s.y + s.h);
+        if (hit) { e.preventDefault(); this.selectImg(pageIndex, hit); return; }
+        this.deselect();
+        if (e.pointerType !== 'touch') return;
+      }
+      if (e.pointerType === 'touch' && (!this.fingerDraw || this.tool.t === 'select')) {
         mode = 'scroll';
         lastY = e.clientY;
         live.setPointerCapture(e.pointerId);

@@ -1,7 +1,7 @@
 import { store, settings, todayStr, uid } from './store.js';
 import { localSummarize } from './summarize.js';
 import { aiSummarize, aiAnswer, aiTranscribe, aiEnabled } from './ai.js';
-import { InkPad, renderInkPreview } from './ink.js';
+import { InkPad, renderInkPreview, setImageSource } from './ink.js';
 import { icon } from './icons.js';
 import { initFreight } from './freight-ui.js';
 import { initClosing, openAutoType, setClosingPrev } from './closing-ui.js';
@@ -615,6 +615,7 @@ $$('[data-icon]').forEach((el) => el.insertAdjacentHTML('afterbegin', icon(el.da
 const pad = new InkPad($('#inkHost'), {
   onChange: () => scheduleSave(),
   left: $('#inkLeft'), center: $('#inkCenter'), menu: $('#moreMenu'),
+  onImageOpen: (pid) => openPhoto(pid, curPhotos),
 });
 // 펜·형광펜·지우개·색을 고르면 필기 화면으로
 $('#inkCenter').addEventListener('click', (e) => { if (e.target.closest('[data-tool],[data-act=palette]') && fMeeting.dataset.tab !== 'ink') setTab('ink'); });
@@ -663,6 +664,12 @@ function saveMeeting({ final = false } = {}) {
   if (inkBlocked && pad.dirty) {
     pad.dirty = false;
     if (!inkBlockedWarned) { inkBlockedWarned = true; alert('이 메모의 원래 필기를 불러오지 못해 필기 저장을 멈췄습니다 (원래 필기 보호).\n설정 → ✍️ 필기 점검에서 확인해 주세요.'); }
+  }
+  // 메모를 닫을 때: 쪽에서 뺀 사진은 사진 파일도 정리 (필기를 못 불러왔거나 옮기는 중이면 건드리지 않음)
+  if (final && !inkBlocked && !photoMigrating && curPhotos.length) {
+    const used = pad.imageIds();
+    for (const p of curPhotos) if (!used.has(p.id)) removePhoto(p.id);
+    curPhotos = curPhotos.filter((p) => used.has(p.id));
   }
   const inkChanged = pad.dirty;
   const inkPages = inkChanged ? pad.pageCount() : (prev?.inkPages || 0);
@@ -790,7 +797,6 @@ async function openMeeting(id, preset = {}) {
   $('#btnAiSum').title = aiEnabled() ? '' : '설정에서 API 키를 넣으면 사용할 수 있습니다';
   pad.load(null);
   curPhotos = (m.photos || []).map((p) => ({ ...p }));
-  renderPhotos();
   lastSaved = id ? JSON.stringify(read(fMeeting)) : '';
   setSaveState(id ? 'idle' : 'idle');
   renderPrevBox();
@@ -808,6 +814,7 @@ async function openMeeting(id, preset = {}) {
     if (n) { pad.load(ink); inkBlocked = false; } else toast('⚠ 필기를 불러오지 못했습니다 — 원래 필기를 지키려고 이 메모의 필기 저장을 멈췄습니다. 설정 → ✍️ 필기 점검');
     if (!m.content) setTab('ink');
   }
+  if (curPhotos.length) placeLoosePhotos();
 }
 
 function closeMeeting() {
@@ -821,17 +828,22 @@ $('[data-cancel]', fMeeting).onclick = closeMeeting;
 dlgMeeting.addEventListener('cancel', (e) => { e.preventDefault(); closeMeeting(); });
 
 /* ----- 메모 사진: 📷 버튼(탭은 카메라·갤러리), PC는 붙여넣기(Ctrl+V)·끌어놓기 ----- */
-const photoThumb = (el, rec) => { el.innerHTML = rec ? `<img src="${rec.data}" alt="" />` : '☁ 아직<br>못 받음'; };
-function renderPhotos() {
-  const box = $('#photoStrip');
-  const was = !box.hidden;
-  box.hidden = !curPhotos.length;
-  box.innerHTML = curPhotos.map((p, i) => `<button type="button" class="ph" data-ph="${p.id}" title="사진 ${i + 1} 크게 보기">…</button>`).join('');
-  for (const p of curPhotos) {
-    getPhoto(p.id).then((rec) => { const el = box.querySelector(`[data-ph="${p.id}"]`); if (el) photoThumb(el, rec); })
-      .catch(() => { const el = box.querySelector(`[data-ph="${p.id}"]`); if (el) photoThumb(el, null); });
-  }
-  if (was !== !box.hidden && dlgMeeting.open) requestAnimationFrame(() => pad.layout(true));
+// 사진은 필기 쪽 안에 들어감 (ink.js 획 목록의 { t:'img', pid }), 사진 파일은 photos.js·sync.js
+setImageSource(async (pid) => (await getPhoto(pid))?.data);
+// 1.20.0(메모 위 사진 줄)에서 붙인 사진 중 쪽에 없는 것은 쪽 안으로 옮김
+let photoMigrating = false;
+async function placeLoosePhotos() {
+  if (inkBlocked) return;
+  const used = pad.imageIds();
+  const loose = curPhotos.filter((p) => !used.has(p.id));
+  if (!loose.length) return;
+  photoMigrating = true;
+  try {
+    for (const p of loose) {
+      const rec = await getPhoto(p.id).catch(() => null);
+      pad.insertImage(p.id, rec?.w || 800, rec?.h || 600, { select: false });
+    }
+  } finally { photoMigrating = false; }
 }
 async function addPhotos(files) {
   const imgs = [...(files || [])].filter((f) => /^image\//.test(f.type));
@@ -854,8 +866,10 @@ async function addPhotos(files) {
     setSaveState('error');
     alert('사진을 저장하지 못했습니다. 저장 공간을 확인해주세요.');
   }
-  renderPhotos();
-  toast(`사진 ${recs.length}장을 붙였습니다.`);
+  if (fMeeting.dataset.tab !== 'ink') setTab('ink');
+  await new Promise((r) => requestAnimationFrame(r));
+  for (const r of recs) pad.insertImage(r.id, r.w, r.h);
+  toast(recs.length > 1 ? `사진 ${recs.length}장을 넣었습니다.` : '사진을 넣었습니다. 끌어서 옮기고, 파란 점으로 크기를 바꾸세요.');
 }
 $('#photoBtn').onclick = () => $('#photoIn').click();
 $('#photoIn').onchange = (e) => { addPhotos(e.target.files); e.target.value = ''; };
@@ -906,17 +920,6 @@ $('#pvDel').onclick = () => {
   pvCur.onDelete(pvCur.rec.id);
   dlgPhoto.close();
 };
-$('#photoStrip').addEventListener('click', (e) => {
-  const b = e.target.closest('[data-ph]');
-  if (!b) return;
-  openPhoto(b.dataset.ph, curPhotos, (pid) => {
-    curPhotos = curPhotos.filter((p) => p.id !== pid);
-    removePhoto(pid);
-    saveMeeting();
-    renderPhotos();
-    toast('사진을 삭제했습니다.');
-  });
-});
 
 function applySummary(r, by) {
   fMeeting.elements.summary.value = r.summary || '';
@@ -1009,19 +1012,9 @@ function openMeetingView(id) {
     <h3>결정사항</h3>${m.decisions?.length ? `<ul>${m.decisions.map((d) => `<li>${esc(d)}</li>`).join('')}</ul>` : '<div class="muted">없음</div>'}
     <h3>할일</h3>${m.actions?.length ? `<ul>${m.actions.map((a) => `<li>${esc(a.text)} ${a.owner ? `<span class="tag">${esc(a.owner)}</span>` : ''}${a.due ? `<span class="tag gray">~${fmt(a.due)}</span>` : ''}</li>`).join('')}</ul>` : '<div class="muted">없음</div>'}
     ${m.inkPages ? `<h3>펜 필기 (${m.inkPages}쪽)</h3><div id="viewInk" class="ink-preview"></div>` : ''}
-    ${m.photos?.length ? `<h3>사진 (${m.photos.length}장)</h3><div id="viewPhotos" class="view-photos"></div>` : ''}
     ${m.content ? `<h3>텍스트 메모</h3><div class="raw">${esc(m.content)}</div>` : ''}</div>`;
   dlgView.showModal();
   if (m.inkPages) loadInk(m).then((d) => renderInkPreview($('#viewInk'), d)).catch(() => {});
-  for (const p of m.photos || []) {
-    getPhoto(p.id).then((rec) => {
-      if (!rec || viewId !== id) return;
-      const img = new Image();
-      img.src = rec.data; img.alt = '';
-      img.onclick = () => openPhoto(p.id, m.photos);
-      $('#viewPhotos')?.append(img);
-    }).catch(() => {});
-  }
 }
 $('#viewEdit').onclick = () => { dlgView.close(); openMeeting(viewId); };
 $('#viewCopy').onclick = async () => {
