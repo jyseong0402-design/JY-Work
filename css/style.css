@@ -879,3 +879,69 @@ dialog.photo-view img { flex: 1; min-height: 0; max-height: calc(96vh - 56px); o
 .view-photos { display: flex; flex-wrap: wrap; gap: 8px; }
 .view-photos img { width: 140px; height: 140px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); cursor: zoom-in; }
 dialog.editor.drop-on .ed-note { outline: 3px dashed var(--primary); outline-offset: -6px; }
+
+/* 📈 KPI 현황 */
+#view-kpi.drop-on { outline: 3px dashed var(--primary); outline-offset: 4px; border-radius: 12px; }
+#kpiSel { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--text); }
+.kpi-months { flex-wrap: wrap; margin-bottom: 10px; max-width: 100%; }
+.kpi-months:empty { display: none; }
+.kpi-months button { padding: 6px 12px; min-height: 34px; }
+.kpi-src { margin: 0 0 10px; }
+.kpi-empty { text-align: center; padding: 40px 20px; }
+.kpi-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); gap: 12px; margin-bottom: 4px; }
+.kpi-card { margin-bottom: 12px; padding: 14px 16px; }
+.kc-t { font-size: 13px; color: var(--muted); font-weight: 600; }
+.kc-big { font-size: 28px; font-weight: 700; letter-spacing: -.5px; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.kc-big small { font-size: 12px; font-weight: 500; color: var(--muted); margin-left: 4px; }
+.kc-big.neg { color: var(--danger); }
+.kc-sub { font-size: 13px; margin: 2px 0 6px; }
+.kc-cmp { font-size: 12.5px; display: grid; gap: 2px; border-top: 1px solid var(--line); padding-top: 6px; font-variant-numeric: tabular-nums; }
+.kd { font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--muted); }
+.kd.up { color: var(--ok); }
+.kd.dn { color: var(--danger); }
+.kg-h { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.kg-leg { display: flex; gap: 10px; font-size: 12px; color: var(--muted); }
+.kl { display: inline-flex; align-items: center; gap: 4px; }
+.kl i { display: inline-block; width: 12px; height: 8px; border-radius: 2px; }
+.kl-bar { background: var(--primary); }
+.kl-prev { background: var(--line); }
+.kl-bud { height: 0 !important; border-top: 2px dashed var(--warn); }
+.kl-line { height: 0 !important; border-top: 2px solid var(--ok); }
+.kpi-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; }
+.kpi-charts .card { margin-bottom: 12px; }
+.kg svg { width: 100%; height: auto; display: block; }
+.kg-grid { stroke: var(--line); stroke-width: 1; }
+.kg-zero { stroke: var(--muted); stroke-width: 1; }
+.kg-ax { fill: var(--muted); font-size: 11px; }
+.kg-ax.sel { fill: var(--primary); font-weight: 700; }
+.kg-bar { fill: var(--primary); opacity: .45; }
+.kg-bar.sel { opacity: 1; }
+.kg-bar.neg { fill: var(--danger); }
+.kg-bud { stroke: var(--warn); stroke-width: 2; stroke-dasharray: 4 3; }
+.kg-line { fill: none; stroke: var(--ok); stroke-width: 2; }
+.kg-dot { fill: var(--panel); stroke: var(--ok); stroke-width: 2; }
+.kg-lt { fill: var(--ok); font-weight: 600; }
+.kc-row { display: grid; grid-template-columns: 64px 1fr auto; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.kc-row:last-child { border-bottom: 0; }
+.kc-n { font-size: 14px; font-weight: 600; }
+.kc-bars { display: grid; gap: 3px; }
+.kc-bars i { display: block; height: 10px; border-radius: 3px; min-width: 2px; }
+.kc-cur { background: var(--primary); }
+.kc-prev { background: var(--line); height: 6px !important; }
+.kc-v { text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; min-width: 92px; }
+.kf { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 4px; }
+.kf li { padding: 6px 10px; border-radius: 8px; font-size: 14px; background: var(--bg); }
+.kf li.bad { border-left: 3px solid var(--danger); }
+.kf li.good { border-left: 3px solid var(--ok); }
+.kf li.info { border-left: 3px solid var(--primary); }
+.kn { display: grid; gap: 4px; }
+.kn textarea { font: inherit; font-size: 14px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--text); resize: vertical; }
+.kt-scroll { overflow-x: auto; }
+.kt { width: 100%; border-collapse: collapse; font-size: 13.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.kt th, .kt td { padding: 7px 10px; text-align: right; border-bottom: 1px solid var(--line); }
+.kt thead th { font-size: 12px; color: var(--muted); font-weight: 600; background: var(--bg); }
+.kt tbody th { text-align: left; font-weight: 600; position: sticky; left: 0; background: var(--panel); }
+.kt td.b { font-weight: 700; }
+.kt tr.sub th { font-weight: 500; color: var(--muted); padding-left: 20px; }
+.kpi-foot { text-align: right; }
+@media (max-width: 600px) { .kpi-charts { grid-template-columns: 1fr; } .kc-big { font-size: 24px; } }

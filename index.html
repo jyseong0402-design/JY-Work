@@ -19,6 +19,7 @@
       <button data-view="dashboard" class="active"><span class="ic">🏠</span><span>홈</span></button>
       <button data-view="meetings"><span class="ic">📝</span><span>메모</span></button>
       <button data-view="board"><span class="ic">📋</span><span>월마감 현황</span></button>
+      <button data-view="kpi"><span class="ic">📈</span><span>KPI</span></button>
       <button data-view="rd"><span class="ic">📥</span><span>RD 보관함</span></button>
       <button data-view="auto"><span class="ic">📊</span><span>자료생성</span></button>
       <button data-view="settings"><span class="ic">⚙️</span><span>설정</span></button>
@@ -188,6 +189,23 @@
           <input type="file" id="bdFormIn" hidden />
           <span class="muted sm" id="bdLoadMsg">목록은 내 계정에 저장되고, 📄 양식 파일은 이 기기 브라우저에만 보관됩니다 (서버로 보내지 않음).</span>
         </div>
+      </section>
+
+      <section id="view-kpi" class="view">
+        <header class="vh bd-head">
+          <div>
+            <h1>📈 KPI 현황</h1>
+            <p class="muted sm">KPI 엑셀을 불러오면 Summary 시트의 월별 실적·예산으로 요약, 그래프, 특이사항, 전월 비교를 보여줍니다. 매달 새 KPI 파일을 다시 불러오면 갱신됩니다.</p>
+          </div>
+          <div class="bd-tools">
+            <select id="kpiSel" hidden></select>
+            <button class="btn primary" id="kpiLoad">📂 KPI 파일 불러오기</button>
+            <input type="file" id="kpiIn" accept=".xlsx,.xlsm,.xls" hidden />
+          </div>
+        </header>
+        <div class="seg kpi-months" id="kpiMonths"></div>
+        <p class="muted sm" id="kpiMsg"></p>
+        <div id="kpiBody"></div>
       </section>
 
       <section id="view-rd" class="view">

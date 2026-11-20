@@ -9,6 +9,7 @@ import { setFreightPrev } from './freight-ui.js';
 import { initBoard, homeClosingHTML } from './board.js';
 import { initRdVault } from './rdvault.js';
 import { initRdAsk } from './rdask.js';
+import { initKpi } from './kpi.js';
 import { inkdb } from './inkdb.js';
 import { sync, loadInk, saveInk, flushInk, parseConfig, getConfig, inkReport, restoreInk, savePhoto, getPhoto, removePhoto } from './sync.js';
 import { shrinkImage } from './photos.js';
@@ -1285,6 +1286,7 @@ initClosing();
 initBoard({ openAuto: (type) => openAutoType(type), setPrev: (type, file) => (type === 'freight' ? setFreightPrev(file) : setClosingPrev(file)) });
 initRdVault();
 initRdAsk();
+initKpi({ toast });
 
 /* ---------- 시작 ---------- */
 function renderAll() {
