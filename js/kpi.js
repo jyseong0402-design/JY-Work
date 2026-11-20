@@ -879,6 +879,94 @@ function subsidyCard(k, m, M) {
   return `<div class="card kt-wrap kpi-sub"><div class="kg-h"><b>💰 ${m}월 지원금 수익</b><small class="muted">출처: '${esc(k.target?.sheet || '')}' 시트 지원 항목</small></div>${body || '<p class="muted">Target PL 시트에 지원금 항목이 없습니다.</p>'}${what}${gl}</div>`;
 }
 
+/* ---------- ✉️ KPI 송부 메일 요약: 사용자가 보내던 메일 형식(전월 대비 1)~8)) ---------- */
+function mailText(k, M, m) {
+  const i = m - 1, p = m - 2;
+  if (p < 0) return '';
+  // 메일엔 소수 1자리로 보이는 숫자끼리 뺀 값을 씀 (10.1 - 8.7 = 1.4톤)
+  const ab = Math.abs, r1 = (v) => Math.round(v * 10) / 10, n1 = (v) => ab(v).toFixed(1), n0 = (v) => Math.round(ab(v)).toLocaleString('ko-KR');
+  const ud = (d) => (d >= 0 ? '증가' : '감소');
+  const L = ['안녕하세요', '', '베트남KPI 송부드립니다.', '', `${m - 1}월대비`, ''];
+  let no = 0;
+  const item = (t) => { L.push(`${++no}) ${t}`); };
+  const sub = (t) => L.push(`-> ${t}`);
+  const gap = () => L.push('');
+  // 1) 매출액 + 거래처별 변동
+  const s = M.sales, ds = r1(s.a[i]) - r1(s.a[p]);
+  item(`매출액 ${n1(ds)}백만원 ${ud(ds)} (${f1(s.a[i])}백만원)`);
+  for (const x of M.chans.filter((x) => ab(x.a[i] - x.a[p]) >= 1).sort((a, b) => ab(b.a[i] - b.a[p]) - ab(a.a[i] - a.a[p]))) {
+    const d = r1(x.a[i]) - r1(x.a[p]);
+    sub(ab(x.a[p]) < 0.05 ? `${x.label} 신규 ${f1(x.a[i])}백만원` : ab(x.a[i]) < 0.05 ? `${x.label} 매출 없음 (전월 ${f1(x.a[p])}백만원)` : `${x.label} ${n1(d)}백만원 ${ud(d)} (${f1(x.a[i])}백만원)`);
+  }
+  gap();
+  // 2) 물량
+  if (M.qty) { const d = r1(M.qty.a[i]) - r1(M.qty.a[p]); item(`매출물량 ${n1(d)}톤 ${ud(d)} (${f1(M.qty.a[i])}톤)`); gap(); }
+  // 3) 단가 + 품목별 단가 변동(±5% 이상)
+  if (M.price) {
+    const d = M.price.a[i] - M.price.a[p];
+    item(`kg당 매출단가 ${n0(d)}원 ${ud(d)} (${f0(M.price.a[i])}원/kg)`);
+    const ch = M.prices.filter((x) => { const q = M.qtys.find((y) => y.label === x.label); return x.a[p] > 0 && x.a[i] > 0 && (!q || q.a[i] >= 0.1) && ab(x.a[i] / x.a[p] - 1) >= 0.05; })
+      .sort((a, b) => ab(b.a[i] / b.a[p] - 1) - ab(a.a[i] / a.a[p] - 1)).slice(0, 4);
+    for (const x of ch) { const dd = x.a[i] - x.a[p]; sub(`${x.label} 단가 ${n0(dd)}원 ${ud(dd)} (${f0(x.a[p])} → ${f0(x.a[i])}원/kg)`); }
+    sub('[원인 확인]');
+    gap();
+  }
+  // 4) 단위원가 (장표 표: 상품대·수입제비용·폐기원가 등 원/kg)
+  const P = k.ppt, pi = P ? P.months.indexOf(m) : -1, pp = P ? P.months.indexOf(m - 1) : -1;
+  const blk = (re) => (P && pi >= 0 && pp >= 0 ? pptBlock(P, re) : null);
+  const uc = blk(/^단위원가/);
+  if (uc) {
+    const d = uc.row.a[pi] - uc.row.a[pp];
+    item(`kg당 단위원가 ${n0(d)}원 ${ud(d)} (${f0(uc.row.a[pi])}원/kg)`);
+    for (const x of uc.kids) { const dd = x.a[pi] - x.a[pp]; if (ab(dd) >= 5) sub(`kg당 ${x.label} ${n0(dd)}원 ${ud(dd)} [사유]`); }
+    gap();
+  }
+  // 5) GP
+  if (M.gp) { item(`GP ${f1(M.gp.a[i])}백만원, GP%는 ${pc(M.gpp?.a[i] || 0)}${M.gpp ? ` (전월 ${pc(M.gpp.a[p])})` : ''}`); gap(); }
+  // 6)·7) 판매비·관리비 특이사항: 장표 표의 하위 항목 중 ±0.3백만원 이상
+  const costs = (name, re, row) => {
+    const b = blk(re), tot = row ? r1(row.a[i]) - r1(row.a[p]) : 0;
+    item(`${name} 특이사항 : ${row ? `${f1(row.a[i])}백만원, 전월 대비 ${n1(tot)}백만원 ${ud(tot)}` : ''}`);
+    let any = false;
+    if (b) for (const x of b.kids.slice().sort((a, c) => ab(c.a[pi] - c.a[pp]) - ab(a.a[pi] - a.a[pp]))) { const dd = x.a[pi] - x.a[pp]; if (ab(dd) >= 0.3) { sub(`${x.label} ${n1(dd)}백만원 ${ud(dd)} [사유]`); any = true; } }
+    return any;
+  };
+  const any6 = costs('판매비', /^판매비/, M.sell);
+  for (const { tot, kids } of subsidyRows(k)) {
+    const c = ab(tot.a[i]), b = ab(tot.a[p]);
+    if (c < 0.05 && b < 0.05) continue;
+    const det = kids.filter((x) => ab(x.a[i]) >= 0.05).map((x) => `${x.label} ${f1(ab(x.a[i]))}`).join(', ');
+    sub(`${tot.label.replace(/\s*수익$/, '')} 지원금 ${f1(c)}백만원 (전월 ${f1(b)}백만원${det ? ` / ${det}` : ''}) — 판매비에서 차감`);
+  }
+  if (!any6) sub('[특이사항 확인]');
+  gap();
+  if (!costs('관리비', /^관리비/, M.admin)) sub('[특이사항 확인]');
+  gap();
+  // 8) EBITDA
+  if (M.ebitda) { const d = r1(M.ebitda.a[i]) - r1(M.ebitda.a[p]); item(`${M.ebitda.label.replace(/\(.*\)/, '').trim()} ${f1(M.ebitda.a[i])}백만원 (전달대비 ${n1(d)}백만원 ${ud(d)})`); gap(); }
+  // 9) Target 대비 (장표 숫자)
+  if (P && pi === P.months.length - 1) {
+    const t = [['매출', /^매출액/], ['GP', /^GP$/i], ['조정 EBITDA', /^조정\s*EBITDA/i]].map(([nm, re]) => { const b = blk(re); if (!b || !b.row.tgt) return ''; const d = b.row.a[pi] - b.row.tgt; return `${nm} ${d >= 0 ? '+' : '-'}${n1(d)}백만원`; }).filter(Boolean);
+    if (t.length) { item(`단기 Target 대비 : ${t.join(', ')}`); gap(); }
+  }
+  L.push('감사합니다');
+  return L.join('\n');
+}
+function renderMail(k, M, m) {
+  if (m < 2) return '<div class="card">✉️ 메일 초안은 전월과 비교하므로 2월부터 만들 수 있습니다.</div>';
+  const key = `mail${m}`, saved = (k.notes || {})[key];
+  const auto = mailText(k, M, m);
+  return `<article class="rp mail"><header class="rp-head"><h2>✉️ ${k.year}년 ${m}월 베트남 KPI 송부 메일 초안</h2>
+    <p>전임자가 보내던 메일 형식(전월 대비 1)~8))으로 숫자를 자동으로 채웠습니다. <b>[사유]·[원인 확인]</b> 자리만 현지 확인 내용으로 바꾸고 복사해 메일에 붙이세요. 서명은 메일 프로그램의 서명을 쓰세요.</p></header>
+    <div class="card">
+      <div class="cm-tools"><button type="button" class="btn sm primary" id="mailCopy">📋 메일 내용 복사</button><button type="button" class="btn sm ghost" id="mailReset">↺ 자동 초안으로 되돌리기</button>
+        <span class="muted sm">${saved ? '✏️ 고쳐 쓴 내용 (자동 저장됨)' : '✍️ 자동 초안 — 고쳐 쓰면 자동 저장'}</span></div>
+      <textarea class="cm-text mail-text${saved ? '' : ' auto'}" data-id="${k.id}" data-m="${key}" rows="34" spellcheck="false">${esc(saved || auto)}</textarea>
+    </div>
+    <details class="card"><summary><b>📌 참고: ${m}월 특이사항 (자동)</b></summary><ul class="kf">${[...targetFindings(k, m), ...findings(M, m)].map((f) => `<li class="${f.lv}">${esc(f.txt)}</li>`).join('') || '<li>눈에 띄는 변동이 없습니다.</li>'}</ul></details>
+    ${subsidyCard(k, m, M)}</article>`;
+}
+
 function render() {
   const box = $('#kpiBody');
   if (!box) return;
@@ -903,6 +991,7 @@ function render() {
   if (!M.sales) { box.innerHTML = '<div class="card">⚠️ 이 파일에서 매출액 항목을 찾지 못했습니다.</div>'; return; }
   document.querySelectorAll('#kpiMode [data-mode]').forEach((b) => b.classList.toggle('on', b.dataset.mode === ui.mode));
   if (ui.mode === 'cmt') { box.innerHTML = renderCmt(k); return; }
+  if (ui.mode === 'mail') { box.innerHTML = renderMail(k, M, m); return; }
   if (ui.mode === 'ytd') {
     box.innerHTML = renderYtd(k, M, m) + '<p class="kpi-foot"><button type="button" class="btn sm" id="kpiPrint">🖨 인쇄·PDF 저장</button> <button type="button" class="btn sm danger" id="kpiDel">🗑 이 KPI 자료 지우기</button></p>';
     return;
@@ -1082,8 +1171,9 @@ export function initKpi({ toast } = {}) {
     store.upsert('kpi', { id: k.id, notes });
   };
   const isNote = (el) => el.id === 'kpiNote' || el.classList?.contains('cm-text');
-  view.addEventListener('input', (e) => { if (isNote(e.target)) { clearTimeout(t); const el = e.target; t = setTimeout(() => saveNote(el), 800); } });
-  view.addEventListener('focusout', (e) => { if (isNote(e.target)) { clearTimeout(t); saveNote(e.target); } });
+  // 자동 초안(.auto)은 고쳐 쓰기 전까지 저장하지 않음 → 파일을 다시 불러오면 새 숫자로 바뀜
+  view.addEventListener('input', (e) => { if (isNote(e.target)) { e.target.classList.remove('auto'); clearTimeout(t); const el = e.target; t = setTimeout(() => saveNote(el), 800); } });
+  view.addEventListener('focusout', (e) => { if (isNote(e.target) && !e.target.classList.contains('auto')) { clearTimeout(t); saveNote(e.target); } });
   view.addEventListener('click', (e) => {
     const tb = e.target.closest('[data-tgt]');
     if (tb) { ui.tgt = +tb.dataset.tgt; try { localStorage.setItem('jy-kpitgt', ui.tgt); } catch { /* 저장 불가 */ } render(); return; }
@@ -1099,6 +1189,15 @@ export function initKpi({ toast } = {}) {
       return;
     }
     if (e.target.id === 'cmAi' && cur) { cmAi(cur); return; }
+    if (e.target.id === 'mailCopy') { copy(view.querySelector('.mail-text')?.value || ''); return; }
+    if (e.target.id === 'mailReset' && cur) {
+      const ta = view.querySelector('.mail-text');
+      if (!ta.classList.contains('auto') && !confirm('고쳐 쓴 내용을 지우고 자동 초안으로 되돌릴까요?')) return;
+      const notes = { ...(cur.notes || {}) }; delete notes[ta.dataset.m];
+      store.upsert('kpi', { id: cur.id, notes });
+      render();
+      return;
+    }
     if (e.target.id === 'cmAskCopy' && cur) { copy(cmQuestions(cur).map((x, j) => `${j + 1}. ${x}`).join('\n')); return; }
     if (e.target.id === 'cmCopy' && cur) {
       const txt = [...view.querySelectorAll('.cm-block')].map((b) => { const t = b.querySelector('.cm-text').value.trim() || cmAutoText(cur, b.dataset.g); return `${b.dataset.g}. ${t}`; }).join('\n\n');
