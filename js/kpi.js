@@ -681,6 +681,80 @@ function cmQuestions(k) {
   }
   return q;
 }
+/* ---------- 📌 지난달 보고 후속 확인: 지난달 경영회의 PPT 베트남 장표에서 "예정·목표·추진·협의…" 문장을 뽑아 체크리스트로 ---------- */
+const unx = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+async function readPrevPpt(file) {
+  const { default: JSZip } = await import('./vendor/jszip.mjs');
+  const zip = await JSZip.loadAsync(await file.arrayBuffer());
+  const names = Object.keys(zip.files).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n)).sort((a, b) => +a.match(/\d+/)[0] - +b.match(/\d+/)[0]);
+  for (const n of names) {
+    const xml = await zip.file(n).async('string');
+    const plain = [...xml.matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((m) => m[1]).join('').replace(/\s/g, '');
+    if (!/베트남법인/.test(plain) || !/실적Issue/i.test(plain)) continue;
+    const body = xml.replace(/<a:tbl>[\s\S]*?<\/a:tbl>/g, '');
+    const paras = [...body.matchAll(/<a:p>([\s\S]*?)<\/a:p>/g)].map((m) => ({ t: unx([...m[1].matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((x) => x[1]).join('')).replace(/\s+/g, ' ').trim(), lv: +((m[1].match(/<a:pPr[^>]*lvl="(\d)"/) || [])[1] || 0) })).filter((x) => x.t.length > 1);
+    const mon = +((plain.match(/베트남법인(\d{1,2})월실적Issue/) || [])[1] || 0);
+    return { slide: n, mon, paras };
+  }
+  return null;
+}
+const FU_RE = /(예정|목표|전망|추진|검토|협의|진행\s*중|계획|연기|확대|도입|축소|일시)/;
+function prevItems(paras) {
+  const out = [];
+  let parent = '';
+  for (const p of paras) {
+    if (p.lv === 0) { parent = ''; continue; } // 제목줄(Target·계획 대비)은 제외
+    if (p.lv === 1) parent = /:\s*$/.test(p.t) ? p.t.replace(/\s*:\s*$/, '') : '';
+    if (!FU_RE.test(p.t) || p.t.length < 6) continue;
+    out.push({ t: (p.lv >= 2 && parent ? `${parent} › ` : '') + p.t, done: false, memo: '' });
+  }
+  return out;
+}
+// 이번 달 숫자로 자동 판정(가능한 것만): ✅ 이행 / ⚠️ 확인 필요
+function followHint(k, text, mn) {
+  const P = pptOf(k), M = model(k), i = mn - 1, p = mn - 2;
+  if (!P || p < 0) return '';
+  const pi = P.months.indexOf(mn), pp = P.months.indexOf(mn - 1);
+  const kid = (re, lab) => { const b = pptBlock(P, re); return b?.kids.find((x) => lab.test(x.label)); };
+  const kv = (x) => (x && pi >= 0 ? [x.a[pi], x.a[pp]] : null);
+  const ch = (re) => M.chans.find((x) => re.test(x.label));
+  const num = (s) => { const m = [...s.matchAll(/(\d+(?:\.\d+)?)\s*백만원/g)]; return m.length ? +m[m.length - 1][1] : null; };
+  const chk = (ok, s) => `${ok ? '✅' : '⚠️'} ${s}`;
+  for (const [re, nm] of [[/이마트/, '이마트'], [/롯데/, '롯데마트']]) {
+    if (!re.test(text) || !/매출/.test(text)) continue;
+    const c = ch(re); if (!c) continue;
+    const goal = num(text), v = c.a[i] || 0;
+    return chk(goal ? v >= goal : v >= (c.a[p] || 0), `${mn}월 ${nm} 매출 ${f1(v)}백만원${goal ? ` (목표 ${goal}, ${Math.round(v / goal * 100)}%)` : ` (전월 ${f1(c.a[p] || 0)})`}`);
+  }
+  if (/coop|쿱|윈마트|win/i.test(text)) {
+    const c = ch(/coop|쿱|윈|win/i), v = c ? c.a[i] || 0 : 0;
+    return v >= 0.05 ? chk(true, `${mn}월 ${c.label} 매출 ${f1(v)}백만원`) : chk(false, `${mn}월 신규 채널 매출 없음 — 납품 일정·협의 결과 확인`);
+  }
+  if (/사무실|법률|미청구|합산/.test(text)) {
+    const a = kv(kid(/^관리비/, /사무실/)), b = kv(kid(/^관리비/, /^기타$/));
+    if (a) return chk(a[0] < a[1], `사무실임차료 ${f1(a[0])}백만원 (전월 ${f1(a[1])})${b ? `, 기타(법률 등) ${f1(b[0])} (전월 ${f1(b[1])})` : ''} — 일시 증가분 해소 여부`);
+  }
+  if (/숙소/.test(text)) { const v = kv(kid(/^관리비/, /숙소/)); if (v) return chk(v[0] < 0.05, `숙소임차료 ${f1(v[0])}백만원 (전월 ${f1(v[1])})`); }
+  if (/차량|여비/.test(text)) { const v = kv(kid(/^관리비/, /여비/)); if (v) return chk(v[0] < v[1], `여비교통비 ${f1(v[0])}백만원 (전월 ${f1(v[1])}, ${v[0] - v[1] >= 0 ? '+' : ''}${f1(v[0] - v[1])})`); }
+  if (/폐기/.test(text)) { const v = kv(kid(/^단위원가/, /폐기/)); if (v) return chk(v[0] <= v[1], `kg당 폐기원가 ${Math.round(v[0])}원 (전월 ${Math.round(v[1])}) — 폐기율은 폐기 물량으로 확인`); }
+  if (/운반|합배송|하차지|운송/.test(text)) {
+    const x = kid(/^판매비/, /운반/), vol = pptBlock(P, /^매출물량/);
+    if (x && vol && pi >= 0) { const c = x.a[pi] * 1000 / vol.row.a[pi], b = x.a[pp] * 1000 / vol.row.a[pp]; return chk(c <= b, `kg당 운반비 ${Math.round(c)}원 (전월 ${Math.round(b)})`); }
+  }
+  if (/인센티브|판매사원|시식|진열/.test(text)) { const v = kv(kid(/^판매비/, /인건비/)); if (v) return `ℹ️ 판매 인건비 ${f1(v[0])}백만원 (전월 ${f1(v[1])}) — 효과는 현지 확인`; }
+  return '';
+}
+function followCard(k, mn) {
+  const fu = (k.notes || {})[`fu${mn}`];
+  const items = fu?.items || [];
+  const left = items.filter((x) => !x.done).length;
+  const rows = items.map((x, j) => { const h = followHint(k, x.t, mn); return `<li class="fu-it${x.done ? ' done' : ''}"><label><input type="checkbox" data-fu-i="${j}" ${x.done ? 'checked' : ''}> <span>${esc(x.t)}</span></label>${h ? `<div class="fu-h">${esc(h)}</div>` : ''}<input class="fu-memo" data-fu-m="${j}" value="${esc(x.memo || '')}" placeholder="이번 달 결과·현지 답변 메모"></li>`; }).join('');
+  return `<details class="cm-ask fu" ${items.length ? 'open' : ''}><summary>📌 지난달 보고 후속 확인 ${items.length ? `(${items.length - left}/${items.length} 확인)` : ''}</summary>
+    <p class="muted sm">${fu ? `「${esc(fu.src)}」${fu.mon ? ` ${fu.mon}월 장표` : ''}에서 예정·목표·추진 문장을 뽑았습니다. 이번 달 숫자로 판정 가능한 것은 ✅/⚠️로 표시합니다.` : '지난달 경영회의 PPT(.pptx)를 불러오면 베트남 장표에서 "~예정 / ~목표 / ~추진 / 협의 중" 문장을 뽑아 이번 달 확인 목록을 만듭니다.'}</p>
+    ${items.length ? `<ul class="fu-list">${rows}</ul>` : ''}
+    <div class="cm-tools"><button type="button" class="btn sm" id="fuLoad">📂 지난달 PPT 불러오기</button>${items.length ? '<button type="button" class="btn sm" id="fuCopy">📋 미확인 항목 복사(현지 문의용)</button>' : ''}<input type="file" id="fuIn" accept=".pptx" hidden></div></details>`;
+}
+
 function renderCmt(k) {
   const P = pptOf(k);
   if (!P) return `<div class="card">⚠️ 이 파일에서 경영회의 장표 표(PPT 시트의 Actual·Budget·Target 표)를 찾지 못했습니다.</div>`;
@@ -719,7 +793,7 @@ function renderCmt(k) {
   return `<article class="rp cm"><header class="rp-head"><h2>📝 ${k.year}년 ${mn}월 경영회의 베트남 장표 코멘트</h2><p>왼쪽 표는 장표와 같은 숫자, 오른쪽은 A~E 코멘트 초안입니다. 숫자 근거와 원장을 보고 현지 확인 내용을 채운 뒤 복사해 장표에 붙이세요.</p></header>
     <div class="cm-grid"><div class="cm-left">${table}</div><div class="cm-right">
       <div class="cm-tools">${aiEnabled() ? '<button type="button" class="btn sm primary" id="cmAi">🤖 AI 초안 만들기</button>' : ''}<button type="button" class="btn sm" id="cmCopy">📋 코멘트 전체 복사</button><span class="muted sm" id="cmMsg">${esc(cmStatus)}</span></div>
-      ${ask}${blocks}</div></div></article>`;
+      ${followCard(k, mn)}${ask}${blocks}</div></div></article>`;
 }
 function cmAutoText(k, gid) {
   const P = pptOf(k), G = CM_GROUPS.find((x) => x.id === gid), B = P && pptBlock(P, G.re);
@@ -1387,6 +1461,32 @@ export function initKpi({ toast } = {}) {
     try { localStorage.setItem('jy-kpimode', ui.mode); } catch { /* 저장 불가 */ }
     render();
   });
+  // 📌 지난달 보고 후속 확인
+  const fuKey = (k) => { const P = pptOf(k); return P ? `fu${P.months[P.months.length - 1]}` : null; };
+  const fuSave = (k, upd) => { const key = fuKey(k); if (!key) return; const notes = { ...(k.notes || {}) }; notes[key] = upd({ ...(notes[key] || { items: [] }) }); store.upsert('kpi', { id: k.id, notes }); };
+  view.addEventListener('change', async (e) => {
+    const cur = store.find('kpi', ui.id);
+    if (!cur) return;
+    if (e.target.id === 'fuIn' && e.target.files.length) {
+      const f = e.target.files[0];
+      try {
+        const r = await readPrevPpt(f);
+        if (!r) { toastFn('이 PPT에서 베트남법인 실적 장표를 찾지 못했습니다.'); return; }
+        const items = prevItems(r.paras);
+        fuSave(cur, () => ({ src: f.name, mon: r.mon, items }));
+        toastFn(`지난달 장표에서 확인할 항목 ${items.length}개를 찾았습니다.`);
+      } catch (err) { toastFn('PPT를 읽지 못했습니다: ' + (err.message || err)); }
+      return;
+    }
+    const ci = e.target.dataset?.fuI;
+    if (ci !== undefined) fuSave(cur, (fu) => ({ ...fu, items: fu.items.map((x, j) => (j === +ci ? { ...x, done: e.target.checked } : x)) }));
+  });
+  view.addEventListener('focusout', (e) => {
+    const mi = e.target.dataset?.fuM, cur = store.find('kpi', ui.id);
+    if (mi === undefined || !cur) return;
+    const v = e.target.value.trim();
+    fuSave(cur, (fu) => ({ ...fu, items: fu.items.map((x, j) => (j === +mi ? { ...x, memo: v } : x)) }));
+  });
   let t;
   const saveNote = (el, id = el.dataset.id, m = el.dataset.m) => {
     const k = store.find('kpi', id);
@@ -1432,6 +1532,12 @@ export function initKpi({ toast } = {}) {
       e.target.textContent = open ? '▴ 세부 모두 접기' : '▾ 세부 모두 펼치기';
       return;
     }
+    if (e.target.id === 'fuLoad') { view.querySelector('#fuIn')?.click(); return; }
+    if (e.target.id === 'fuCopy' && cur) {
+      const fu = (cur.notes || {})[fuKey(cur)], mn = +fuKey(cur).slice(2);
+      copy(`[${mn}월 베트남 실적 — 지난달 보고 후속 확인 요청]\n` + (fu?.items || []).filter((x) => !x.done).map((x, j) => `${j + 1}. ${x.t}${followHint(cur, x.t, mn) ? `\n   → ${followHint(cur, x.t, mn)}` : ''}\n   → ${mn}월 진행 결과:`).join('\n'));
+      return;
+    }
     if (e.target.id === 'mailCopy') { copy(view.querySelector('.mail-text')?.value || ''); return; }
     if (e.target.id === 'mailReset' && cur) {
       const ta = view.querySelector('.mail-text');
@@ -1452,6 +1558,6 @@ export function initKpi({ toast } = {}) {
     if (k && confirm(`${k.year}년 「${k.title}」 KPI 자료를 지울까요?\n(엑셀 파일은 그대로이고, 사이트에 저장된 숫자와 메모만 지워집니다)`)) { store.remove('kpi', k.id); ui.id = null; render(); }
   });
   // 메모 입력 중에는 다시 그리지 않음 (다른 기기 동기화로 커서가 튀지 않게)
-  store.subscribe(() => { const a = document.activeElement; if (!(a && (a.id === 'kpiNote' || a.classList?.contains('cm-text')))) render(); });
+  store.subscribe(() => { const a = document.activeElement; if (!(a && (a.id === 'kpiNote' || a.classList?.contains('cm-text') || a.classList?.contains('fu-memo')))) render(); });
   render();
 }
