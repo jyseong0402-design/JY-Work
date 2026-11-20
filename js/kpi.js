@@ -617,8 +617,18 @@ function renderCmt(k) {
   if (!P) return `<div class="card">⚠️ 이 파일에서 경영회의 장표 표(PPT 시트의 Actual·Budget·Target 표)를 찾지 못했습니다.</div>`;
   const n = P.months.length, mn = P.months[n - 1];
   const head = `<tr><th>(단위: 백만원)</th>${P.months.map((m) => `<th>${m}월</th>`).join('')}<th class="bg">BGT<br><small>${mn}월</small></th><th class="bg">% Ach.</th><th class="tg">Target<br><small>${mn}월</small></th><th class="tg">% Ach.</th></tr>`;
-  const body = P.rows.filter((r) => !r.h).map((r) => `<tr class="${r.lv === 1 && r.kind !== 'pct' ? 'key' : 'sub'}${r.kind === 'pct' ? ' pct' : ''}"><th>${esc(r.label)}</th>${r.a.map((v, j) => `<td class="${j === n - 1 ? 'hl' : ''} ${v < 0 ? 'neg' : ''}">${fP(v, r.kind)}</td>`).join('')}<td>${fP(r.bgt, r.kind)}</td><td class="muted">${fAch(r.bAch, r.kind)}</td><td class="tg">${fP(r.tgt, r.kind)}</td><td class="muted">${fAch(r.tAch, r.kind)}</td></tr>`).join('');
-  const table = `<div class="kt-scroll"><table class="rt cm-t"><thead>${head}</thead><tbody>${body}</tbody></table></div><p class="muted sm">출처: '${esc(P.sheet)}' 시트 ${P.row}행 표 (경영회의 장표와 같은 표)</p>${P.auto ? `<p class="sm cm-auto-note">⚠️ 이 파일의 '${esc(P.sheet)}' 시트에는 ${P.auto.map((x) => `${x}월`).join('·')} 열이 아직 없어, '${esc(k.target?.sheet || 'Target PL')}' 시트의 월 실적으로 같은 규칙에 따라 채웠습니다. BGT는 Summary 시트 값(세부 항목 BGT는 비움), Target은 장표 값 그대로입니다. 시트에 ${P.auto[P.auto.length - 1]}월 열을 추가하면 그 값을 씁니다.</p>` : ''}`;
+  // 대항목(lv1)만 보이고 세부(lv2)는 ▸ 눌러 펼침 (% 줄은 대항목과 같이 보임)
+  const vis = P.rows.filter((r) => !r.h);
+  let gi = -1;
+  const grp = vis.map((r) => { if (r.lv === 1 && r.kind !== 'pct') gi++; return gi; });
+  const hasKids = new Set(vis.filter((r) => r.lv === 2).map((r, x) => grp[vis.indexOf(r)]));
+  const body = vis.map((r, x) => {
+    const key = r.lv === 1 && r.kind !== 'pct', kid = r.lv === 2, g = grp[x], open = cmOpen.has(g);
+    const tg = key && hasKids.has(g) ? `<button type="button" class="cm-tg" data-cmg="${g}" aria-expanded="${open}">${open ? '▾' : '▸'}</button>` : key ? '<span class="cm-tg-sp"></span>' : '';
+    return `<tr class="${key ? 'key' : 'sub'}${r.kind === 'pct' ? ' pct' : ''}${kid ? ' cm-kid' : ''}"${kid ? ` data-cmk="${g}"${open ? '' : ' hidden'}` : ''}><th>${tg}${esc(r.label)}</th>${r.a.map((v, j) => `<td class="${j === n - 1 ? 'hl' : ''} ${v < 0 ? 'neg' : ''}">${fP(v, r.kind)}</td>`).join('')}<td>${fP(r.bgt, r.kind)}</td><td class="muted">${fAch(r.bAch, r.kind)}</td><td class="tg">${fP(r.tgt, r.kind)}</td><td class="muted">${fAch(r.tAch, r.kind)}</td></tr>`;
+  }).join('');
+  const allOpen = hasKids.size && [...hasKids].every((g) => cmOpen.has(g));
+  const table = `<div class="cm-tbar"><button type="button" class="btn sm ghost" id="cmAllTg">${allOpen ? '▴ 세부 모두 접기' : '▾ 세부 모두 펼치기'}</button><span class="muted sm">▸ 를 누르면 세부 항목이 펼쳐집니다</span></div><div class="kt-scroll"><table class="rt cm-t"><thead>${head}</thead><tbody>${body}</tbody></table></div><p class="muted sm">출처: '${esc(P.sheet)}' 시트 ${P.row}행 표 (경영회의 장표와 같은 표)</p>${P.auto ? `<p class="sm cm-auto-note">⚠️ 이 파일의 '${esc(P.sheet)}' 시트에는 ${P.auto.map((x) => `${x}월`).join('·')} 열이 아직 없어, '${esc(k.target?.sheet || 'Target PL')}' 시트의 월 실적으로 같은 규칙에 따라 채웠습니다. BGT는 Summary 시트 값(세부 항목 BGT는 비움), Target은 장표 값 그대로입니다. 시트에 ${P.auto[P.auto.length - 1]}월 열을 추가하면 그 값을 씁니다.</p>` : ''}`;
   const notes = k.notes || {};
   const blocks = CM_GROUPS.map((G) => {
     const B = pptBlock(P, G.re);
@@ -648,6 +658,7 @@ function cmAutoText(k, gid) {
   return [cmHeadline(G, B), ...cmBullets(k, G, B).map((f) => `  - ${f}`)].join('\n');
 }
 let cmStatus = '';
+const cmOpen = new Set(); // 펼친 대항목 번호 (화면을 다시 그려도 유지)
 async function cmAi(k) {
   const msg = $('#cmMsg');
   if (!aiEnabled()) { msg.textContent = '⚙️ 설정에서 Claude API 키를 먼저 넣어주세요.'; return; }
@@ -1258,6 +1269,22 @@ export function initKpi({ toast } = {}) {
       return;
     }
     if (e.target.id === 'cmAi' && cur) { cmAi(cur); return; }
+    const tgb = e.target.closest('[data-cmg]');
+    if (tgb) {
+      const g = +tgb.dataset.cmg, open = !cmOpen.has(g);
+      if (open) cmOpen.add(g); else cmOpen.delete(g);
+      tgb.textContent = open ? '▾' : '▸'; tgb.setAttribute('aria-expanded', open);
+      view.querySelectorAll(`[data-cmk="${g}"]`).forEach((tr) => { tr.hidden = !open; });
+      return;
+    }
+    if (e.target.id === 'cmAllTg') {
+      const gs = [...view.querySelectorAll('[data-cmg]')].map((b) => +b.dataset.cmg), open = !gs.every((g) => cmOpen.has(g));
+      gs.forEach((g) => (open ? cmOpen.add(g) : cmOpen.delete(g)));
+      view.querySelectorAll('[data-cmg]').forEach((b) => { b.textContent = open ? '▾' : '▸'; b.setAttribute('aria-expanded', open); });
+      view.querySelectorAll('[data-cmk]').forEach((tr) => { tr.hidden = !open; });
+      e.target.textContent = open ? '▴ 세부 모두 접기' : '▾ 세부 모두 펼치기';
+      return;
+    }
     if (e.target.id === 'mailCopy') { copy(view.querySelector('.mail-text')?.value || ''); return; }
     if (e.target.id === 'mailReset' && cur) {
       const ta = view.querySelector('.mail-text');
