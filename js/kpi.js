@@ -1,12 +1,14 @@
 // 📈 KPI 현황: KPI 엑셀의 Summary 시트를 읽어 요약 카드·그래프·특이사항·전월 비교를 보여줌
-// 파일은 이 기기에서만 읽고, 뽑아낸 숫자(월별 실적·예산)만 store 'kpi' 항목으로 저장 → 탭·PC 동기화
+// 파일은 이 기기에서만 읽고, 뽑아낸 숫자(월별 실적·BGT)만 store 'kpi' 항목으로 저장 → 탭·PC 동기화
 // 항목 { id, title, year, month(파일의 결산월), file, loadedAt, rows:[{label, top, grp, a:[12], b:[12]}], notes:{ '10': '메모' } }
 import { store } from './store.js';
 import { loadXLSX } from './excel.js';
+import { aiChat, aiEnabled } from './ai.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const ui = { id: null, m: null, mode: (() => { try { return localStorage.getItem('jy-kpimode') || 'month'; } catch { return 'month'; } })() };
+const lsGet = (k, d) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } };
+const ui = { id: null, m: null, mode: lsGet('jy-kpimode', 'month'), tgt: +lsGet('jy-kpitgt', 0) || 0 };
 let toastFn = () => {};
 
 /* ---------- 엑셀 읽기 ---------- */
@@ -47,7 +49,56 @@ export function parseKpi(XLSX, wb, file = '') {
     rows.push({ label, top: !!top, grp, a: A.map((c) => num(row[c])), b: B.map((c) => num(row[c])) });
   }
   if (!rows.length) throw new Error('Summary 시트에서 항목(매출액 등)을 찾지 못했습니다.');
-  return { id: `k${year}_${hash(title.replace(/\s+/g, ''))}`, title, year, month: Math.min(12, Math.max(1, month)), file, rows };
+  const target = parseTarget(XLSX, wb);
+  return { id: `k${year}_${hash(title.replace(/\s+/g, ''))}`, title, year, month: Math.min(12, Math.max(1, month)), file, rows, ...(target ? { target } : {}) };
+}
+
+// 🎯 'Target … PL' 시트: 왼쪽은 월별 실적(3행 연도·4행 'N월'), 그 오른쪽 한 칸 띄고 Target 시나리오 열(월 기준 목표치)
+//   B열=대항목(매출액·GP·판매비…), C열=중항목(판매단가·GP%…), D열=세부(품목·비용 계정·CM% 등)
+const TARGET_SHEET = (n) => /^target.*pl\s*$/i.test(n.trim());
+function parseTarget(XLSX, wb) {
+  const sn = wb.SheetNames.find(TARGET_SHEET);
+  const ws = sn && wb.Sheets[sn];
+  if (!ws) return null;
+  if (ws['!ref']) { const r = XLSX.utils.decode_range(ws['!ref']); r.s = { r: 0, c: 0 }; ws['!ref'] = XLSX.utils.encode_range(r); }
+  const g = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null, blankrows: true });
+  const s = (r, c) => String((g[r] || [])[c] ?? '').trim();
+  // 월 열: 위 줄 4자리 연도 + 아래 줄 'N월'(또는 숫자)
+  let hr = -1;
+  for (let r = 0; r < 10 && hr < 0; r++) if ((g[r] || []).filter((v) => /^20\d\d$/.test(String(v ?? '').trim())).length >= 3) hr = r;
+  if (hr < 0) return null;
+  const A = [];
+  let last = -1;
+  (g[hr] || []).forEach((v, c) => {
+    if (!/^20\d\d$/.test(String(v ?? '').trim())) return;
+    const mo = parseInt(s(hr + 1, c), 10);
+    if (mo >= 1 && mo <= 12 && A[mo - 1] === undefined) { A[mo - 1] = c; last = Math.max(last, c); }
+  });
+  if (last < 0) return null;
+  // Target 열: 월 열 오른쪽에서 머리글(위·아래 줄)이 있는 첫 묶음
+  const scen = [];
+  let c = last + 1, gap = 0;
+  while (c < last + 30) {
+    const h = [s(hr, c), s(hr + 1, c)].filter(Boolean).join(' ');
+    if (h && !/average|ytd|평균|누계/i.test(h)) { scen.push({ c, name: h }); gap = 0; } else if (scen.length && ++gap >= 1) break;
+    c++;
+  }
+  if (!scen.length) return null;
+  const rows = [];
+  let p1 = '', p2 = '';
+  for (let r = hr + 2; r < g.length; r++) {
+    const b = s(r, 1), cc = s(r, 2), d = s(r, 3);
+    const label = b || cc || d;
+    if (!label || /^[-\d.,%\s]+$/.test(label)) continue;
+    const lv = b ? 1 : cc ? 2 : 3;
+    if (lv === 1) { p1 = label; p2 = ''; } else if (lv === 2) p2 = label;
+    const row = g[r] || [];
+    const a = Array.from({ length: 12 }, (_, k) => (A[k] !== undefined ? num(row[A[k]]) : 0));
+    const t = scen.map((x) => num(row[x.c]));
+    if (!a.some((v) => v) && !t.some((v) => v)) continue;
+    rows.push({ label, lv, p: lv === 1 ? '' : lv === 2 ? p1 : (p2 || p1), a, t });
+  }
+  return { sheet: sn, scen: scen.map((x) => x.name), rows };
 }
 
 async function readFile(f) {
@@ -55,7 +106,8 @@ async function readFile(f) {
   const buf = await f.arrayBuffer();
   const names = XLSX.read(buf, { bookSheets: true }).SheetNames;
   const sn = names.find((n) => /^summary/i.test(n.trim()));
-  const wb = XLSX.read(buf, sn ? { sheets: [sn] } : {});
+  const tn = names.find(TARGET_SHEET);
+  const wb = XLSX.read(buf, sn ? { sheets: [sn, tn].filter(Boolean) } : {});
   return parseKpi(XLSX, wb, f.name);
 }
 
@@ -153,9 +205,9 @@ function findings(M, m) {
   }
   if (bud > 0) {
     const ach = cur / bud;
-    if (ach < 0.9 || ach > 1.1) add(ach >= 1 ? 'good' : 'bad', `매출 예산 달성률 ${Math.round(ach * 100)}% (예산 ${f1(bud)} / 실적 ${f1(cur)}백만원)`);
+    if (ach < 0.9 || ach > 1.1) add(ach >= 1 ? 'good' : 'bad', `매출 BGT 달성률 ${Math.round(ach * 100)}% (BGT ${f1(bud)} / 실적 ${f1(cur)}백만원)`);
   }
-  if (M.ebit && M.ebit.b[i]) { const d = M.ebit.a[i] - M.ebit.b[i]; if (Math.abs(d) >= 3) add(d > 0 ? 'good' : 'bad', `EBIT 예산 대비 ${d > 0 ? '+' : ''}${f1(d)}백만원 (예산 ${f1(M.ebit.b[i])} / 실적 ${f1(M.ebit.a[i])})`); }
+  if (M.ebit && M.ebit.b[i]) { const d = M.ebit.a[i] - M.ebit.b[i]; if (Math.abs(d) >= 3) add(d > 0 ? 'good' : 'bad', `EBIT BGT 대비 ${d > 0 ? '+' : ''}${f1(d)}백만원 (BGT ${f1(M.ebit.b[i])} / 실적 ${f1(M.ebit.a[i])})`); }
   if (m >= 3 && cur > 0 && cur >= Math.max(...S.a.slice(0, i))) add('good', `올해 최고 월 매출 (${f1(cur)}백만원)`);
   const order = { bad: 0, good: 1, info: 2 };
   return out.sort((a, b) => order[a.lv] - order[b.lv]);
@@ -163,7 +215,7 @@ function findings(M, m) {
 
 /* ---------- 그래프 (SVG) ---------- */
 function niceMax(v) { if (v <= 0) return 1; const p = 10 ** Math.floor(Math.log10(v)); return Math.ceil(v / p / (v / p > 5 ? 2 : 1)) * p * (v / p > 5 ? 2 : 1); }
-// 월별 막대(실적) + 예산 표시 + (선택) 비율 선
+// 월별 막대(실적) + BGT 표시 + (선택) 비율 선
 function barChart({ a, b, m, line, lineLabel, sel, title, cnt = 12, vlabels = false }) {
   const W = 640, H = 230, L = 40, R = line ? 40 : 12, T = 14, Bm = 26;
   const vals = [...a.slice(0, cnt), ...(b || []).slice(0, cnt)];
@@ -181,7 +233,7 @@ function barChart({ a, b, m, line, lineLabel, sel, title, cnt = 12, vlabels = fa
     const x = L + k * bw, v = a[k] || 0, on = k < m;
     if (on) s += `<rect x="${x + bw * .18}" y="${Math.min(y(v), y(0))}" width="${bw * .64}" height="${Math.max(1, Math.abs(y(v) - y(0)))}" rx="3" class="kg-bar ${k === sel - 1 ? 'sel' : ''} ${v < 0 ? 'neg' : ''}"><title>${k + 1}월 ${f1(v)}</title></rect>`;
     if (on && vlabels) s += `<text x="${x + bw / 2}" y="${v >= 0 ? y(v) - 5 : y(v) + 13}" class="kg-ax kg-val" text-anchor="middle">${f1(v)}</text>`;
-    if (b && b[k]) s += `<line x1="${x + bw * .1}" x2="${x + bw * .9}" y1="${y(b[k])}" y2="${y(b[k])}" class="kg-bud"><title>${k + 1}월 예산 ${f1(b[k])}</title></line>`;
+    if (b && b[k]) s += `<line x1="${x + bw * .1}" x2="${x + bw * .9}" y1="${y(b[k])}" y2="${y(b[k])}" class="kg-bud"><title>${k + 1}월 BGT ${f1(b[k])}</title></line>`;
     s += `<text x="${x + bw / 2}" y="${H - 8}" class="kg-ax ${k === sel - 1 ? 'sel' : ''}" text-anchor="middle">${k + 1}월</text>`;
   }
   if (line) {
@@ -191,7 +243,7 @@ function barChart({ a, b, m, line, lineLabel, sel, title, cnt = 12, vlabels = fa
     s += lv.map((v, k) => `<circle cx="${L + k * bw + bw / 2}" cy="${ly(v)}" r="3.5" class="kg-dot"><title>${k + 1}월 ${lineLabel} ${pc(v)}</title></circle>`).join('');
     s += `<text x="${W - R + 6}" y="${ly(lv[lv.length - 1] || 0) + 4}" class="kg-ax kg-lt">${pc(lv[lv.length - 1] || 0)}</text>`;
   }
-  const legend = `<span class="kl"><i class="kl-bar"></i>실적</span>${b ? '<span class="kl"><i class="kl-bud"></i>예산</span>' : ''}${line ? `<span class="kl"><i class="kl-line"></i>${lineLabel}</span>` : ''}`;
+  const legend = `<span class="kl"><i class="kl-bar"></i>실적</span>${b ? '<span class="kl"><i class="kl-bud"></i>BGT</span>' : ''}${line ? `<span class="kl"><i class="kl-line"></i>${lineLabel}</span>` : ''}`;
   return `<div class="card kg"><div class="kg-h"><b>${title}</b><span class="kg-leg">${legend}</span></div><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title)}">${s}</svg></div>`;
 }
 // 항목별 당월 vs 전월 가로 막대
@@ -206,6 +258,79 @@ function compareBars(title, list, m) {
     return `<div class="kc-row"><span class="kc-n">${esc(x.label)}</span><span class="kc-bars"><i class="kc-cur" style="width:${Math.max(0, c / hi * 100)}%"></i>${p >= 0 ? `<i class="kc-prev" style="width:${Math.max(0, b / hi * 100)}%"></i>` : ''}</span><span class="kc-v"><b>${f1(c)}</b> <small class="muted">${Math.round(c / total * 100)}%</small>${p >= 0 ? `<br>${delta(c, b, 'amt')}` : ''}</span></div>`;
   }).join('');
   return `<div class="card kg"><div class="kg-h"><b>${title}</b><span class="kg-leg"><span class="kl"><i class="kl-bar"></i>${m}월</span>${p >= 0 ? `<span class="kl"><i class="kl-prev"></i>${m - 1}월</span>` : ''}</span></div>${body}</div>`;
+}
+
+/* ---------- 🎯 Target 대비 ('Target … PL' 시트의 시나리오 = 월 기준 목표치) ---------- */
+function tmodel(T) {
+  if (!T || !T.rows?.length) return null;
+  const key = (r) => r.label.replace(/\s/g, '');
+  const f = (re, lv) => T.rows.find((r) => (!lv || r.lv === lv) && re.test(key(r)));
+  const sales = f(/^매출액/, 1), sell = f(/^판매비/, 1), admin = f(/^관리비/, 1), at = f(/AT지원/i);
+  const kids = (r) => (r ? T.rows.filter((x) => x.lv === 3 && x.p === r.label) : []);
+  return {
+    sales, qty: f(/^물량/, 1), price: f(/판매단가/), cogs: f(/^매출원가/, 1), gp: f(/^GP$/i, 1), gpp: f(/^GP%$/i),
+    sell, at, cm: f(/^CM$/i, 1), cmp: f(/^CM%$/i), admin, ebit: f(/^EBIT$/i, 1), ebitp: f(/^EBIT%$/i),
+    items: kids(sales), sellItems: kids(sell), atItems: kids(at), adminItems: kids(admin),
+  };
+}
+const tgtIdx = (T) => Math.min(Math.max(0, ui.tgt || 0), (T?.scen?.length || 1) - 1);
+// 최근 3개월(또는 m개월 미만이면 그만큼) 평균 — 비율·단가는 합계로 다시 계산
+function recentAvg(TM, r, kind, m) {
+  const s = Math.max(1, m - 2), cnt = m - s + 1;
+  const sm = (x) => (x ? sumR(x.a, s, m) : 0);
+  if (kind === 'pct') { const base = sm(TM.sales); const num = r === TM.gpp ? sm(TM.gp) : r === TM.cmp ? sm(TM.cm) : r === TM.ebitp ? sm(TM.ebit) : null; return num !== null && base ? num / base : sumR(r.a, s, m) / cnt; }
+  if (kind === 'won' && r === TM.price) { const q = sm(TM.qty); return q ? sm(TM.sales) / q * 1000 : 0; }
+  return sumR(r.a, s, m) / cnt;
+}
+function targetLines(TM) {
+  const L = [];
+  const push = (r, name, kind, cls = '') => r && L.push({ r, name: name || r.label, kind, cls });
+  push(TM.sales, '매출액', 'amt', 'key');
+  TM.items.forEach((x) => push(x, x.label, 'amt', 'sub'));
+  push(TM.qty, '매출물량 (톤)', 'ton', 'sub');
+  push(TM.price, '판매단가 (원/kg)', 'won', 'sub');
+  push(TM.cogs, '매출원가', 'cost');
+  push(TM.gp, 'GP (매출총이익)', 'amt', 'key');
+  push(TM.gpp, 'GP%', 'pct', 'sub');
+  push(TM.sell, '판매비', 'cost');
+  TM.sellItems.forEach((x) => push(x, x.label, 'cost', 'sub'));
+  push(TM.at, 'aT 지원사업 수익', 'amt', 'sub');
+  push(TM.cm, 'CM (공헌이익)', 'amt', 'key');
+  push(TM.cmp, 'CM%', 'pct', 'sub');
+  push(TM.admin, '관리비', 'cost');
+  TM.adminItems.forEach((x) => push(x, x.label, 'cost', 'sub'));
+  push(TM.ebit, 'EBIT (영업이익)', 'amt', 'key');
+  push(TM.ebitp, 'EBIT%', 'pct', 'sub');
+  return L;
+}
+const tAch = (a, t, kind) => (kind === 'amt' && t > 0 && a >= 0 ? `${Math.round(a / t * 100)}%` : kind === 'cost' && t > 0 ? `${Math.round(a / t * 100)}%` : '');
+function targetTable(k, m, { cls = 'rt' } = {}) {
+  const T = k.target, TM = tmodel(T);
+  if (!TM) return '';
+  const si = tgtIdx(T), i = m - 1;
+  const others = T.scen.map((n, j) => j).filter((j) => j !== si);
+  const rows = targetLines(TM).map((x) => {
+    const F = fmtOf(x.kind), a = x.r.a[i], t = x.r.t[si], r3 = recentAvg(TM, x.r, x.kind, m);
+    return `<tr class="${x.cls}"><th>${esc(x.name)}</th><td class="${a < 0 ? 'neg' : ''} hl">${F(a)}</td><td class="${r3 < 0 ? 'neg' : ''}">${F(r3)}</td>
+      <td class="tg">${F(t)}</td><td>${delta(a, t, x.kind)}</td><td class="muted">${tAch(a, t, x.kind)}</td>${others.map((j) => `<td class="muted">${F(x.r.t[j])}</td>`).join('')}</tr>`;
+  }).join('');
+  const seg = `<div class="seg kt-tsel">${T.scen.map((n, j) => `<button type="button" data-tgt="${j}" class="${j === si ? 'on' : ''}">${esc(n)}</button>`).join('')}</div>`;
+  return `${seg}<div class="kt-scroll"><table class="${cls}"><thead><tr><th>항목</th><th>${m}월 실적</th><th>최근 3개월 평균<br><small>${Math.max(1, m - 2)}~${m}월</small></th><th>🎯 ${esc(T.scen[si])}</th><th>${m}월 − Target</th><th>달성률</th>${others.map((j) => `<th class="muted">${esc(T.scen[j])}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>
+    <p class="muted sm">Target은 '${esc(T.sheet)}' 시트의 월 기준 목표치입니다. 비용 항목은 Target보다 적을수록 초록(▼)으로 표시합니다.</p>`;
+}
+function targetFindings(k, m) {
+  const TM = tmodel(k.target);
+  if (!TM) return [];
+  const si = tgtIdx(k.target), i = m - 1, nm = k.target.scen[si], out = [];
+  const add = (lv, txt) => out.push({ lv, txt });
+  if (TM.sales && TM.sales.t[si] > 0) { const a = TM.sales.a[i], t = TM.sales.t[si]; add(a >= t ? 'good' : 'bad', `🎯 ${nm} 매출 ${f1(t)} 대비 ${m}월 ${f1(a)}백만원 (달성 ${Math.round(a / t * 100)}%, ${a - t >= 0 ? '+' : ''}${f1(a - t)})`); }
+  if (TM.gpp) { const d = TM.gpp.a[i] - TM.gpp.t[si]; if (Math.abs(d) >= 0.01) add(d >= 0 ? 'good' : 'bad', `🎯 GP% ${pc(TM.gpp.a[i])} — ${nm} ${pc(TM.gpp.t[si])} 대비 ${d > 0 ? '+' : ''}${(d * 100).toFixed(1)}%p`); }
+  for (const [r, n] of [[TM.cm, 'CM'], [TM.ebit, 'EBIT']]) if (r) { const d = r.a[i] - r.t[si]; if (Math.abs(d) >= 0.5) add(d >= 0 ? 'good' : 'bad', `🎯 ${n} ${f1(r.a[i])} — ${nm} ${f1(r.t[si])} 대비 ${d > 0 ? '+' : ''}${f1(d)}백만원`); }
+  const over = [...TM.sellItems.map((x) => ['판매비', x]), ...TM.adminItems.map((x) => ['관리비', x])].filter(([, x]) => x.a[i] - x.t[si] >= 0.5 && (x.t[si] <= 0 || x.a[i] / x.t[si] >= 1.2));
+  if (over.length) add('bad', `🎯 Target 초과 비용: ${over.map(([g, x]) => `${g} ${x.label} ${f1(x.a[i])} (Target ${f1(x.t[si])})`).join(', ')}`);
+  const under = TM.items.filter((x) => x.t[si] > 0.5 && x.a[i] / x.t[si] < 0.8);
+  if (under.length) add('bad', `🎯 Target 미달 품목: ${under.map((x) => `${x.label} ${f1(x.a[i])}/${f1(x.t[si])}`).join(', ')}`);
+  return out;
 }
 
 /* ---------- 📑 누계 보고 (1~N월) ---------- */
@@ -278,10 +403,10 @@ function periodFindings(M, n) {
   }
   const mx = S.slice(0, n).indexOf(Math.max(...S.slice(0, n))), mn = S.slice(0, n).indexOf(Math.min(...S.slice(0, n)));
   add('info', `최고 매출 ${mx + 1}월 ${f1(S[mx])}백만원 · 최저 ${mn + 1}월 ${f1(S[mn])}백만원`);
-  // 예산
+  // BGT
   const yb = sumR(M.sales.b, 1, n), ya = sumR(S, 1, n);
-  if (yb > 0) add(ya >= yb ? 'good' : 'bad', `누계 매출 예산 달성률 ${Math.round(ya / yb * 100)}% (예산 ${f1(yb)} / 실적 ${f1(ya)}백만원)`);
-  if (M.ebit) { const ea = sumR(M.ebit.a, 1, n), eb = sumR(M.ebit.b, 1, n); if (eb) add(ea >= eb ? 'good' : 'bad', `누계 EBIT ${f1(ea)}백만원, 예산(${f1(eb)}) 대비 ${ea - eb > 0 ? '+' : ''}${f1(ea - eb)}`); }
+  if (yb > 0) add(ya >= yb ? 'good' : 'bad', `누계 매출 BGT 달성률 ${Math.round(ya / yb * 100)}% (BGT ${f1(yb)} / 실적 ${f1(ya)}백만원)`);
+  if (M.ebit) { const ea = sumR(M.ebit.a, 1, n), eb = sumR(M.ebit.b, 1, n); if (eb) add(ea >= eb ? 'good' : 'bad', `누계 EBIT ${f1(ea)}백만원, BGT(${f1(eb)}) 대비 ${ea - eb > 0 ? '+' : ''}${f1(ea - eb)}`); }
   // 수익성
   if (M.gp && Q.length >= 2) {
     const g = (q) => sumR(M.gp.a, q.s, q.e) / (sumR(S, q.s, q.e) || 1);
@@ -336,7 +461,7 @@ function renderYtd(k, M, n) {
   const S = ytd(M.sales);
   const sec = (no, title, sub, body) => `<section class="rp-sec"><h3><span class="rp-no">${no}</span>${title}${sub ? `<small>${sub}</small>` : ''}</h3>${body}</section>`;
   const cell = (v, F, cls = '') => `<td class="${v < 0 ? 'neg ' : ''}${cls}">${F(v)}</td>`;
-  const achv = (a, b) => (b > 0 && a >= 0 ? `${Math.round(a / b * 100)}%` : '-'); // 적자·음수 예산은 달성률 없음
+  const achv = (a, b) => (b > 0 && a >= 0 ? `${Math.round(a / b * 100)}%` : '-'); // 적자·음수 BGT는 달성률 없음
 
   // 손익 항목 목록 (누계 비율·단가는 합계로 다시 계산)
   const ratioOf = (num) => (w, s, e) => div(sumR(num[w], s, e), sumR(M.sales[w], s, e));
@@ -365,34 +490,37 @@ function renderYtd(k, M, n) {
     const a = ytd(r), b = ytd(r, 'b');
     return `<div class="rp-tile"><div class="t">${name}</div><div class="v ${a < 0 ? 'neg' : ''}">${f1(a)}</div>
       ${ratioRow ? `<div class="s">${ratioRow}</div>` : ''}<div class="s muted">월평균 ${f1(a / n)}</div>
-      ${b ? `<div class="s b">예산 ${f1(b)}${achv(a, b) !== '-' ? ` · 달성 <b>${achv(a, b)}</b>` : ''}</div><div class="s">${delta(a, b, 'amt')}</div>` : ''}</div>`;
+      ${b ? `<div class="s b">BGT ${f1(b)}${achv(a, b) !== '-' ? ` · 달성 <b>${achv(a, b)}</b>` : ''}</div><div class="s">${delta(a, b, 'amt')}</div>` : ''}</div>`;
   };
   const tiles = tile(M.sales, '매출액', M.qty ? `${f1(ytd(M.qty))}톤` : '')
     + tile(M.gp, 'GP', M.gp ? `GP% <b>${pc(div(ytd(M.gp), S))}</b>` : '')
     + tile(M.cm, 'CM', M.cm ? `CM% <b>${pc(div(ytd(M.cm), S))}</b>` : '')
     + tile(M.ebit, 'EBIT', M.ebit ? `EBIT% <b>${pc(div(ytd(M.ebit), S))}</b>` : '')
     + tile(M.ebitda, '조정 EBITDA', '');
-  const fs = periodFindings(M, n);
+  const fs = [...targetFindings(k, n), ...periodFindings(M, n)];
   const grp = (lv, title) => { const l = fs.filter((f) => f.lv === lv); return l.length ? `<div class="rp-find ${lv}"><b>${title}</b><ul>${l.map((f) => `<li>${esc(f.txt.replace(/^⚠️\s*/, ''))}</li>`).join('')}</ul></div>` : ''; };
   const key = `ytd${n}`;
   const s1 = sec('Ⅰ', '핵심 요약', `${per} 누계 · 단위 백만원`, `<div class="rp-tiles">${tiles}</div>
     ${grp('good', '✅ 개선된 점')}${grp('bad', '⚠️ 부진·점검 필요')}${grp('info', 'ℹ️ 참고')}
     <label class="kn rp-memo"><span class="muted sm">✏️ 보고 메모 (자동 저장 · 인쇄에 포함)</span><textarea id="kpiNote" data-id="${k.id}" data-m="${key}" rows="4" placeholder="예: 3Q 이마트 입점으로 매출 확대, 관리비 절감 효과">${esc((k.notes || {})[key] || '')}</textarea></label>`);
 
-  // Ⅱ. 손익 요약 (누계 vs 예산, 당월 vs 전월)
+  // Ⅱ. Target 대비 (가장 중요: 당월·최근 3개월 vs Target 시나리오)
+  const sT = k.target ? sec('Ⅱ', 'Target 대비', `${n}월 실적과 최근 3개월 평균을 월 기준 Target과 비교`, targetTable(k, n)) : '';
+
+  // Ⅲ. 손익 요약 (누계 vs BGT, 당월 vs 전월)
   const s2rows = MET.map((x) => {
     const F = fmtOf(x.kind), a = aggV(x, 'a', 1, n), b = aggV(x, 'b', 1, n);
     const cur = x.r.a[i], prev = p >= 0 ? x.r.a[p] : null;
     return `<tr class="${x.cls || ''}"><th>${x.name}</th>${cell(a, F, 'hl')}<td>${b ? F(b) : '-'}</td><td>${b ? delta(a, b, x.kind) : ''}</td><td>${x.kind === 'pct' || x.kind === 'won' ? '-' : achv(a, b)}</td>
       <td>${x.kind === 'pct' || x.kind === 'won' ? F(a) : F(a / n)}</td>${cell(cur, F)}<td>${prev !== null ? delta(cur, prev, x.kind) : ''}</td></tr>`;
   }).join('');
-  const s2 = sec('Ⅱ', '손익 요약', '누계는 예산과, 당월은 전월과 비교', `<div class="kt-scroll"><table class="rt">
-    <thead><tr><th>항목</th><th>${per} 누계</th><th>누계 예산</th><th>예산 대비</th><th>달성률</th><th>월평균</th><th>${n}월</th><th>전월 대비</th></tr></thead><tbody>${s2rows}</tbody></table></div>`);
+  const s2 = sec('Ⅲ', '손익 요약', '누계는 BGT와, 당월은 전월과 비교', `<div class="kt-scroll"><table class="rt">
+    <thead><tr><th>항목</th><th>${per} 누계</th><th>누계 BGT</th><th>BGT 대비</th><th>달성률</th><th>월평균</th><th>${n}월</th><th>전월 대비</th></tr></thead><tbody>${s2rows}</tbody></table></div>`);
 
   // Ⅲ. 월별 손익 추이
   const mcols = Array.from({ length: n }, (_, j) => j);
   const s3rows = MET.map((x) => { const F = fmtOf(x.kind); return `<tr class="${x.cls || ''}"><th>${x.name}</th>${mcols.map((j) => cell(x.r.a[j], F)).join('')}${cell(aggV(x, 'a', 1, n), F, 'hl')}</tr>`; }).join('');
-  const s3 = sec('Ⅲ', '월별 손익 추이', '단위 백만원 (물량 톤, 단가 원/kg)',
+  const s3 = sec('Ⅳ', '월별 손익 추이', '단위 백만원 (물량 톤, 단가 원/kg)',
     barChart({ a: M.sales.a, b: M.sales.b, m: n, cnt: n, sel: 0, title: '월별 매출액 (백만원)', vlabels: true })
     + `<div class="kt-scroll"><table class="rt rt-m"><thead><tr><th>항목</th>${mcols.map((j) => `<th>${j + 1}월</th>`).join('')}<th>누계</th></tr></thead><tbody>${s3rows}</tbody></table></div>`);
 
@@ -403,7 +531,7 @@ function renderYtd(k, M, n) {
     const qv = (x, q) => (x.kind === 'pct' ? x.agg('a', q.s, q.e) : sumR(x.r.a, q.s, q.e) / (q.e - q.s + 1));
     const rows = qm.map((x) => { const F = fmtOf(x.kind), v = Q.map((q) => qv(x, q)); return `<tr class="${x.cls || ''}"><th>${x.name}</th>${v.map((t) => cell(t, F)).join('')}<td>${delta(v[v.length - 1], v[v.length - 2], x.kind)}</td><td>${delta(v[v.length - 1], v[0], x.kind)}</td></tr>`; }).join('');
     const last = Q[Q.length - 1];
-    s4 = sec('Ⅳ', '분기별 실적', `금액은 월평균, 비율은 분기 합계 기준${last.part ? ` · ${last.label}는 ${last.s}~${last.e}월만` : ''}`, `<div class="kt-scroll"><table class="rt">
+    s4 = sec('Ⅴ', '분기별 실적', `금액은 월평균, 비율은 분기 합계 기준${last.part ? ` · ${last.label}는 ${last.s}~${last.e}월만` : ''}`, `<div class="kt-scroll"><table class="rt">
       <thead><tr><th>항목</th>${Q.map((q) => `<th>${q.label} <small>(${q.s}~${q.e}월)</small></th>`).join('')}<th>직전 분기 대비</th><th>${Q[0].label} 대비</th></tr></thead><tbody>${rows}</tbody></table></div>`);
   }
 
@@ -416,7 +544,7 @@ function renderYtd(k, M, n) {
     return `<tr><th>${esc(x.label)}</th>${cell(a, f1, 'hl')}<td>${pc(div(a, S))}</td><td>${f1(t)}</td><td>${f0(pr('a', 1, n))}</td>${Q.length >= 2 ? `<td>${f0(p0)} → ${f0(pL)}</td><td>${p0 && pL ? delta(pL, p0, 'won') : ''}</td>` : ''}${cell(x.a[i], f1)}<td>${p >= 0 ? delta(x.a[i], x.a[p], 'amt') : ''}</td></tr>`;
   }).join('');
   const itemTotal = `<tr class="key tot"><th>합계</th>${cell(S, f1, 'hl')}<td>100%</td><td>${M.qty ? f1(ytd(M.qty)) : ''}</td><td>${M.qty ? f0(div(S, ytd(M.qty)) * 1000) : ''}</td>${Q.length >= 2 ? '<td></td><td></td>' : ''}${cell(M.sales.a[i], f1)}<td>${p >= 0 ? delta(M.sales.a[i], M.sales.a[p], 'amt') : ''}</td></tr>`;
-  const s5 = M.items.length ? sec('Ⅴ', '품목별 실적', '매출 큰 순서', `<div class="kt-scroll"><table class="rt">
+  const s5 = M.items.length ? sec('Ⅵ', '품목별 실적', '매출 큰 순서', `<div class="kt-scroll"><table class="rt">
     <thead><tr><th>품목</th><th>누계 매출</th><th>비중</th><th>물량 (톤)</th><th>평균 단가</th>${Q.length >= 2 ? `<th>단가 ${q0.label} → ${qL.label}</th><th>단가 변화</th>` : ''}<th>${n}월 매출</th><th>전월 대비</th></tr></thead><tbody>${itemRows}${itemTotal}</tbody></table></div>`
     + stackChart('월별 품목 구성 (백만원)', M.items, n, M.sales.a)) : '';
 
@@ -425,18 +553,18 @@ function renderYtd(k, M, n) {
   const span = (x) => { const on = x.a.slice(0, n).map((v) => v >= 0.05); const f = on.indexOf(true), l = on.lastIndexOf(true); return f < 0 ? '-' : f === l ? `${f + 1}월` : `${f + 1}~${l + 1}월`; };
   const chRows = chs.sort((a, b) => ytd(b) - ytd(a)).map((x) => { const a = ytd(x), b = ytd(x, 'b'); return `<tr><th>${esc(x.label)}</th>${cell(a, f1, 'hl')}<td>${pc(div(a, S))}</td><td>${b ? f1(b) : '-'}</td><td>${achv(a, b)}</td><td>${span(x)}</td>${cell(x.a[i], f1)}<td>${p >= 0 && (x.a[i] || x.a[p]) ? delta(x.a[i], x.a[p], 'amt') : ''}</td></tr>`; }).join('');
   const CT = M.chan ? ytd(M.chan) : 0;
-  const s6 = chs.length ? sec('Ⅵ', '거래처별 실적', '매출 큰 순서', `<div class="kt-scroll"><table class="rt">
-    <thead><tr><th>거래처</th><th>누계 매출</th><th>비중</th><th>누계 예산</th><th>달성률</th><th>거래 기간</th><th>${n}월 매출</th><th>전월 대비</th></tr></thead><tbody>${chRows}
+  const s6 = chs.length ? sec('Ⅶ', '거래처별 실적', '매출 큰 순서', `<div class="kt-scroll"><table class="rt">
+    <thead><tr><th>거래처</th><th>누계 매출</th><th>비중</th><th>누계 BGT</th><th>달성률</th><th>거래 기간</th><th>${n}월 매출</th><th>전월 대비</th></tr></thead><tbody>${chRows}
     <tr class="key tot"><th>합계</th>${cell(CT, f1, 'hl')}<td>${pc(div(CT, S))}</td><td>${M.chan ? f1(ytd(M.chan, 'b')) : ''}</td><td>${M.chan ? achv(CT, ytd(M.chan, 'b')) : ''}</td><td></td>${cell(M.chan ? M.chan.a[i] : 0, f1)}<td></td></tr></tbody></table></div>`
     + (chs.filter((x) => ytd(x)).length > 1 ? stackChart('월별 거래처 구성 (백만원)', M.chans, n, M.chan?.a) : '')) : '';
 
   // Ⅶ. 수익성 추이
-  const s7 = sec('Ⅶ', '수익성 추이', '', `<div class="rp-charts">${ratioChart('GP% · CM% · EBIT%', [M.gpp && { name: 'GP%', v: M.gpp.a, c: '#1f9d62' }, M.cmp && { name: 'CM%', v: M.cmp.a, c: '#2b5ce6' }, M.ebitp && { name: 'EBIT%', v: M.ebitp.a, c: '#d64545' }].filter(Boolean), n)}
+  const s7 = sec('Ⅷ', '수익성 추이', '', `<div class="rp-charts">${ratioChart('GP% · CM% · EBIT%', [M.gpp && { name: 'GP%', v: M.gpp.a, c: '#1f9d62' }, M.cmp && { name: 'CM%', v: M.cmp.a, c: '#2b5ce6' }, M.ebitp && { name: 'EBIT%', v: M.ebitp.a, c: '#d64545' }].filter(Boolean), n)}
     ${M.ebit ? barChart({ a: M.ebit.a, b: M.ebit.b, m: n, cnt: n, sel: 0, title: 'EBIT 월별 (백만원)', vlabels: true }) : ''}</div>`);
 
   return `<article class="rp"><header class="rp-head"><h2>${k.year}년 ${per} 실적 보고</h2>
     <p>${esc(k.title)}<br><span class="muted">단위: 백만원 · 자료: ${esc(k.file || '')}</span></p></header>
-    ${s1}${s2}${s3}${s4}${s5}${s6}${s7}</article>`;
+    ${s1}${sT}${s2}${s3}${s4}${s5}${s6}${s7}</article>`;
 }
 
 /* ---------- 화면 ---------- */
@@ -448,16 +576,16 @@ function render() {
   const all = list();
   const sel = $('#kpiSel');
   if (!all.length) {
-    sel.hidden = true; $('#kpiMonths').innerHTML = ''; $('#kpiMode').hidden = true;
+    sel.hidden = true; $('#kpiMonths').innerHTML = ''; $('#kpiMode').hidden = true; $('#kpiChat').hidden = true;
     box.innerHTML = `<div class="card kpi-empty"><div style="font-size:40px">📈</div><b>KPI 엑셀 파일을 불러와 주세요</b>
-      <p class="muted">위의 「📂 KPI 파일 불러오기」를 누르거나 파일을 이 화면에 끌어다 놓으면, Summary 시트의 월별 실적·예산을 읽어 요약·그래프·특이사항·전월 비교를 보여줍니다.<br>파일은 이 기기 안에서만 읽고, 숫자만 저장되어 탭·PC에서 같이 볼 수 있습니다.</p></div>`;
+      <p class="muted">위의 「📂 KPI 파일 불러오기」를 누르거나 파일을 이 화면에 끌어다 놓으면, Summary 시트의 월별 실적·BGT를 읽어 요약·그래프·특이사항·전월 비교를 보여줍니다.<br>파일은 이 기기 안에서만 읽고, 숫자만 저장되어 탭·PC에서 같이 볼 수 있습니다.</p></div>`;
     return;
   }
   const k = all.find((x) => x.id === ui.id) || all[0];
   if (ui.id !== k.id) { ui.id = k.id; ui.m = k.month; }
   if (!ui.m || ui.m > k.month) ui.m = k.month;
   sel.hidden = all.length < 2;
-  $('#kpiMode').hidden = false;
+  $('#kpiMode').hidden = false; $('#kpiChat').hidden = false;
   sel.innerHTML = all.map((x) => `<option value="${x.id}" ${x.id === k.id ? 'selected' : ''}>${x.year}년 · ${esc(x.title)}</option>`).join('');
   const m = ui.m, i = m - 1, p = m - 2;
   $('#kpiMonths').innerHTML = Array.from({ length: k.month }, (_, j) => `<button type="button" data-m="${j + 1}" class="${j + 1 === m ? 'on' : ''}">${ui.mode === 'ytd' && j ? '1~' : ''}${j + 1}월</button>`).join('');
@@ -470,23 +598,25 @@ function render() {
   }
 
   // 요약 카드
-  const card = (row, name, kind = 'amt', sub) => {
+  const TM = tmodel(k.target), si = tgtIdx(k.target);
+  const card = (row, name, kind = 'amt', sub, trow) => {
     if (!row) return '';
-    const c = row.a[i], b = p >= 0 ? row.a[p] : null, bud = row.b[i];
+    const c = row.a[i], b = p >= 0 ? row.a[p] : null, bud = row.b[i], tg = trow ? trow.t[si] : null;
     return `<div class="card kpi-card"><div class="kc-t">${name}</div><div class="kc-big ${c < 0 ? 'neg' : ''}">${f1(c)}<small>백만원</small></div>
       ${sub ? `<div class="kc-sub">${sub}</div>` : ''}
-      <div class="kc-cmp">${b !== null ? `<div><span class="muted">전월</span> ${f1(b)} ${delta(c, b, kind)}</div>` : ''}${bud ? `<div><span class="muted">예산</span> ${f1(bud)} ${delta(c, bud, kind)}</div>` : ''}</div></div>`;
+      <div class="kc-cmp">${tg !== null ? `<div class="kc-tg"><span>🎯 Target</span> ${f1(tg)} ${delta(c, tg, kind)}</div>` : ''}${b !== null ? `<div><span class="muted">전월</span> ${f1(b)} ${delta(c, b, kind)}</div>` : ''}${bud ? `<div><span class="muted">BGT</span> ${f1(bud)} ${delta(c, bud, kind)}</div>` : ''}</div></div>`;
   };
   const ratio = (r) => (r ? `${r.label.replace(/\(.*\)/, '')} <b>${pc(r.a[i])}</b>${p >= 0 ? ` <small class="muted">(전월 ${pc(r.a[p])})</small>` : ''}` : '');
-  const cards = card(M.sales, '매출액', 'amt', M.qty ? `물량 <b>${f1(M.qty.a[i])}톤</b> · 단가 <b>${f0(M.price?.a[i] || 0)}원/kg</b>` : '')
-    + card(M.gp, 'GP (매출총이익)', 'amt', ratio(M.gpp)) + card(M.cm, 'CM (공헌이익)', 'amt', ratio(M.cmp))
-    + card(M.ebit, 'EBIT (영업이익)', 'amt', ratio(M.ebitp)) + card(M.ebitda, '조정 EBITDA', 'amt', M.adj && M.adj.a[i] ? `조정사항 ${f1(M.adj.a[i])}` : '');
+  const cards = card(M.sales, '매출액', 'amt', M.qty ? `물량 <b>${f1(M.qty.a[i])}톤</b> · 단가 <b>${f0(M.price?.a[i] || 0)}원/kg</b>` : '', TM?.sales)
+    + card(M.gp, 'GP (매출총이익)', 'amt', ratio(M.gpp), TM?.gp) + card(M.cm, 'CM (공헌이익)', 'amt', ratio(M.cmp), TM?.cm)
+    + card(M.ebit, 'EBIT (영업이익)', 'amt', ratio(M.ebitp), TM?.ebit) + card(M.ebitda, '조정 EBITDA', 'amt', M.adj && M.adj.a[i] ? `조정사항 ${f1(M.adj.a[i])}` : '');
+  const tcard = TM ? `<div class="card kt-wrap kpi-target"><div class="kg-h"><b>🎯 ${m}월 Target 대비</b><small class="muted">Target 기준을 눌러 바꿀 수 있습니다</small></div>${targetTable(k, m)}</div>` : '';
 
   // 특이사항
-  const fs = findings(M, m);
+  const fs = [...targetFindings(k, m), ...findings(M, m)];
   const ic = { bad: '<b class="kd dn">▼</b>', good: '<b class="kd up">▲</b>', info: '<b class="kd" style="color:var(--primary)">●</b>' };
   const note = (k.notes || {})[m] || '';
-  const notes = `<div class="card kpi-notes"><div class="kg-h"><b>📌 ${m}월 특이사항</b><small class="muted">전월·예산과 비교해 자동으로 찾은 내용</small></div>
+  const notes = `<div class="card kpi-notes"><div class="kg-h"><b>📌 ${m}월 특이사항</b><small class="muted">전월·BGT와 비교해 자동으로 찾은 내용</small></div>
     ${fs.length ? `<ul class="kf">${fs.map((f) => `<li class="${f.lv}">${ic[f.lv]} ${esc(f.txt)}</li>`).join('')}</ul>` : '<p class="muted">눈에 띄는 변동이 없습니다.</p>'}
     <label class="kn"><span class="muted sm">✏️ 내 메모 (보고할 때 덧붙일 내용 · 자동 저장)</span><textarea id="kpiNote" data-id="${k.id}" data-m="${m}" rows="3" placeholder="예: 이마트 신규 입점 효과, 10월부터 aT 인건비 지원">${esc(note)}</textarea></label></div>`;
 
@@ -509,8 +639,8 @@ function render() {
     return `<tr class="${kind === 'pct' || kind === 'ton' || kind === 'won' ? 'sub' : ''}"><th>${name}</th><td class="b">${F(c)}</td><td>${b !== null ? F(b) : ''}</td><td>${b !== null ? delta(c, b, kind) : ''}</td>
       <td>${bud ? F(bud) : '-'}</td><td>${bud ? delta(c, bud, kind) : ''}</td><td class="b">${F(ya)}</td><td>${yb ? F(yb) : '-'}</td><td>${yb ? delta(ya, yb, kind) : ''}</td></tr>`;
   };
-  const table = `<div class="card kt-wrap"><div class="kg-h"><b>📊 ${m}월 전월·예산 비교</b><small class="muted">단위: 백만원 (물량 톤, 단가 원/kg)</small></div><div class="kt-scroll"><table class="kt">
-    <thead><tr><th></th><th>${m}월</th><th>${p >= 0 ? `${m - 1}월` : '전월'}</th><th>전월 대비</th><th>예산</th><th>예산 대비</th><th>누계 1~${m}월</th><th>누계 예산</th><th>누계 예산 대비</th></tr></thead>
+  const table = `<div class="card kt-wrap"><div class="kg-h"><b>📊 ${m}월 전월·BGT 비교</b><small class="muted">단위: 백만원 (물량 톤, 단가 원/kg)</small></div><div class="kt-scroll"><table class="kt">
+    <thead><tr><th></th><th>${m}월</th><th>${p >= 0 ? `${m - 1}월` : '전월'}</th><th>전월 대비</th><th>BGT</th><th>BGT 대비</th><th>누계 1~${m}월</th><th>누계 BGT</th><th>누계 BGT 대비</th></tr></thead>
     <tbody>${lines.map(tr).join('')}</tbody></table></div></div>`;
 
   // 품목별 상세 (매출·물량·단가)
@@ -524,14 +654,97 @@ function render() {
 
   const when = k.loadedAt ? new Date(k.loadedAt) : null;
   box.innerHTML = `<p class="muted sm kpi-src">📄 ${esc(k.file || '')}${when ? ` · ${when.getMonth() + 1}/${when.getDate()} 불러옴` : ''} · ${esc(k.title)}</p>
-    <div class="kpi-cards">${cards}</div>${notes}<div class="kpi-charts">${charts}</div>${table}${detail}
+    <div class="kpi-cards">${cards}</div>${tcard}${notes}<div class="kpi-charts">${charts}</div>${table}${detail}
     <p class="kpi-foot"><button type="button" class="btn sm danger" id="kpiDel">🗑 이 KPI 자료 지우기</button></p>`;
+}
+
+/* ---------- 💬 물어보기 (AI 챗봇): 불러온 숫자 전체 + 질문을 Claude에 보냄 (사용자 허락 2026-11-20) ---------- */
+const chat = { log: [], busy: false };
+function kpiContext() {
+  const all = list();
+  return all.map((k) => {
+    const tops = {}, seen = {};
+    for (const r of k.rows) if (r.top) { const base = r.label.replace(/\(.*\)/, '').trim(); seen[base] = (seen[base] || 0) + 1; tops[r.grp] = seen[base] > 1 && /매출액/.test(base) ? '거래처별 매출액' : r.label; }
+    const name = (r) => (r.top ? (tops[r.grp] === '거래처별 매출액' ? '거래처별 매출액 합계' : r.label) : `${(tops[r.grp] || '').replace(/^매출액.*/, '품목별 매출액')} > ${r.label}`);
+    const n = k.month;
+    const fmt = (v) => (Math.abs(v) < 1e-9 ? '0' : String(Math.round(v * 1000) / 1000));
+    const lines = k.rows.filter((r) => r.a.some((v) => v) || r.b.some((v) => v)).map((r) => `${name(r)} | 실적 ${r.a.slice(0, n).map(fmt).join(', ')} | BGT ${r.b.map(fmt).join(', ')}`);
+    const notes = Object.entries(k.notes || {}).filter(([, v]) => v).map(([m, v]) => `- ${/^ytd/.test(m) ? `1~${m.slice(3)}월 보고` : `${m}월`} 메모: ${v}`);
+    const T = k.target;
+    const tlines = T ? T.rows.map((r) => `${r.p ? `${r.p} > ` : ''}${r.label} | 실적 ${r.a.slice(0, n).map(fmt).join(', ')} | ${T.scen.map((s, j) => `${s}=${fmt(r.t[j])}`).join(', ')}`) : [];
+    const tblock = T ? `\n\n#### Target ('${T.sheet}' 시트, 월 기준 목표치 · 시나리오: ${T.scen.join(' / ')} · 화면 기준: ${T.scen[tgtIdx(T)]})\n형식: 항목 | 실적 1월~${n}월 | 시나리오별 월 Target\n${tlines.join('\n')}` : '';
+    return `### ${k.year}년 ${k.title}\n자료: ${k.file || ''} · 결산월(실적 마지막 달): ${n}월\n형식: 항목 | 실적 1월~${n}월 값(쉼표 순서대로) | BGT 1월~12월 값\n${lines.join('\n')}${tblock}${notes.length ? `\n사용자 메모:\n${notes.join('\n')}` : ''}`;
+  }).join('\n\n');
+}
+const CHAT_SYSTEM = (ctx) => `당신은 베트남 법인 월별 실적(KPI)을 분석해 답하는 재무 담당 비서입니다. 아래 <kpi> 자료의 숫자에만 근거해 한국어로 간결하게 답하세요.
+- 단위: 금액은 백만원(KRW), 매출물량은 톤, 매출단가는 원/kg, GP%·CM%·EBIT%는 비율(0.35 = 35%).
+- 'BGT'는 예산(Budget)입니다. 답에서도 '예산'이라는 말 대신 'BGT'라고 쓰세요.
+- 가장 중요한 비교는 Target 대비입니다. Target은 연간 계획이 아니라 '한 달 기준 목표 수준'이므로 당월(또는 최근 월 평균) 실적과 비교하고, 시나리오를 말하지 않으면 화면 기준 시나리오로 답하세요. 비용(원가·판매비·관리비)은 Target보다 많으면 초과(부정적)입니다.
+- 누계·분기 비율과 단가는 월 값을 평균하지 말고 합계로 다시 계산하세요(GP% = GP 합계 / 매출 합계, 단가 = 매출 합계 / 물량 합계 × 1000).
+- 숫자는 소수 첫째 자리(단가는 원 단위)로, 어느 달·기간인지 함께 쓰세요. 비교는 마크다운 표가 좋으면 표로 쓰세요.
+- 자료에 없는 내용(계정별 세부 비용, 점포별, 원인 등)은 추측하지 말고 'Summary 자료에는 없음'이라고 말하되, 숫자로 보이는 흐름은 설명해도 됩니다.
+- 보고용 문장을 요청하면 개조식(-로 시작하는 짧은 문장)으로 쓰세요.
+<kpi>
+${ctx}
+</kpi>`;
+function mdHtml(md) {
+  const out = [], rows = esc(md).split('\n');
+  for (let i = 0; i < rows.length; i++) {
+    const l = rows[i];
+    if (/^\s*\|.*\|\s*$/.test(l)) {
+      const tbl = [];
+      while (i < rows.length && /^\s*\|.*\|\s*$/.test(rows[i])) tbl.push(rows[i++]);
+      i--;
+      const cells = (r) => r.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
+      const body = tbl.filter((r) => !/^\s*\|[\s:|-]+\|\s*$/.test(r));
+      out.push(`<div class="kt-scroll"><table class="rt">${body.map((r, j) => `<tr>${cells(r).map((c) => (j ? `<td>${c}</td>` : `<th>${c}</th>`)).join('')}</tr>`).join('')}</table></div>`);
+      continue;
+    }
+    if (/^#{1,4}\s/.test(l)) { out.push(`<b>${l.replace(/^#+\s/, '')}</b><br>`); continue; }
+    if (/^\s*[-*]\s/.test(l)) { out.push(`• ${l.replace(/^\s*[-*]\s/, '')}<br>`); continue; }
+    out.push(l + '<br>');
+  }
+  return out.join('').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+}
+function renderChat() {
+  const box = $('#kcLog');
+  if (!box) return;
+  box.innerHTML = chat.log.map((m, i) => (m.role === 'user' ? `<div class="aq-me">${esc(m.content)}</div>`
+    : m.err ? `<div class="aq-bot err">⚠ ${esc(m.err)}</div>`
+      : `<div class="aq-bot">${mdHtml(m.content)}<div class="kc-copy"><button type="button" class="btn ghost sm" data-kc-copy="${i}">📋 복사</button></div></div>`)).join('')
+    + (chat.busy ? '<div class="aq-bot muted">숫자를 확인하는 중…</div>' : '');
+  box.scrollTop = box.scrollHeight;
+  $('#kcHint').hidden = !!chat.log.length;
+}
+async function askKpi(q) {
+  q = q.trim();
+  if (!q || chat.busy) return;
+  if (!aiEnabled()) { chat.log.push({ role: 'user', content: q }, { role: 'assistant', err: '⚙️ 설정에서 Claude API 키를 먼저 넣어주세요.' }); renderChat(); return; }
+  chat.log.push({ role: 'user', content: q });
+  chat.busy = true; renderChat();
+  try {
+    const msgs = chat.log.filter((m) => !m.err).slice(-12).map((m) => ({ role: m.role, content: m.content }));
+    while (msgs.length && msgs[0].role !== 'user') msgs.shift();
+    const ans = await aiChat({ system: CHAT_SYSTEM(kpiContext()), messages: msgs });
+    chat.log.push({ role: 'assistant', content: ans });
+  } catch (e) {
+    chat.log.push({ role: 'assistant', err: e.message || String(e) });
+  }
+  chat.busy = false; renderChat();
 }
 
 export function initKpi({ toast } = {}) {
   if (toast) toastFn = toast;
   const view = $('#view-kpi');
   if (!view) return;
+  $('#kcForm').addEventListener('submit', (e) => { e.preventDefault(); const q = $('#kcQ').value; $('#kcQ').value = ''; askKpi(q); });
+  $('#kcHint').addEventListener('click', (e) => { const b = e.target.closest('[data-q]'); if (b) askKpi(b.dataset.q); });
+  $('#kcReset').addEventListener('click', () => { chat.log = []; renderChat(); });
+  $('#kcLog').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-kc-copy]');
+    if (!b) return;
+    navigator.clipboard?.writeText(chat.log[+b.dataset.kcCopy].content).then(() => toastFn('복사했습니다.'), () => toastFn('복사하지 못했습니다.'));
+  });
   const inp = $('#kpiIn');
   $('#kpiLoad').addEventListener('click', () => inp.click());
   inp.addEventListener('change', () => { if (inp.files.length) loadFiles(inp.files); inp.value = ''; });
@@ -560,6 +773,8 @@ export function initKpi({ toast } = {}) {
   view.addEventListener('input', (e) => { if (e.target.id === 'kpiNote') { clearTimeout(t); const el = e.target; t = setTimeout(() => saveNote(el), 800); } });
   view.addEventListener('focusout', (e) => { if (e.target.id === 'kpiNote') { clearTimeout(t); saveNote(e.target); } });
   view.addEventListener('click', (e) => {
+    const tb = e.target.closest('[data-tgt]');
+    if (tb) { ui.tgt = +tb.dataset.tgt; try { localStorage.setItem('jy-kpitgt', ui.tgt); } catch { /* 저장 불가 */ } render(); return; }
     if (e.target.id === 'kpiPrint') { window.print(); return; }
     if (e.target.id !== 'kpiDel') return;
     const k = store.find('kpi', ui.id);

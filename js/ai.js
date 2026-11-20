@@ -18,7 +18,7 @@ async function getClient() {
 
 export const aiEnabled = () => !!settings.get().apiKey;
 
-async function ask({ system, prompt, images = [], schema, maxTokens = 16000 }) {
+async function ask({ system, prompt, images = [], schema, maxTokens = 16000, messages }) {
   const client = await getClient();
   const { model } = settings.get();
   const params = {
@@ -29,7 +29,7 @@ async function ask({ system, prompt, images = [], schema, maxTokens = 16000 }) {
     // 안전 정책으로 거절될 경우 서버가 자동으로 대체 모델로 재시도
     betas: ['server-side-fallback-2026-07-01'],
     fallbacks: 'default',
-    messages: [{
+    messages: messages || [{
       role: 'user',
       content: images.length
         ? [...images.map((data) => ({ type: 'image', source: { type: 'base64', media_type: 'image/png', data } })), { type: 'text', text: prompt }]
@@ -111,6 +111,11 @@ export async function aiTranscribe(images) {
       '설명이나 머리말 없이 옮긴 텍스트만 출력하세요.',
     prompt: `손글씨 필기 ${images.length}쪽을 순서대로 텍스트로 옮겨주세요.`,
   });
+}
+
+// 이어지는 대화(질문·답 여러 번): messages = [{role:'user'|'assistant', content}]
+export async function aiChat({ system, messages, maxTokens = 6000 }) {
+  return ask({ system, messages, maxTokens });
 }
 
 // 구조화된 답(JSON)이 필요한 기능에서 쓰는 공용 함수

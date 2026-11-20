@@ -1024,3 +1024,21 @@ dialog.editor.drop-on .ed-note { outline: 3px dashed var(--primary); outline-off
   #view-kpi .vh { display: none; }
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
+/* 💬 베트남 실적 물어보기 · 🎯 Target */
+.kpi-chat { max-width: 1120px; }
+.kpi-chat summary { cursor: pointer; list-style: none; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; font-size: 16px; }
+.kpi-chat summary::-webkit-details-marker { display: none; }
+.kpi-chat summary::after { content: '열기 ▾'; margin-left: auto; font-size: 13px; color: var(--primary); }
+.kpi-chat[open] summary::after { content: '접기 ▴'; }
+.kpi-chat[open] summary { margin-bottom: 10px; }
+.kc-hint { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.kc-copy { text-align: right; margin-top: 4px; }
+.kpi-chat .aq-bot .rt { font-size: 13.5px; margin: 6px 0; }
+.kpi-chat .aq-form #kcReset { flex-shrink: 0; }
+.kc-tg { font-weight: 600; }
+.kc-tg span { color: var(--warn); }
+.kt-tsel { flex-wrap: wrap; margin-bottom: 10px; max-width: 100%; }
+.kt-tsel button { min-height: 34px; padding: 6px 12px; }
+.rt td.tg, .kt td.tg { font-weight: 700; color: var(--warn); }
+.kpi-target { border: 2px solid var(--warn); }
+@media print { .kpi-chat, .kt-tsel { display: none !important; } }

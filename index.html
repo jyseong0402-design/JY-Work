@@ -19,7 +19,7 @@
       <button data-view="dashboard" class="active"><span class="ic">🏠</span><span>홈</span></button>
       <button data-view="meetings"><span class="ic">📝</span><span>메모</span></button>
       <button data-view="board"><span class="ic">📋</span><span>월마감 현황</span></button>
-      <button data-view="kpi"><span class="ic">📈</span><span>KPI</span></button>
+      <button data-view="kpi"><span class="ic">📈</span><span>베트남</span></button>
       <button data-view="rd"><span class="ic">📥</span><span>RD 보관함</span></button>
       <button data-view="auto"><span class="ic">📊</span><span>자료생성</span></button>
       <button data-view="settings"><span class="ic">⚙️</span><span>설정</span></button>
@@ -194,8 +194,8 @@
       <section id="view-kpi" class="view">
         <header class="vh bd-head">
           <div>
-            <h1>📈 KPI 현황</h1>
-            <p class="muted sm">KPI 엑셀을 불러오면 Summary 시트의 월별 실적·예산으로 요약, 그래프, 특이사항, 전월 비교를 보여줍니다. 매달 새 KPI 파일을 다시 불러오면 갱신됩니다.</p>
+            <h1>📈 베트남 실적</h1>
+            <p class="muted sm">베트남 KPI 엑셀을 불러오면 Summary·Target 시트로 🎯 Target 대비, 요약, 그래프, 특이사항, 전월·BGT 비교를 보여줍니다. 매달 새 KPI 파일을 다시 불러오면 갱신되고, 💬 물어보기로 숫자를 질문할 수 있습니다.</p>
           </div>
           <div class="bd-tools">
             <select id="kpiSel" hidden></select>
@@ -208,6 +208,17 @@
           <div class="seg kpi-months" id="kpiMonths"></div>
         </div>
         <p class="muted sm" id="kpiMsg"></p>
+        <details class="card aq-card kpi-chat" id="kpiChat" hidden>
+          <summary><b>💬 베트남 실적에 물어보기</b> <small class="muted">불러온 숫자(실적·BGT·Target)로 AI가 답합니다</small></summary>
+          <div class="kc-hint" id="kcHint">
+            <button type="button" class="btn sm" data-q="이번 달 실적을 Target 대비로 보고용 3줄 요약해줘">Target 대비 3줄 요약</button>
+            <button type="button" class="btn sm" data-q="Target 대비 가장 차이가 큰 항목 5개를 표로 정리해줘">Target 차이 큰 항목</button>
+            <button type="button" class="btn sm" data-q="3분기 GP%가 1분기보다 얼마나 좋아졌어?">분기별 GP% 비교</button>
+            <button type="button" class="btn sm" data-q="BGT 대비 가장 부진한 항목은?">BGT 대비 부진 항목</button>
+          </div>
+          <div class="aq-log" id="kcLog"></div>
+          <form class="aq-form" id="kcForm"><input id="kcQ" autocomplete="off" placeholder="예: 팽이 단가가 가장 높았던 달은? / 판매비 중 Target 초과 항목은?" /><button class="btn primary" type="submit">보내기</button><button type="button" class="btn ghost sm" id="kcReset">대화 지우기</button></form>
+        </details>
         <div id="kpiBody"></div>
       </section>
 
