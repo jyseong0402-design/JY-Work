@@ -967,3 +967,60 @@ dialog.editor.drop-on .ed-note { outline: 3px dashed var(--primary); outline-off
   .kt-scroll { overflow: visible; }
   .kt { font-size: 10px; }
 }
+/* 📑 누계 보고: 보고서 형식 (위에서 아래로) */
+.rp { max-width: 1120px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 28px 32px; box-shadow: var(--shadow); }
+.rp-head { border-bottom: 3px solid var(--primary); padding-bottom: 12px; margin-bottom: 8px; }
+.rp-head h2 { margin: 0; font-size: 26px; letter-spacing: -.5px; }
+.rp-head p { margin: 6px 0 0; font-size: 14px; line-height: 1.6; }
+.rp-sec { padding: 22px 0 6px; border-bottom: 1px solid var(--line); }
+.rp-sec:last-child { border-bottom: 0; }
+.rp-sec h3 { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 0 0 14px; font-size: 19px; }
+.rp-sec h3 small { font-size: 13px; font-weight: 400; color: var(--muted); }
+.rp-no { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; height: 30px; padding: 0 6px; border-radius: 8px; background: var(--primary); color: #fff; font-size: 15px; }
+.rp-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 10px; margin-bottom: 16px; }
+.rp-tile { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--bg); }
+.rp-tile .t { font-size: 13px; font-weight: 700; color: var(--muted); }
+.rp-tile .v { font-size: 30px; font-weight: 800; letter-spacing: -1px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.rp-tile .v.neg { color: var(--danger); }
+.rp-tile .s { font-size: 13px; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.rp-tile .s.b { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 6px; }
+.rp-find { border-left: 4px solid var(--line); background: var(--bg); border-radius: 0 10px 10px 0; padding: 10px 14px; margin-bottom: 10px; }
+.rp-find.good { border-color: var(--ok); }
+.rp-find.bad { border-color: var(--danger); }
+.rp-find.info { border-color: var(--primary); }
+.rp-find b { font-size: 15px; }
+.rp-find ul { margin: 6px 0 0; padding-left: 20px; display: grid; gap: 3px; }
+.rp-find li { font-size: 14.5px; line-height: 1.55; }
+.rp-memo { margin-top: 12px; }
+.rt { width: 100%; border-collapse: collapse; font-size: 14.5px; font-variant-numeric: tabular-nums; white-space: nowrap; margin-bottom: 14px; }
+.rt th, .rt td { padding: 8px 12px; text-align: right; border-bottom: 1px solid var(--line); }
+.rt thead th { background: var(--primary-soft); color: var(--text); font-size: 13px; font-weight: 700; border-bottom: 2px solid var(--primary); }
+.rt thead th:first-child, .rt tbody th { text-align: left; }
+.rt tbody th { font-weight: 600; position: sticky; left: 0; background: var(--panel); }
+.rt tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--bg) 60%, transparent); }
+.rt tr.key th, .rt tr.key td { font-weight: 800; }
+.rt tr.key th { color: var(--primary); }
+.rt tr.sub th { font-weight: 400; color: var(--muted); padding-left: 26px; }
+.rt tr.sub td { color: var(--muted); font-size: 13.5px; }
+.rt tr.tot th, .rt tr.tot td { border-top: 2px solid var(--text); }
+.rt td.hl { background: var(--primary-soft) !important; font-weight: 700; }
+.rt td.neg { color: var(--danger); }
+.rt-m td, .rt-m th { padding: 7px 9px; }
+.rp .card.kg { border: 0; box-shadow: none; padding: 0; margin: 4px 0 18px; background: transparent; }
+.rp .card.kg .kg-h b { font-size: 15px; }
+.rp .kg svg { max-height: 330px; }
+.kg-val { fill: var(--text); font-weight: 600; font-size: 10.5px; }
+.rp-charts { display: grid; grid-template-columns: 1fr; gap: 8px; }
+@media (max-width: 760px) { .rp { padding: 16px 14px; } .rp-head h2 { font-size: 21px; } .rt { font-size: 13px; } .rt th, .rt td { padding: 7px 8px; } .rp-tile .v { font-size: 24px; } .rp-charts { grid-template-columns: 1fr; } }
+@media print {
+  :root { --bg: #f4f6fa; --panel: #fff; --text: #111; --muted: #555; --line: #d5dae3; --primary: #1f4fd1; --primary-soft: #e8eefd; --danger: #c62828; --ok: #1b7f4f; color-scheme: light; }
+  .rp { border: 0; padding: 0; box-shadow: none; max-width: none; }
+  .rp-sec { break-inside: auto; }
+  .rp-sec h3, .rp-tiles, .rp-find, .rp .card.kg { break-inside: avoid; }
+  .rt { font-size: 10.5px; }
+  .rt th, .rt td { padding: 4px 6px; }
+  .rt tbody th { position: static; }
+  .rp .kg svg { max-height: 240px; }
+  #view-kpi .vh { display: none; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}

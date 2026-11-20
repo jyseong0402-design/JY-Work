@@ -164,7 +164,7 @@ function findings(M, m) {
 /* ---------- 그래프 (SVG) ---------- */
 function niceMax(v) { if (v <= 0) return 1; const p = 10 ** Math.floor(Math.log10(v)); return Math.ceil(v / p / (v / p > 5 ? 2 : 1)) * p * (v / p > 5 ? 2 : 1); }
 // 월별 막대(실적) + 예산 표시 + (선택) 비율 선
-function barChart({ a, b, m, line, lineLabel, sel, title, cnt = 12 }) {
+function barChart({ a, b, m, line, lineLabel, sel, title, cnt = 12, vlabels = false }) {
   const W = 640, H = 230, L = 40, R = line ? 40 : 12, T = 14, Bm = 26;
   const vals = [...a.slice(0, cnt), ...(b || []).slice(0, cnt)];
   // 눈금: 0을 지나는 깔끔한 간격(1·2·5×10ⁿ)
@@ -180,6 +180,7 @@ function barChart({ a, b, m, line, lineLabel, sel, title, cnt = 12 }) {
   for (let k = 0; k < cnt; k++) {
     const x = L + k * bw, v = a[k] || 0, on = k < m;
     if (on) s += `<rect x="${x + bw * .18}" y="${Math.min(y(v), y(0))}" width="${bw * .64}" height="${Math.max(1, Math.abs(y(v) - y(0)))}" rx="3" class="kg-bar ${k === sel - 1 ? 'sel' : ''} ${v < 0 ? 'neg' : ''}"><title>${k + 1}월 ${f1(v)}</title></rect>`;
+    if (on && vlabels) s += `<text x="${x + bw / 2}" y="${v >= 0 ? y(v) - 5 : y(v) + 13}" class="kg-ax kg-val" text-anchor="middle">${f1(v)}</text>`;
     if (b && b[k]) s += `<line x1="${x + bw * .1}" x2="${x + bw * .9}" y1="${y(b[k])}" y2="${y(b[k])}" class="kg-bud"><title>${k + 1}월 예산 ${f1(b[k])}</title></line>`;
     s += `<text x="${x + bw / 2}" y="${H - 8}" class="kg-ax ${k === sel - 1 ? 'sel' : ''}" text-anchor="middle">${k + 1}월</text>`;
   }
@@ -329,77 +330,113 @@ function periodFindings(M, n) {
 function renderYtd(k, M, n) {
   const ytd = (r, w = 'a') => sumR(r[w], 1, n);
   const div = (a, b) => (b ? a / b : 0);
-  // 카드
-  const card = (r, name, sub) => {
+  const per = n > 1 ? `1~${n}월` : '1월';
+  const i = n - 1, p = n - 2;
+  const Q = quarters(n);
+  const S = ytd(M.sales);
+  const sec = (no, title, sub, body) => `<section class="rp-sec"><h3><span class="rp-no">${no}</span>${title}${sub ? `<small>${sub}</small>` : ''}</h3>${body}</section>`;
+  const cell = (v, F, cls = '') => `<td class="${v < 0 ? 'neg ' : ''}${cls}">${F(v)}</td>`;
+  const achv = (a, b) => (b > 0 && a >= 0 ? `${Math.round(a / b * 100)}%` : '-'); // 적자·음수 예산은 달성률 없음
+
+  // 손익 항목 목록 (누계 비율·단가는 합계로 다시 계산)
+  const ratioOf = (num) => (w, s, e) => div(sumR(num[w], s, e), sumR(M.sales[w], s, e));
+  const priceOf = (it, q) => (w, s, e) => { const t = q ? sumR(q[w], s, e) : 0; return t ? sumR(it[w], s, e) / t * 1000 : 0; };
+  const MET = [
+    { r: M.sales, name: '매출액', kind: 'amt', cls: 'key' },
+    { r: M.qty, name: '매출물량 (톤)', kind: 'ton', cls: 'sub' },
+    { r: M.price, name: '매출단가 (원/kg)', kind: 'won', cls: 'sub', agg: M.qty && priceOf(M.sales, M.qty) },
+    { r: M.cogs, name: '매출원가', kind: 'cost' },
+    { r: M.gp, name: 'GP (매출총이익)', kind: 'amt', cls: 'key' },
+    { r: M.gpp, name: 'GP%', kind: 'pct', cls: 'sub', agg: M.gp && ratioOf(M.gp) },
+    { r: M.sell, name: '판매비', kind: 'cost' },
+    { r: M.cm, name: 'CM (공헌이익)', kind: 'amt', cls: 'key' },
+    { r: M.cmp, name: 'CM%', kind: 'pct', cls: 'sub', agg: M.cm && ratioOf(M.cm) },
+    { r: M.admin, name: '관리비', kind: 'cost' },
+    { r: M.ebit, name: 'EBIT (영업이익)', kind: 'amt', cls: 'key' },
+    { r: M.ebitp, name: 'EBIT%', kind: 'pct', cls: 'sub', agg: M.ebit && ratioOf(M.ebit) },
+    M.adj && ytd(M.adj) ? { r: M.adj, name: '조정사항', kind: 'amt', cls: 'sub' } : null,
+    { r: M.ebitda, name: '조정 EBITDA', kind: 'amt', cls: 'key' },
+  ].filter((x) => x && x.r);
+  const aggV = (x, w, s, e) => (x.agg ? x.agg(w, s, e) : x.kind === 'pct' || x.kind === 'won' ? 0 : sumR(x.r[w], s, e));
+
+  // Ⅰ. 핵심 요약
+  const tile = (r, name, ratioRow) => {
     if (!r) return '';
     const a = ytd(r), b = ytd(r, 'b');
-    return `<div class="card kpi-card"><div class="kc-t">${name} <small>1~${n}월 누계</small></div><div class="kc-big ${a < 0 ? 'neg' : ''}">${f1(a)}<small>백만원</small></div>
-      ${sub ? `<div class="kc-sub">${sub}</div>` : ''}
-      <div class="kc-cmp"><div><span class="muted">월평균</span> ${f1(a / n)}</div>${b ? `<div><span class="muted">예산</span> ${f1(b)} ${delta(a, b, 'amt')}${b > 0 ? ` <small class="muted">달성 ${Math.round(a / b * 100)}%</small>` : ''}</div>` : ''}</div></div>`;
+    return `<div class="rp-tile"><div class="t">${name}</div><div class="v ${a < 0 ? 'neg' : ''}">${f1(a)}</div>
+      ${ratioRow ? `<div class="s">${ratioRow}</div>` : ''}<div class="s muted">월평균 ${f1(a / n)}</div>
+      ${b ? `<div class="s b">예산 ${f1(b)}${achv(a, b) !== '-' ? ` · 달성 <b>${achv(a, b)}</b>` : ''}</div><div class="s">${delta(a, b, 'amt')}</div>` : ''}</div>`;
   };
-  const S = ytd(M.sales);
-  const cards = card(M.sales, '매출액', M.qty ? `물량 <b>${f1(ytd(M.qty))}톤</b> · 단가 <b>${f0(div(S, ytd(M.qty)) * 1000)}원/kg</b>` : '')
-    + card(M.gp, 'GP', M.gp ? `GP% <b>${pc(div(ytd(M.gp), S))}</b>` : '') + card(M.cm, 'CM', M.cm ? `CM% <b>${pc(div(ytd(M.cm), S))}</b>` : '')
-    + card(M.ebit, 'EBIT', M.ebit ? `EBIT% <b>${pc(div(ytd(M.ebit), S))}</b>` : '') + card(M.ebitda, '조정 EBITDA', M.adj && ytd(M.adj) ? `조정사항 ${f1(ytd(M.adj))}` : '');
-
-  // 특이사항 + 보고 메모
+  const tiles = tile(M.sales, '매출액', M.qty ? `${f1(ytd(M.qty))}톤` : '')
+    + tile(M.gp, 'GP', M.gp ? `GP% <b>${pc(div(ytd(M.gp), S))}</b>` : '')
+    + tile(M.cm, 'CM', M.cm ? `CM% <b>${pc(div(ytd(M.cm), S))}</b>` : '')
+    + tile(M.ebit, 'EBIT', M.ebit ? `EBIT% <b>${pc(div(ytd(M.ebit), S))}</b>` : '')
+    + tile(M.ebitda, '조정 EBITDA', '');
   const fs = periodFindings(M, n);
-  const ic = { bad: '<b class="kd dn">▼</b>', good: '<b class="kd up">▲</b>', info: '<b class="kd" style="color:var(--primary)">●</b>' };
+  const grp = (lv, title) => { const l = fs.filter((f) => f.lv === lv); return l.length ? `<div class="rp-find ${lv}"><b>${title}</b><ul>${l.map((f) => `<li>${esc(f.txt.replace(/^⚠️\s*/, ''))}</li>`).join('')}</ul></div>` : ''; };
   const key = `ytd${n}`;
-  const notes = `<div class="card kpi-notes"><div class="kg-h"><b>📌 1~${n}월 주요 내용</b><small class="muted">기간 흐름·분기 비교·예산으로 자동 정리</small></div>
-    <ul class="kf">${fs.map((f) => `<li class="${f.lv}">${ic[f.lv]} ${esc(f.txt)}</li>`).join('')}</ul>
-    <label class="kn"><span class="muted sm">✏️ 보고 메모 (1~${n}월 보고에 덧붙일 내용 · 자동 저장)</span><textarea id="kpiNote" data-id="${k.id}" data-m="${key}" rows="4" placeholder="예: 3Q 이마트 입점으로 매출 확대, 관리비 절감(법인장 급여 종료) 효과">${esc((k.notes || {})[key] || '')}</textarea></label></div>`;
+  const s1 = sec('Ⅰ', '핵심 요약', `${per} 누계 · 단위 백만원`, `<div class="rp-tiles">${tiles}</div>
+    ${grp('good', '✅ 개선된 점')}${grp('bad', '⚠️ 부진·점검 필요')}${grp('info', 'ℹ️ 참고')}
+    <label class="kn rp-memo"><span class="muted sm">✏️ 보고 메모 (자동 저장 · 인쇄에 포함)</span><textarea id="kpiNote" data-id="${k.id}" data-m="${key}" rows="4" placeholder="예: 3Q 이마트 입점으로 매출 확대, 관리비 절감 효과">${esc((k.notes || {})[key] || '')}</textarea></label>`);
 
-  // 월별 손익표 (PPT 형식)
-  const mcols = Array.from({ length: n }, (_, j) => j);
-  const ratioOf = (num) => (num ? (w, s, e) => div(sumR(num[w], s, e), sumR(M.sales[w], s, e)) : null);
-  const priceOf = (it, q) => (w, s, e) => { const t = q ? sumR(q[w], s, e) : 0; return t ? sumR(it[w], s, e) / t * 1000 : 0; };
-  const L = [];
-  const push = (r, name, kind, cls = '', agg) => r && L.push({ r, name, kind, cls, agg });
-  push(M.sales, '매출액', 'amt', 'top');
-  M.items.forEach((x) => push(x, x.label, 'amt', 'sub'));
-  if (M.chans.some((x) => ytd(x))) { L.push({ head: '거래처별 매출' }); M.chans.filter((x) => ytd(x) || ytd(x, 'b')).forEach((x) => push(x, x.label, 'amt', 'sub')); }
-  push(M.qty, '매출물량(톤)', 'ton', 'top');
-  push(M.price, '매출단가(원/kg)', 'won', 'top', M.qty && priceOf(M.sales, M.qty));
-  M.prices.forEach((x) => push(x, x.label, 'won', 'sub', priceOf(M.items.find((y) => y.label === x.label) || x, M.qtys.find((y) => y.label === x.label))));
-  push(M.cogs, '매출원가', 'cost', 'top');
-  push(M.gp, 'GP', 'amt', 'top hl');
-  push(M.gpp, 'GP%', 'pct', 'sub', ratioOf(M.gp));
-  push(M.sell, '판매비', 'cost', 'top');
-  push(M.cm, 'CM', 'amt', 'top hl');
-  push(M.cmp, 'CM%', 'pct', 'sub', ratioOf(M.cm));
-  push(M.admin, '관리비', 'cost', 'top');
-  push(M.ebit, 'EBIT', 'amt', 'top hl');
-  push(M.ebitp, 'EBIT%', 'pct', 'sub', ratioOf(M.ebit));
-  if (M.adj && ytd(M.adj)) push(M.adj, '조정사항', 'amt', 'sub');
-  push(M.ebitda, '조정 EBITDA', 'amt', 'top hl');
-  const aggV = (x, w, s, e) => (x.agg ? x.agg(w, s, e) : x.kind === 'won' || x.kind === 'pct' ? 0 : sumR(x.r[w], s, e));
-  const tbody = L.map((x) => {
-    if (x.head) return `<tr class="kh"><th colspan="${n + 5}">${x.head}</th></tr>`;
-    const F = fmtOf(x.kind), ya = aggV(x, 'a', 1, n), yb = aggV(x, 'b', 1, n);
-    const ach = x.kind === 'pct' ? (yb ? `${((ya - yb) * 100).toFixed(1)}%p` : '') : yb > 0 && ya > -1e9 ? `${Math.round(ya / yb * 100)}%` : '';
-    return `<tr class="${x.cls}"><th>${esc(x.name)}</th>${mcols.map((j) => `<td class="${x.r.a[j] < 0 ? 'neg' : ''}">${F(x.r.a[j])}</td>`).join('')}<td class="b ytd ${ya < 0 ? 'neg' : ''}">${F(ya)}</td><td>${yb ? F(yb) : '-'}</td><td>${yb ? delta(ya, yb, x.kind) : ''}</td><td class="muted">${ach}</td></tr>`;
+  // Ⅱ. 손익 요약 (누계 vs 예산, 당월 vs 전월)
+  const s2rows = MET.map((x) => {
+    const F = fmtOf(x.kind), a = aggV(x, 'a', 1, n), b = aggV(x, 'b', 1, n);
+    const cur = x.r.a[i], prev = p >= 0 ? x.r.a[p] : null;
+    return `<tr class="${x.cls || ''}"><th>${x.name}</th>${cell(a, F, 'hl')}<td>${b ? F(b) : '-'}</td><td>${b ? delta(a, b, x.kind) : ''}</td><td>${x.kind === 'pct' || x.kind === 'won' ? '-' : achv(a, b)}</td>
+      <td>${x.kind === 'pct' || x.kind === 'won' ? F(a) : F(a / n)}</td>${cell(cur, F)}<td>${prev !== null ? delta(cur, prev, x.kind) : ''}</td></tr>`;
   }).join('');
-  const table = `<div class="card kt-wrap"><div class="kg-h"><b>📋 월별 손익 (1~${n}월)</b><small class="muted">단위: 백만원 (물량 톤, 단가 원/kg) · 누계 비율·단가는 합계로 다시 계산</small></div><div class="kt-scroll"><table class="kt kt-m">
-    <thead><tr><th></th>${mcols.map((j) => `<th>${j + 1}월</th>`).join('')}<th>누계</th><th>누계 예산</th><th>예산 대비</th><th>달성률</th></tr></thead><tbody>${tbody}</tbody></table></div></div>`;
+  const s2 = sec('Ⅱ', '손익 요약', '누계는 예산과, 당월은 전월과 비교', `<div class="kt-scroll"><table class="rt">
+    <thead><tr><th>항목</th><th>${per} 누계</th><th>누계 예산</th><th>예산 대비</th><th>달성률</th><th>월평균</th><th>${n}월</th><th>전월 대비</th></tr></thead><tbody>${s2rows}</tbody></table></div>`);
 
-  // 분기 비교
-  const Q = quarters(n);
-  const qrows = [[M.sales, '매출액', 'amt'], [M.qty, '물량(톤)', 'ton'], [M.gp, 'GP', 'amt'], [M.gpp, 'GP%', 'pct', ratioOf(M.gp)], [M.sell, '판매비', 'cost'], [M.cm, 'CM', 'amt'], [M.cmp, 'CM%', 'pct', ratioOf(M.cm)], [M.admin, '관리비', 'cost'], [M.ebit, 'EBIT', 'amt'], [M.ebitda, '조정 EBITDA', 'amt']].filter((x) => x[0]);
-  const qv = (x, q) => (x[3] ? x[3]('a', q.s, q.e) : sumR(x[0].a, q.s, q.e) / (x[2] === 'pct' ? 1 : q.e - q.s + 1));
-  const qtable = Q.length >= 2 ? `<div class="card kt-wrap"><div class="kg-h"><b>📆 분기별 비교 (월평균)</b><small class="muted">분기 금액은 월평균, 비율은 분기 합계 기준${Q[Q.length - 1].part ? ` · ${Q[Q.length - 1].label}는 ${Q[Q.length - 1].s}~${Q[Q.length - 1].e}월만` : ''}</small></div><div class="kt-scroll"><table class="kt">
-    <thead><tr><th></th>${Q.map((q) => `<th>${q.label}<br><small>${q.s}~${q.e}월</small></th>`).join('')}<th>직전 분기 대비</th><th>${Q[0].label} 대비</th></tr></thead>
-    <tbody>${qrows.map((x) => { const F = fmtOf(x[2]); const v = Q.map((q) => qv(x, q)); const last = v[v.length - 1]; return `<tr class="${x[2] === 'pct' || x[2] === 'ton' ? 'sub' : ''}"><th>${x[1]}</th>${v.map((t) => `<td class="${t < 0 ? 'neg' : ''}">${F(t)}</td>`).join('')}<td>${delta(last, v[v.length - 2], x[2])}</td><td>${delta(last, v[0], x[2])}</td></tr>`; }).join('')}</tbody></table></div></div>` : '';
+  // Ⅲ. 월별 손익 추이
+  const mcols = Array.from({ length: n }, (_, j) => j);
+  const s3rows = MET.map((x) => { const F = fmtOf(x.kind); return `<tr class="${x.cls || ''}"><th>${x.name}</th>${mcols.map((j) => cell(x.r.a[j], F)).join('')}${cell(aggV(x, 'a', 1, n), F, 'hl')}</tr>`; }).join('');
+  const s3 = sec('Ⅲ', '월별 손익 추이', '단위 백만원 (물량 톤, 단가 원/kg)',
+    barChart({ a: M.sales.a, b: M.sales.b, m: n, cnt: n, sel: 0, title: '월별 매출액 (백만원)', vlabels: true })
+    + `<div class="kt-scroll"><table class="rt rt-m"><thead><tr><th>항목</th>${mcols.map((j) => `<th>${j + 1}월</th>`).join('')}<th>누계</th></tr></thead><tbody>${s3rows}</tbody></table></div>`);
 
-  // 그래프
-  const charts = barChart({ a: M.sales.a, b: M.sales.b, m: n, cnt: n, sel: 0, line: M.gpp?.a, lineLabel: 'GP%', title: `월별 매출액과 GP% (1~${n}월)` })
-    + stackChart('품목별 매출 구성 (백만원)', M.items, n, M.sales.a)
-    + ratioChart('수익성 추이', [M.gpp && { name: 'GP%', v: M.gpp.a, c: '#1f9d62' }, M.cmp && { name: 'CM%', v: M.cmp.a, c: '#2b5ce6' }, M.ebitp && { name: 'EBIT%', v: M.ebitp.a, c: '#d64545' }].filter(Boolean), n)
-    + (M.ebit ? barChart({ a: M.ebit.a, b: M.ebit.b, m: n, cnt: n, sel: 0, title: 'EBIT 월별 (백만원)' }) : '')
-    + (M.chans.filter((x) => ytd(x)).length > 1 ? stackChart('거래처별 매출 구성 (백만원)', M.chans, n, M.chan?.a) : '');
+  // Ⅳ. 분기별 실적
+  let s4 = '';
+  if (Q.length >= 2) {
+    const qm = MET.filter((x) => x.kind !== 'won' && x.r !== M.adj);
+    const qv = (x, q) => (x.kind === 'pct' ? x.agg('a', q.s, q.e) : sumR(x.r.a, q.s, q.e) / (q.e - q.s + 1));
+    const rows = qm.map((x) => { const F = fmtOf(x.kind), v = Q.map((q) => qv(x, q)); return `<tr class="${x.cls || ''}"><th>${x.name}</th>${v.map((t) => cell(t, F)).join('')}<td>${delta(v[v.length - 1], v[v.length - 2], x.kind)}</td><td>${delta(v[v.length - 1], v[0], x.kind)}</td></tr>`; }).join('');
+    const last = Q[Q.length - 1];
+    s4 = sec('Ⅳ', '분기별 실적', `금액은 월평균, 비율은 분기 합계 기준${last.part ? ` · ${last.label}는 ${last.s}~${last.e}월만` : ''}`, `<div class="kt-scroll"><table class="rt">
+      <thead><tr><th>항목</th>${Q.map((q) => `<th>${q.label} <small>(${q.s}~${q.e}월)</small></th>`).join('')}<th>직전 분기 대비</th><th>${Q[0].label} 대비</th></tr></thead><tbody>${rows}</tbody></table></div>`);
+  }
 
-  return `<div class="kpi-report-h"><h2>${k.year}년 ${n > 1 ? `1~${n}월` : "1월"} 실적 보고</h2><p class="muted sm">${esc(k.title)} · 📄 ${esc(k.file || '')}</p></div>
-    <div class="kpi-cards">${cards}</div>${notes}${table}${qtable}<div class="kpi-charts">${charts}</div>`;
+  // Ⅴ. 품목별 실적
+  const q0 = Q[0], qL = Q[Q.length - 1];
+  const itemRows = M.items.filter((x) => ytd(x) || x.a[i]).sort((a, b) => ytd(b) - ytd(a)).map((x) => {
+    const q = M.qtys.find((y) => y.label === x.label);
+    const pr = priceOf(x, q), a = ytd(x), t = q ? ytd(q) : 0;
+    const p0 = pr('a', q0.s, q0.e), pL = pr('a', qL.s, qL.e);
+    return `<tr><th>${esc(x.label)}</th>${cell(a, f1, 'hl')}<td>${pc(div(a, S))}</td><td>${f1(t)}</td><td>${f0(pr('a', 1, n))}</td>${Q.length >= 2 ? `<td>${f0(p0)} → ${f0(pL)}</td><td>${p0 && pL ? delta(pL, p0, 'won') : ''}</td>` : ''}${cell(x.a[i], f1)}<td>${p >= 0 ? delta(x.a[i], x.a[p], 'amt') : ''}</td></tr>`;
+  }).join('');
+  const itemTotal = `<tr class="key tot"><th>합계</th>${cell(S, f1, 'hl')}<td>100%</td><td>${M.qty ? f1(ytd(M.qty)) : ''}</td><td>${M.qty ? f0(div(S, ytd(M.qty)) * 1000) : ''}</td>${Q.length >= 2 ? '<td></td><td></td>' : ''}${cell(M.sales.a[i], f1)}<td>${p >= 0 ? delta(M.sales.a[i], M.sales.a[p], 'amt') : ''}</td></tr>`;
+  const s5 = M.items.length ? sec('Ⅴ', '품목별 실적', '매출 큰 순서', `<div class="kt-scroll"><table class="rt">
+    <thead><tr><th>품목</th><th>누계 매출</th><th>비중</th><th>물량 (톤)</th><th>평균 단가</th>${Q.length >= 2 ? `<th>단가 ${q0.label} → ${qL.label}</th><th>단가 변화</th>` : ''}<th>${n}월 매출</th><th>전월 대비</th></tr></thead><tbody>${itemRows}${itemTotal}</tbody></table></div>`
+    + stackChart('월별 품목 구성 (백만원)', M.items, n, M.sales.a)) : '';
+
+  // Ⅵ. 거래처별 실적
+  const chs = M.chans.filter((x) => ytd(x) || ytd(x, 'b'));
+  const span = (x) => { const on = x.a.slice(0, n).map((v) => v >= 0.05); const f = on.indexOf(true), l = on.lastIndexOf(true); return f < 0 ? '-' : f === l ? `${f + 1}월` : `${f + 1}~${l + 1}월`; };
+  const chRows = chs.sort((a, b) => ytd(b) - ytd(a)).map((x) => { const a = ytd(x), b = ytd(x, 'b'); return `<tr><th>${esc(x.label)}</th>${cell(a, f1, 'hl')}<td>${pc(div(a, S))}</td><td>${b ? f1(b) : '-'}</td><td>${achv(a, b)}</td><td>${span(x)}</td>${cell(x.a[i], f1)}<td>${p >= 0 && (x.a[i] || x.a[p]) ? delta(x.a[i], x.a[p], 'amt') : ''}</td></tr>`; }).join('');
+  const CT = M.chan ? ytd(M.chan) : 0;
+  const s6 = chs.length ? sec('Ⅵ', '거래처별 실적', '매출 큰 순서', `<div class="kt-scroll"><table class="rt">
+    <thead><tr><th>거래처</th><th>누계 매출</th><th>비중</th><th>누계 예산</th><th>달성률</th><th>거래 기간</th><th>${n}월 매출</th><th>전월 대비</th></tr></thead><tbody>${chRows}
+    <tr class="key tot"><th>합계</th>${cell(CT, f1, 'hl')}<td>${pc(div(CT, S))}</td><td>${M.chan ? f1(ytd(M.chan, 'b')) : ''}</td><td>${M.chan ? achv(CT, ytd(M.chan, 'b')) : ''}</td><td></td>${cell(M.chan ? M.chan.a[i] : 0, f1)}<td></td></tr></tbody></table></div>`
+    + (chs.filter((x) => ytd(x)).length > 1 ? stackChart('월별 거래처 구성 (백만원)', M.chans, n, M.chan?.a) : '')) : '';
+
+  // Ⅶ. 수익성 추이
+  const s7 = sec('Ⅶ', '수익성 추이', '', `<div class="rp-charts">${ratioChart('GP% · CM% · EBIT%', [M.gpp && { name: 'GP%', v: M.gpp.a, c: '#1f9d62' }, M.cmp && { name: 'CM%', v: M.cmp.a, c: '#2b5ce6' }, M.ebitp && { name: 'EBIT%', v: M.ebitp.a, c: '#d64545' }].filter(Boolean), n)}
+    ${M.ebit ? barChart({ a: M.ebit.a, b: M.ebit.b, m: n, cnt: n, sel: 0, title: 'EBIT 월별 (백만원)', vlabels: true }) : ''}</div>`);
+
+  return `<article class="rp"><header class="rp-head"><h2>${k.year}년 ${per} 실적 보고</h2>
+    <p>${esc(k.title)}<br><span class="muted">단위: 백만원 · 자료: ${esc(k.file || '')}</span></p></header>
+    ${s1}${s2}${s3}${s4}${s5}${s6}${s7}</article>`;
 }
 
 /* ---------- 화면 ---------- */
