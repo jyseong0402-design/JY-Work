@@ -1064,8 +1064,13 @@ function renderMail(k, M, m) {
   if (m < 2) return '<div class="card">✉️ 메일 초안은 전월과 비교하므로 2월부터 만들 수 있습니다.</div>';
   const key = `mail${m}`, saved = (k.notes || {})[key];
   const auto = mailText(k, M, m);
+  // 안내: ① 거래처 합이 매출액보다 모자람(예전 버전으로 불러온 자료) ② 고쳐 쓴(저장된) 내용이 새 숫자와 다름
+  const tops = k.rows.filter((r) => r.top && /^매출액/.test(r.label));
+  const gap = tops.length > 1 ? (tops[0].a[m - 1] || 0) - k.rows.filter((r) => !r.top && r.grp === tops[1].grp).reduce((s, r) => s + (r.a[m - 1] || 0), 0) : 0;
+  const warn = (gap >= 0.5 ? `<p class="sm cm-auto-note">⚠️ 거래처별 매출 합계가 매출액보다 ${f1(gap)}백만원 적습니다(KPI Summary 거래처 칸 비어 있음). 업무노트를 새로고침(Ctrl+Shift+R)한 뒤 KPI 파일을 <b>다시 불러오면</b> 원장(GL) 거래처 매출(이마트=THISO RETAIL)로 채워집니다.</p>` : '')
+    + (saved && saved.trim() !== auto.trim() ? '<p class="sm cm-auto-note">✏️ 예전에 고쳐 쓴 내용이 표시되고 있습니다. 새 숫자로 다시 만들려면 「↺ 자동 초안으로 되돌리기」를 누르세요.</p>' : '');
   return `<article class="rp mail"><header class="rp-head"><h2>✉️ ${k.year}년 ${m}월 베트남 KPI 송부 메일 초안</h2>
-    <p>전임자가 보내던 메일 형식(전월 대비 1)~8))으로 숫자를 자동으로 채웠습니다. <b>[사유]·[원인 확인]</b> 자리만 현지 확인 내용으로 바꾸고 복사해 메일에 붙이세요. 서명은 메일 프로그램의 서명을 쓰세요.</p>${chanFixNote(k, m)}</header>
+    <p>전임자가 보내던 메일 형식(전월 대비 1)~8))으로 숫자를 자동으로 채웠습니다. <b>[사유]·[원인 확인]</b> 자리만 현지 확인 내용으로 바꾸고 복사해 메일에 붙이세요. 서명은 메일 프로그램의 서명을 쓰세요.</p>${chanFixNote(k, m)}${warn}</header>
     <div class="card">
       <div class="cm-tools"><button type="button" class="btn sm primary" id="mailCopy">📋 메일 내용 복사</button><button type="button" class="btn sm ghost" id="mailReset">↺ 자동 초안으로 되돌리기</button>
         <span class="muted sm">${saved ? '✏️ 고쳐 쓴 내용 (자동 저장됨)' : '✍️ 자동 초안 — 고쳐 쓰면 자동 저장'}</span></div>
