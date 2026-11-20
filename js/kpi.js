@@ -1070,8 +1070,10 @@ function render() {
   const M = model(k);
   if (!M.sales) { box.innerHTML = '<div class="card">⚠️ 이 파일에서 매출액 항목을 찾지 못했습니다.</div>'; return; }
   document.querySelectorAll('#kpiMode [data-mode]').forEach((b) => b.classList.toggle('on', b.dataset.mode === ui.mode));
-  if (ui.mode === 'cmt') { box.innerHTML = renderCmt(k); return; }
-  if (ui.mode === 'mail') { box.innerHTML = renderMail(k, M, m); return; }
+  // 화면 하나가 오류 나도 멈추지 않고 이유를 보여줌
+  const safe = (f, name) => { try { return f(); } catch (e) { console.error(e); return `<div class="card">⚠️ ${name} 화면을 만들다 오류가 났습니다: ${esc(e.message || e)}<br><small class="muted">새로고침(Ctrl+Shift+R) 후에도 같으면 이 문구를 알려주세요.</small></div>`; } };
+  if (ui.mode === 'cmt') { box.innerHTML = safe(() => renderCmt(k), '경영회의 코멘트'); return; }
+  if (ui.mode === 'mail') { box.innerHTML = safe(() => renderMail(k, M, m), '메일 초안'); return; }
   if (ui.mode === 'ytd') {
     box.innerHTML = renderYtd(k, M, m) + '<p class="kpi-foot"><button type="button" class="btn sm" id="kpiPrint">🖨 인쇄·PDF 저장</button> <button type="button" class="btn sm danger" id="kpiDel">🗑 이 KPI 자료 지우기</button></p>';
     return;
