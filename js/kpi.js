@@ -54,7 +54,8 @@ export function parseKpi(XLSX, wb, file = '') {
   const fm = Math.min(12, Math.max(1, month));
   const gl = parseGl(XLSX, wb, year, fm);
   const chanFix = gl ? fixChans(rows, gl, fm) : [];
-  return { ...(chanFix.length ? { chanFix } : {}), id: `k${year}_${hash(title.replace(/\s+/g, ''))}`, title, year, month: fm, file, rows, ...(target ? { target } : {}), ...(ppt ? { ppt } : {}), ...(gl ? { gl } : {}) };
+  // 같은 KPI를 다시 불러오면 저장된 항목에 덮어써지므로(합치기), 이번 파일에 없는 값도 null/[]로 넣어 예전 값이 남지 않게 함
+  return { chanFix, id: `k${year}_${hash(title.replace(/\s+/g, ''))}`, title, year, month: fm, file, rows, target: target || null, ppt: ppt || null, gl: gl || null };
 }
 
 // 거래처별 매출: Summary 거래처 칸이 비어 있는데(예: 10월 이마트 0) 거래처 합 < 매출액이면, 원장 511 거래처 금액으로 채움
