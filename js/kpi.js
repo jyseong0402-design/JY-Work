@@ -552,11 +552,19 @@ function cmHeadline(G, B) {
   // 장표처럼 표에 보이는(반올림된) 숫자끼리 뺌: 55 - 122 = -67
   const rd = (v) => (won || Math.abs(v) >= 10 ? Math.round(v) : Math.round(v * 10) / 10);
   const part = (base) => { const d = rd(cur) - rd(base); return `${sgn(d, won ? 0 : dec(d))}${G.unit}${base > 0 && cur >= 0 ? `, ${sgn((cur / base - 1) * 100)}%` : ''}`; };
-  const lead = G.id === 'A' && r.tgt ? (cur >= r.tgt ? '단기 Target 초과 달성' : '단기 Target 미달') : '단기 Target 대비';
-  const L = [`${G.name} ${lead} ${r.tgt ? part(r.tgt) : '-'}`];
+  // 앵커사 보고용: 좋은 결과는 제목줄에서 바로 드러나게 (숫자는 그대로)
+  const up = G.id === 'A' || G.id === 'E'; // 클수록 좋은 항목
+  const good = r.tgt && (up ? cur >= r.tgt : cur <= r.tgt);
+  let streak = 0;
+  if (good && G.id === 'A') for (let j = r.a.length - 1; j >= 0 && r.a[j] >= r.tgt; j--) streak++;
+  const lead = G.id === 'A' && r.tgt ? (good ? '단기 Target 초과 달성' : '단기 Target 미달') : '단기 Target 대비';
+  const tail = !good ? '' : G.id === 'A' ? (streak >= 2 ? `, ${streak}개월 연속 Target 초과` : '') : G.id === 'E' ? ' 초과 달성' : '로 Target 이내 관리';
+  const L = [`${G.name} ${lead} ${r.tgt ? part(r.tgt) : '-'}${tail}`];
   if (r.bgt && G.id !== 'E') L.push(`계획 대비 ${part(r.bgt)}`);
   return L.join(',\n');
 }
+const CHK = ' [현지 확인]';
+const pctRow = (P, re) => { const i = P.rows.findIndex((r) => r.lv === 1 && r.kind !== 'pct' && re.test(r.label.replace(/\s+/g, ' '))); return i >= 0 && P.rows[i + 1]?.kind === 'pct' ? P.rows[i + 1] : null; };
 // 세부 줄(장표 형식): "항목: [사유] 전월 대비 -85원/kg 감소" — [사유]는 현지 확인 후 채울 자리
 const WHY = '[사유] ';
 function cmBullets(k, G, B) {
@@ -564,23 +572,47 @@ function cmBullets(k, G, B) {
   if (p < 0) return out;
   const P = pptOf(k), mn = P.months[i];
   const vol = pptBlock(P, /^매출물량/), kg = vol ? vol.row.a[i] * 1000 : 0, kgp = vol ? vol.row.a[p] * 1000 : 0;
-  const word = (d) => (d > 0 ? '증가' : G.id === 'C' || G.id === 'D' ? '절감' : '감소');
+  const word = (d) => (d > 0 ? '증가' : '절감');
   // B(원가)는 장표처럼 부호를 붙이고(-85원/kg 감소), 판매·관리비는 절감은 부호 없이(2.8백만원 절감)·증가는 +로
   const amt = (d, u) => (G.id === 'B' || d > 0 ? sgn(d, u === '백만원' ? 1 : 0) : Math.abs(d).toLocaleString('ko-KR', { maximumFractionDigits: u === '백만원' ? 1 : 0, minimumFractionDigits: u === '백만원' ? 1 : 0 })) + u;
+  // 앵커사 보고 문체: 좋은 점 먼저, 숫자는 "당월(전월)" 형식, 사유가 필요한 곳은 [현지 확인]
+  const pm = P.months[p], pc0 = (c, b) => (b ? `${c >= b ? '+' : '-'}${Math.abs(Math.round((c / b - 1) * 100))}%` : '');
+  const best = (arr) => arr.slice(0, i + 1).every((v, j) => j === i || v <= arr[i]); // 연중 최고(최소 손실)
   if (G.id === 'A') {
-    const M = model(k);
-    const ch = M.chans.filter((x) => Math.abs(x.a[i]) >= 0.05).sort((x, y) => y.a[i] - x.a[i]);
-    for (const x of ch) { const d = x.a[i] - x.a[p]; out.push(`${x.label}: ${WHY}${mn}월 매출 ${f1(x.a[i])}백만원, 전월 대비 ${sgn(d, 1)}백만원 ${d >= 0 ? '증가' : '감소'}`); }
-    if (vol) { const d = vol.row.a[i] - vol.row.a[p]; out.push(`판매물량: ${mn}월 ${vol.row.a[i].toFixed(1)}톤, 전월 대비 ${sgn(d, 1)}톤 ${d >= 0 ? '증가' : '감소'}`); }
+    const M = model(k), s = B.row, d = s.a[i] - s.a[p];
+    out.push(`${mn}월 매출 ${f1(s.a[i])}백만원(${pm}월 ${f1(s.a[p])})${best(s.a) ? '으로 연중 최고 실적' : ''}, 전월 대비 ${sgn(d, 1)}백만원(${pc0(s.a[i], s.a[p])}) ${d >= 0 ? '성장' : '감소'}`);
+    const ch = M.chans.filter((x) => Math.abs(x.a[i]) >= 0.05).sort((x, y) => (y.a[i] - y.a[p]) - (x.a[i] - x.a[p]));
+    for (const x of ch) { const dd = x.a[i] - x.a[p]; out.push(`${x.label}: ${mn}월 매출 ${f1(x.a[i])}백만원(${pm}월 ${f1(x.a[p])}), 전월 대비 ${sgn(dd, 1)}백만원(${pc0(x.a[i], x.a[p])}) ${dd >= 0 ? '성장' : '감소'}${CHK}`); }
+    if (vol) { const v = vol.row; out.push(`판매물량 ${v.a[i].toFixed(1)}톤(${pm}월 ${v.a[p].toFixed(1)})${v.tgt ? `, 단기 Target ${v.tgt.toFixed(1)}톤 대비 ${Math.round(v.a[i] / v.tgt * 100)}% 달성` : ''}`); }
     const pr = pptBlock(P, /^매출단가/);
-    if (pr) { const d = pr.row.a[i] - pr.row.a[p], why = priceReason(M, mn - 1, mn - 2); out.push(`매출단가: ${WHY}${fP(pr.row.a[i], 'won')}원/kg, 전월 대비 ${sgn(d)}원/kg ${d >= 0 ? '상승' : '하락'}${why.length ? ` (${why.join(' / ')})` : ''}`); }
+    if (pr) {
+      const r = pr.row, dd = r.a[i] - r.a[p], why = priceReason(M, mn - 1, mn - 2);
+      const head = r.tgt && r.a[i] >= r.tgt ? `단기 Target 대비 ${sgn(r.a[i] - r.tgt)}원/kg 초과 달성` : Math.abs(dd / r.a[p]) < 0.01 ? '전월 수준 유지' : `전월 대비 ${sgn(dd)}원/kg`;
+      out.push(`매출단가 ${fP(r.a[i], 'won')}원/kg(${pm}월 ${fP(r.a[p], 'won')}), ${head}${why.length ? ` (${why[0]})` : ''}`);
+    }
+    out.push(`신규 채널:${CHK.replace(']', ': 입점·첫 납품 진행 현황]')}`);
     return out;
   }
   if (G.id === 'E') {
-    // 조정 EBITDA는 Target과의 차이가 어디서 났는지(GP·판매비·관리비)
-    const parts = [['GP', /^GP$/i, 1], ['판매비', /^판매비/, -1], ['관리비', /^관리비/, -1]].map(([nm, re, s]) => { const b = pptBlock(P, re); if (!b || !b.row.tgt) return ''; const d = (b.row.a[i] - b.row.tgt) * s; return Math.abs(d) >= 0.05 ? `${nm} ${sgn(d, dec(d))}` : ''; }).filter(Boolean);
-    if (parts.length) out.push(`Target 대비 영향(백만원): ${parts.join(', ')}`);
+    const r = B.row, d = r.a[i] - r.a[p], pr = pctRow(P, /^조정\s*EBITDA/i), gp = pptBlock(P, /^GP$/i);
+    out.push(`${mn}월 ${G.name} ${f1(r.a[i])}백만원(${pm}월 ${f1(r.a[p])})${best(r.a) ? (r.a[i] < 0 ? '으로 연중 최소 손실' : '으로 연중 최고') : ''}, 전월 대비 ${sgn(d, 1)}백만원 ${d >= 0 ? '개선' : '감소'}`);
+    if (pr) { const dp = (pr.a[i] - pr.a[p]) * 100; out.push(`매출 대비 ${(pr.a[i] * 100).toFixed(1)}%(${pm}월 ${(pr.a[p] * 100).toFixed(1)}%)로 ${Math.abs(dp).toFixed(1)}%p ${dp >= 0 ? '개선' : '하락'}`); }
+    if (gp) { const g = gp.row; out.push(`GP ${f1(g.a[i])}백만원(${pm}월 ${f1(g.a[p])})${best(g.a) ? '으로 연중 최고' : ''}${g.tgt ? `, 단기 Target 대비 ${sgn(g.a[i] - g.tgt, 1)}백만원` : ''}`); }
     return out;
+  }
+  if (G.id === 'C') {
+    // aT 지원금을 맨 앞에 (지원 전 → 지원 후 판매비)
+    const mm = mn;
+    for (const { tot, kids } of subsidyRows(k)) {
+      const c = Math.abs(tot.a[mm - 1] || 0), b = Math.abs(tot.a[mm - 2] || 0);
+      if (c < 0.05) continue;
+      const sell = B.row.a[i];
+      out.push(`aT 지원사업 지원금 ${f1(c)}백만원 확보(${pm}월 ${f1(b)}${b ? `, ${pc0(c, b)}` : ''}): ${kids.filter((x) => Math.abs(x.a[mm - 1]) >= 0.05).map((x) => `${x.label} ${f1(Math.abs(x.a[mm - 1]))}`).join('·')}백만원, 지원 전 판매비 ${f1(sell + c)} → 지원 후 ${f1(sell)}백만원(${Math.round(c / (sell + c) * 100)}% 절감)`);
+    }
+  }
+  if (G.id === 'D') {
+    const r = B.row, d = r.a[i] - r.a[p], pr = pctRow(P, /^관리비/);
+    if (d < 0) out.push(`전월 ${f1(r.a[p])}백만원 대비 ${f1(-d)}백만원(${pc0(r.a[i], r.a[p])}) 절감${pr ? `, 매출 대비 관리비율 ${(pr.a[i] * 100).toFixed(1)}%(${pm}월 ${(pr.a[p] * 100).toFixed(1)}%)로 ${Math.abs((pr.a[i] - pr.a[p]) * 100).toFixed(1)}%p 개선` : ''}`);
   }
   // 세부 항목은 전월 대비 변동이 큰 순서로 최대 3개(작은 변동은 생략)
   const kids = B.kids.filter((x) => x.kind !== 'pct').map((x) => {
@@ -589,10 +621,14 @@ function cmBullets(k, G, B) {
     if (G.id === 'C' && /운반/.test(x.label) && kg && kgp) { const d = x.a[i] * 1e6 / kg - x.a[p] * 1e6 / kgp; return { x, d, u: '원/kg', big: Math.abs(d) >= 10 }; }
     const d = x.a[i] - x.a[p];
     return { x, d, u: won ? '원/kg' : '백만원', big: won ? Math.abs(d) >= 10 : Math.abs(d) >= 0.3 };
-  }).filter((y) => y.big).sort((y, z) => Math.abs(z.d) / (z.u === '원/kg' ? 100 : 1) - Math.abs(y.d) / (y.u === '원/kg' ? 100 : 1)).slice(0, 3);
+  }).filter((y) => y.big)
+    // 절감(좋은 변화)을 먼저, 그 안에서는 변동 큰 순
+    .sort((y, z) => (y.d < 0) === (z.d < 0) ? Math.abs(z.d) / (z.u === '원/kg' ? 100 : 1) - Math.abs(y.d) / (y.u === '원/kg' ? 100 : 1) : y.d < 0 ? -1 : 1).slice(0, 4);
   for (const { x, d, u } of kids) {
     const why = G.id === 'C' || G.id === 'D' ? glReason(k, G.id === 'C' ? '판매비' : '관리비', x.label, mn) : G.id === 'B' ? costReason(k, x.label, mn) : '';
-    out.push(`${x.label}: ${WHY}전월 대비 ${amt(d, u)} ${word(d)}${why ? ` (${G.id === 'B' ? '' : '원장: '}${why})` : ''}`);
+    const v0 = (v) => (Math.abs(v) < 0.05 && x.kind !== 'won' ? '0' : fP(v, x.kind));
+    const now = `${v0(x.a[i])}${x.kind === 'won' ? '원/kg' : '백만원'}(${pm}월 ${v0(x.a[p])}), `;
+    out.push(`${x.label}: ${now}전월 대비 ${amt(d, u)} ${word(d)}${why ? ` (${G.id === 'B' ? '' : '원장: '}${why})` : ''}${d > 0 ? CHK : ''}`);
   }
   if (G.id === 'B') {
     const w = pptBlock(P, /폐기율/);
