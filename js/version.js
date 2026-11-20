@@ -1,9 +1,13 @@
 // 앱 버전과 변경 내역
 // ※ 업데이트할 때마다 APP_VERSION을 올리고 CHANGES 맨 위에 내용을 추가하세요.
 //    (앱이 이 값을 보고 '새 버전 적용됨' 알림과 좌측 하단 버전을 표시합니다)
-export const APP_VERSION = '1.23.3';
+export const APP_VERSION = '1.23.4';
 
 export const CHANGES = [
+  {
+    v: '1.23.4', date: '2026-11-20',
+    items: ['📈 베트남: KPI Summary의 거래처별 매출 칸이 비어 있으면(예: 10월 이마트) 원장(GL) 매출 거래처 금액으로 채움 — THISO RETAIL=이마트, LOTTE=롯데마트. 화면에 ℹ️ 안내 표시. KPI 파일을 다시 불러와야 적용'],
+  },
   {
     v: '1.23.3', date: '2026-11-20',
     items: ['베트남 경영회의 코멘트·메일 초안 화면에서 오류가 나면 멈추지 않고 화면에 이유를 표시'],

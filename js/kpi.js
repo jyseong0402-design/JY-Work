@@ -53,7 +53,32 @@ export function parseKpi(XLSX, wb, file = '') {
   const ppt = parsePpt(XLSX, wb);
   const fm = Math.min(12, Math.max(1, month));
   const gl = parseGl(XLSX, wb, year, fm);
-  return { id: `k${year}_${hash(title.replace(/\s+/g, ''))}`, title, year, month: fm, file, rows, ...(target ? { target } : {}), ...(ppt ? { ppt } : {}), ...(gl ? { gl } : {}) };
+  const chanFix = gl ? fixChans(rows, gl, fm) : [];
+  return { ...(chanFix.length ? { chanFix } : {}), id: `k${year}_${hash(title.replace(/\s+/g, ''))}`, title, year, month: fm, file, rows, ...(target ? { target } : {}), ...(ppt ? { ppt } : {}), ...(gl ? { gl } : {}) };
+}
+
+// 거래처별 매출: Summary 거래처 칸이 비어 있는데(예: 10월 이마트 0) 거래처 합 < 매출액이면, 원장 511 거래처 금액으로 채움
+//   원장 거래처명 → Summary 거래처 라벨 (THISO RETAIL = 베트남 이마트 운영사)
+const CUST_MAP = [[/lotte|lot\b|trung tâm thương mại lot/i, /롯데/], [/thiso|e-?mart/i, /이마트/], [/co\.?op|saigon co/i, /coop|쿱/i], [/win ?mart|wincommerce|masan/i, /win|윈/i], [/k-?market/i, /케이마켓|k-?market/i], [/kamereo/i, /카메레오/]];
+function fixChans(rows, gl, month) {
+  const tops = rows.filter((r) => r.top && /^매출액/.test(r.label));
+  if (tops.length < 2 || !gl.cust) return [];
+  const total = tops[0], ctop = tops[1], chans = rows.filter((r) => !r.top && r.grp === ctop.grp);
+  const fixes = [];
+  for (let j = 0; j < month; j++) {
+    const gap = (total.a[j] || 0) - chans.reduce((s, r) => s + (r.a[j] || 0), 0);
+    if (gap < 0.5) continue;
+    for (const r of chans) {
+      if (Math.abs(r.a[j] || 0) >= 0.05) continue;
+      const map = CUST_MAP.find(([, lab]) => lab.test(r.label));
+      if (!map) continue;
+      const v = Object.entries(gl.cust).filter(([o]) => map[0].test(o)).reduce((s, [, arr]) => s + (arr[j] || 0), 0) / VND_PER_KRW / 1e6;
+      if (v < 0.05) continue;
+      r.a[j] = v; ctop.a[j] = (ctop.a[j] || 0) + v;
+      fixes.push({ label: r.label, m: j + 1, v: Math.round(v * 100) / 100 });
+    }
+  }
+  return fixes;
 }
 
 const fullRows = (XLSX, ws) => {
@@ -121,7 +146,8 @@ function parseGl(XLSX, wb, year, month) {
   const col = (re) => H.findIndex((v) => re.test(v));
   const cAcc = col(/^account$/), cCor = col(/corresponding/), cDr = col(/debit/), cCr = col(/credit/), cDesc = col(/general description/) >= 0 ? col(/general description/) : col(/description/);
   const cObj = col(/name of object/), cY = col(/^year$/), cM = col(/^month$/), cDate = col(/posting date/);
-  const acc = {}, lines = [];
+  const acc = {}, lines = [], cust = {}; // cust: 매출(511) 거래처별 월 합계 VND
+
   for (let r = hr + 1; r < g.length; r++) {
     const row = g[r] || [];
     const a = String(row[cAcc] ?? '').trim();
@@ -134,6 +160,7 @@ function parseGl(XLSX, wb, year, month) {
     const amt = /^[57]/.test(a) ? cr - dr : dr - cr; // 수익은 대변, 비용은 차변이 +
     if (!amt) continue;
     (acc[a] ||= Array(12).fill(0))[m - 1] += amt;
+    if (/^511/.test(a)) { const o = String(row[cObj] ?? '').trim() || '(거래처 없음)'; (cust[o] ||= Array(12).fill(0))[m - 1] += amt; }
     if ((m === month || m === month - 1) && Math.abs(amt) >= 1e6) {
       const desc = String(row[cDesc] ?? '').split('/').map((x) => x.trim()).filter(Boolean);
       lines.push({ m, a, v: Math.round(amt), d: (desc[desc.length - 1] || '').slice(0, 90), o: String(row[cObj] ?? '').trim().slice(0, 40), c: String(row[cCor] ?? '').trim() });
@@ -141,7 +168,7 @@ function parseGl(XLSX, wb, year, month) {
   }
   if (!Object.keys(acc).length) return null;
   lines.sort((p, q) => Math.abs(q.v) - Math.abs(p.v));
-  return { sheet: sn, acc, lines: lines.slice(0, 400) };
+  return { sheet: sn, acc, cust, lines: lines.slice(0, 400) };
 }
 
 // 🎯 'Target … PL' 시트: 왼쪽은 월별 실적(3행 연도·4행 'N월'), 그 오른쪽 한 칸 띄고 Target 시나리오 열(월 기준 목표치)
@@ -1032,12 +1059,13 @@ function mailText(k, M, m) {
   L.push('감사합니다');
   return L.join('\n');
 }
+const chanFixNote = (k, m) => { const f = (k.chanFix || []).filter((x) => x.m === m); return f.length ? `<p class="sm cm-auto-note">ℹ️ ${f.map((x) => `${x.label} ${m}월 매출 ${f1(x.v)}백만원`).join(', ')}은 KPI Summary 거래처 칸이 비어 있어 원장(GL) 거래처 매출로 채웠습니다.</p>` : ''; };
 function renderMail(k, M, m) {
   if (m < 2) return '<div class="card">✉️ 메일 초안은 전월과 비교하므로 2월부터 만들 수 있습니다.</div>';
   const key = `mail${m}`, saved = (k.notes || {})[key];
   const auto = mailText(k, M, m);
   return `<article class="rp mail"><header class="rp-head"><h2>✉️ ${k.year}년 ${m}월 베트남 KPI 송부 메일 초안</h2>
-    <p>전임자가 보내던 메일 형식(전월 대비 1)~8))으로 숫자를 자동으로 채웠습니다. <b>[사유]·[원인 확인]</b> 자리만 현지 확인 내용으로 바꾸고 복사해 메일에 붙이세요. 서명은 메일 프로그램의 서명을 쓰세요.</p></header>
+    <p>전임자가 보내던 메일 형식(전월 대비 1)~8))으로 숫자를 자동으로 채웠습니다. <b>[사유]·[원인 확인]</b> 자리만 현지 확인 내용으로 바꾸고 복사해 메일에 붙이세요. 서명은 메일 프로그램의 서명을 쓰세요.</p>${chanFixNote(k, m)}</header>
     <div class="card">
       <div class="cm-tools"><button type="button" class="btn sm primary" id="mailCopy">📋 메일 내용 복사</button><button type="button" class="btn sm ghost" id="mailReset">↺ 자동 초안으로 되돌리기</button>
         <span class="muted sm">${saved ? '✏️ 고쳐 쓴 내용 (자동 저장됨)' : '✍️ 자동 초안 — 고쳐 쓰면 자동 저장'}</span></div>
@@ -1135,7 +1163,7 @@ function render() {
     <thead><tr><th></th><th>매출(백만원)</th><th>전월 대비</th><th>물량(톤)</th><th>전월 대비</th><th>단가(원/kg)</th><th>전월 대비</th></tr></thead><tbody>${det}</tbody></table></div></div>` : '';
 
   const when = k.loadedAt ? new Date(k.loadedAt) : null;
-  box.innerHTML = `<p class="muted sm kpi-src">📄 ${esc(k.file || '')}${when ? ` · ${when.getMonth() + 1}/${when.getDate()} 불러옴` : ''} · ${esc(k.title)}</p>
+  box.innerHTML = `<p class="muted sm kpi-src">📄 ${esc(k.file || '')}${when ? ` · ${when.getMonth() + 1}/${when.getDate()} 불러옴` : ''} · ${esc(k.title)}</p>${chanFixNote(k, m)}
     <div class="kpi-cards">${cards}</div>${tcard}${subsidyCard(k, m, M)}${notes}<div class="kpi-charts">${charts}</div>${table}${detail}
     <p class="kpi-foot"><button type="button" class="btn sm danger" id="kpiDel">🗑 이 KPI 자료 지우기</button></p>`;
 }
