@@ -1050,7 +1050,7 @@ dialog.editor.drop-on .ed-note { outline: 3px dashed var(--primary); outline-off
 .cm-tg { width: 22px; height: 22px; margin-right: 4px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--primary); cursor: pointer; font-size: 12px; line-height: 1; vertical-align: middle; }
 .cm-tg:hover { background: var(--bg); }
 .cm-tg-sp { display: inline-block; width: 26px; }
-.cm-t tr.cm-kid th { padding-left: 34px; }
+.cm-t tr.cm-kid th { padding-left: 30px; }
 @media print { .cm-t tr.cm-kid[hidden] { display: table-row; } .cm-tg, .cm-tbar { display: none; } }
 .cm-auto-note { color: var(--warn); margin: 4px 0 0; }
 .mail-text { width: 100%; font-size: 14px; line-height: 1.6; margin-top: 8px; }
@@ -1060,10 +1060,15 @@ dialog.editor.drop-on .ed-note { outline: 3px dashed var(--primary); outline-off
 /* 📝 경영회의 코멘트 초안 */
 .kpi-months[hidden] { display: none !important; }
 .rp.cm { max-width: none; }
-.cm-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(340px, 1fr); gap: 20px; align-items: start; }
-@media (max-width: 1200px) { .cm-grid { grid-template-columns: 1fr; } }
-.cm-t { font-size: 13px; }
-.cm-t th, .cm-t td { padding: 5px 7px; }
+/* 표는 내용 폭만큼 다 보이게(가로 스크롤 없이), 코멘트는 남은 폭(최소 300px) */
+.rp.cm { padding: 22px 20px; }
+.cm-grid { display: grid; grid-template-columns: minmax(0, max-content) minmax(300px, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 1100px) { .cm-grid { grid-template-columns: 1fr; } }
+.cm-t { font-size: 12.5px; width: auto; }
+.cm-t th, .cm-t td { padding: 4px 6px; }
+.cm-t thead th { font-size: 12px; }
+.cm-t tr.sub th { padding-left: 18px; }
+.cm-t tr.sub td { font-size: 12px; }
 .cm-t tr.pct th, .cm-t tr.pct td { font-style: italic; }
 .cm-t th.bg { background: var(--bg); }
 .cm-t th.tg { background: color-mix(in srgb, var(--warn) 18%, var(--panel)); }
