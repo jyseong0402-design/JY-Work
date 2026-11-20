@@ -540,7 +540,9 @@ const CM_GROUPS = [
   { id: 'D', name: '관리비', re: /^관리비/, unit: '백만원', acc: /^642/ },
   { id: 'E', name: '조정 EBITDA', re: /^조정\s*EBITDA/i, unit: '백만원', acc: null },
 ];
-function pptBlock(P, re) { const i = P.rows.findIndex((r) => r.lv === 1 && re.test(r.label.replace(/\s+/g, ' '))); if (i < 0) return null; const kids = []; for (let j = i + 1; j < P.rows.length && (P.rows[j].lv === 2 || P.rows[j].kind === 'pct'); j++) if (P.rows[j].kind !== 'pct') kids.push(P.rows[j]); return { row: P.rows[i], kids: kids.filter((x) => !x.h || !kids.some((y) => !y.h && y.label === x.label)) }; }
+function pptBlock(P, re) { const i = P.rows.findIndex((r) => r.lv === 1 && re.test(r.label.replace(/\s+/g, ' '))); if (i < 0) return null; const kids = []; for (let j = i + 1; j < P.rows.length && (P.rows[j].lv === 2 || P.rows[j].kind === 'pct'); j++) if (P.rows[j].kind !== 'pct') kids.push(P.rows[j]); const seen = new Set(); // 같은 이름 세부 행이 두 번 있으면(숨긴 행 등) 보이는 행 하나만
+  const uniq = [...kids.filter((x) => !x.h), ...kids.filter((x) => x.h)].filter((x) => !seen.has(x.label) && seen.add(x.label));
+  return { row: P.rows[i], kids: kids.filter((x) => uniq.includes(x)) }; }
 const sgn = (v, d = 0) => `${v > 0 ? '+' : v < 0 ? '-' : '±'}${Math.abs(v).toLocaleString('ko-KR', { maximumFractionDigits: d, minimumFractionDigits: d })}`;
 // 제목줄: 9월 장표와 같은 문구 — "매출액 단기 Target 초과 달성 +15백만원, +37%," / "계획 대비 -67백만원, -55%"
 //   (조정 EBITDA는 장표처럼 Target 대비 한 줄만)
@@ -588,7 +590,10 @@ function cmBullets(k, G, B) {
     const d = x.a[i] - x.a[p];
     return { x, d, u: won ? '원/kg' : '백만원', big: won ? Math.abs(d) >= 10 : Math.abs(d) >= 0.3 };
   }).filter((y) => y.big).sort((y, z) => Math.abs(z.d) / (z.u === '원/kg' ? 100 : 1) - Math.abs(y.d) / (y.u === '원/kg' ? 100 : 1)).slice(0, 3);
-  for (const { x, d, u } of kids) out.push(`${x.label}: ${WHY}전월 대비 ${amt(d, u)} ${word(d)}`);
+  for (const { x, d, u } of kids) {
+    const why = G.id === 'C' || G.id === 'D' ? glReason(k, G.id === 'C' ? '판매비' : '관리비', x.label, mn) : '';
+    out.push(`${x.label}: ${WHY}전월 대비 ${amt(d, u)} ${word(d)}${why ? ` (원장: ${why})` : ''}`);
+  }
   if (G.id === 'B') {
     const w = pptBlock(P, /폐기율/);
     if (w) { const d = (w.row.a[i] - w.row.a[p]) * 100; out.push(`폐기: ${WHY}폐기율 전월 대비 ${Math.abs(d).toFixed(1)}%p ${d >= 0 ? '상승' : '하락'}`); }
@@ -987,6 +992,40 @@ function subsidyCard(k, m, M) {
   return `<div class="card kt-wrap kpi-sub"><div class="kg-h"><b>💰 ${m}월 지원금 수익</b><small class="muted">출처: '${esc(k.target?.sheet || '')}' 시트 지원 항목</small></div>${body || '<p class="muted">Target PL 시트에 지원금 항목이 없습니다.</p>'}${what}${gl}</div>`;
 }
 
+/* ---------- 📒 원장 근거: 판매비·관리비 항목별로 전월↔당월 원장 거래를 비교해 늘고 줄어든 내용을 짧게 ---------- */
+// 장표 항목 ↔ 원장 계정 (9월 확인: 64173/18.5=운반비 5.08, 64175=창고 0.24, 64274=사무실 3.64, 64273=여비 2.4, River Park 임차=숙소 0.63)
+const GL_ITEM = [
+  ['판매비', /인건비/, (a) => /^6411/.test(a)],
+  ['판매비', /운반/, (a) => /^64173/.test(a)],
+  ['판매비', /창고/, (a) => /^64175/.test(a)],
+  ['판매비', /라벨/, (a) => /^64177/.test(a)],
+  ['판매비', /^기타/, (a) => /^641(3|8)/.test(a)],
+  ['관리비', /인건비/, (a) => /^6421/.test(a)],
+  ['관리비', /사무실/, (a) => /^64274/.test(a)],
+  ['관리비', /숙소/, (a, d) => /^642/.test(a) && /rent house|apartment|accommodation|management fee c/i.test(d)],
+  ['관리비', /여비/, (a) => /^64273/.test(a)],
+  ['관리비', /^기타$/, (a, d) => /^642/.test(a) && !/^6421|^64274|^64273/.test(a) && !/rent house|apartment|accommodation|management fee c/i.test(d)],
+];
+const GL_KO = [[/refrigerated transport/i, '냉장운송비'], [/delivery fee/i, '배송비'], [/accrued for service fee/i, '물류 서비스료'], [/shui|union fee/i, '사회보험·노조비'], [/salary/i, '급여'],
+  [/mooncake/i, '월병(고객 선물)'], [/customer sampling/i, '시식용 버섯'], [/sample/i, '샘플'], [/promotional support/i, '판촉 지원금'], [/carton/i, '박스 구매'], [/car rental/i, '차량 렌트'],
+  [/office rental/i, '사무실 임차료'], [/rent house|apartment/i, '숙소 임차료'], [/management fee/i, '숙소 관리비'], [/legal/i, '법률 자문료'], [/health check/i, '건강검진'], [/visa/i, '비자'], [/\btrc\b/i, '체류증(TRC)'],
+  [/computer rental/i, 'PC 렌트'], [/allocating prepaid/i, '선급비용 상각'], [/accounting|audit|tax/i, '회계·세무 수수료'], [/supplies/i, '소모품']];
+const GL_WHO = [[/lotte|\blot$/i, '롯데'], [/cj logistics/i, 'CJ'], [/việt nhật|viet nhat/i, '비엣냣'], [/cobi/i, 'COBI ONE'], [/jang car/i, 'Jang Car'], [/jipyong/i, '지평'], [/bệnh viện|hospital/i, '병원']];
+function glReason(k, sec, label, m) {
+  const R = GL_ITEM.find(([s, re]) => s === sec && re.test(nzl(label)));
+  if (!R || !k.gl?.lines) return '';
+  const g = {};
+  for (const l of k.gl.lines) {
+    if ((l.m !== m && l.m !== m - 1) || !R[2](l.a, l.d)) continue;
+    const ko = GL_KO.find(([re]) => re.test(l.d)), who = GL_WHO.find(([re]) => re.test(l.o));
+    const name = (ko ? ko[1] : l.d.replace(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?/gi, '').replace(/[\d.,–-]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 28)) + (who ? `(${who[1]})` : '');
+    const x = (g[name] ||= { c: 0, p: 0 });
+    if (l.m === m) x.c += l.v; else x.p += l.v;
+  }
+  const top = Object.entries(g).map(([n, x]) => ({ n, d: krwM(x.c - x.p), c: x.c, p: x.p })).filter((x) => Math.abs(x.d) >= 0.1).sort((a, b) => Math.abs(b.d) - Math.abs(a.d)).slice(0, 3);
+  return top.map((x) => `${x.n} ${x.d > 0 ? '+' : '-'}${Math.abs(x.d).toFixed(1)}${!x.p ? '(신규)' : !x.c ? '(없음)' : ''}`).join(', ');
+}
+
 /* ---------- ✉️ KPI 송부 메일 요약: 사용자가 보내던 메일 형식(전월 대비 1)~8)) ---------- */
 function mailText(k, M, m) {
   const i = m - 1, p = m - 2;
@@ -1036,7 +1075,7 @@ function mailText(k, M, m) {
     const b = blk(re), tot = row ? r1(row.a[i]) - r1(row.a[p]) : 0;
     item(`${name} 특이사항 : ${row ? `${f1(row.a[i])}백만원, 전월 대비 ${n1(tot)}백만원 ${ud(tot)}` : ''}`);
     let any = false;
-    if (b) for (const x of b.kids.slice().sort((a, c) => ab(c.a[pi] - c.a[pp]) - ab(a.a[pi] - a.a[pp]))) { const dd = x.a[pi] - x.a[pp]; if (ab(dd) >= 0.3) { sub(`${x.label} ${n1(dd)}백만원 ${ud(dd)} [사유]`); any = true; } }
+    if (b) for (const x of b.kids.slice().sort((a, c) => ab(c.a[pi] - c.a[pp]) - ab(a.a[pi] - a.a[pp]))) { const dd = x.a[pi] - x.a[pp]; if (ab(dd) >= 0.3) { const why = glReason(k, name, x.label, m); sub(`${x.label} ${n1(dd)}백만원 ${ud(dd)} ${why ? `(원장: ${why})` : '[사유]'}`); any = true; } }
     return any;
   };
   const any6 = costs('판매비', /^판매비/, M.sell);
