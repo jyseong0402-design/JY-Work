@@ -748,10 +748,12 @@ function followCard(k, mn) {
   const fu = (k.notes || {})[`fu${mn}`];
   const items = fu?.items || [];
   const left = items.filter((x) => !x.done).length;
-  const rows = items.map((x, j) => { const h = followHint(k, x.t, mn); return `<li class="fu-it${x.done ? ' done' : ''}"><label><input type="checkbox" data-fu-i="${j}" ${x.done ? 'checked' : ''}> <span>${esc(x.t)}</span></label>${h ? `<div class="fu-h">${esc(h)}</div>` : ''}<input class="fu-memo" data-fu-m="${j}" value="${esc(x.memo || '')}" placeholder="이번 달 결과·현지 답변 메모"></li>`; }).join('');
+  // 가로로 긴 표: 확인 | 지난달 보고 내용 | 이번 달 자동 판정 | 결과·현지 답변 메모
+  const rows = items.map((x, j) => { const h = followHint(k, x.t, mn); return `<li class="fu-it${x.done ? ' done' : ''}"><label class="fu-c"><input type="checkbox" data-fu-i="${j}" ${x.done ? 'checked' : ''} aria-label="확인"></label><div class="fu-t">${esc(x.t)}</div><div class="fu-h">${h ? esc(h) : '<span class="muted">수치 없음 — 직접 확인</span>'}</div><input class="fu-memo" data-fu-m="${j}" value="${esc(x.memo || '')}" placeholder="${mn}월 결과·현지 답변 메모"></li>`; }).join('');
+  const head = items.length ? `<li class="fu-it fu-head"><div class="fu-c">확인</div><div class="fu-t">지난달 보고 내용 (예정·목표·추진)</div><div class="fu-h">${mn}월 숫자로 자동 판정</div><div>결과·현지 답변 메모</div></li>` : '';
   return `<details class="cm-ask fu" ${items.length ? 'open' : ''}><summary>📌 지난달 보고 후속 확인 ${items.length ? `(${items.length - left}/${items.length} 확인)` : ''}</summary>
     <p class="muted sm">${fu ? `「${esc(fu.src)}」${fu.mon ? ` ${fu.mon}월 장표` : ''}에서 예정·목표·추진 문장을 뽑았습니다. 이번 달 숫자로 판정 가능한 것은 ✅/⚠️로 표시합니다.` : '지난달 경영회의 PPT(.pptx)를 불러오면 베트남 장표에서 "~예정 / ~목표 / ~추진 / 협의 중" 문장을 뽑아 이번 달 확인 목록을 만듭니다.'}</p>
-    ${items.length ? `<ul class="fu-list">${rows}</ul>` : ''}
+    ${items.length ? `<ul class="fu-list">${head}${rows}</ul>` : ''}
     <div class="cm-tools"><button type="button" class="btn sm" id="fuLoad">📂 지난달 PPT 불러오기</button>${items.length ? '<button type="button" class="btn sm" id="fuCopy">📋 미확인 항목 복사(현지 문의용)</button>' : ''}<input type="file" id="fuIn" accept=".pptx" hidden></div></details>`;
 }
 
@@ -793,7 +795,7 @@ function renderCmt(k) {
   return `<article class="rp cm"><header class="rp-head"><h2>📝 ${k.year}년 ${mn}월 경영회의 베트남 장표 코멘트</h2><p>왼쪽 표는 장표와 같은 숫자, 오른쪽은 A~E 코멘트 초안입니다. 숫자 근거와 원장을 보고 현지 확인 내용을 채운 뒤 복사해 장표에 붙이세요.</p></header>
     <div class="cm-grid"><div class="cm-left">${table}</div><div class="cm-right">
       <div class="cm-tools">${aiEnabled() ? '<button type="button" class="btn sm primary" id="cmAi">🤖 AI 초안 만들기</button>' : ''}<button type="button" class="btn sm" id="cmCopy">📋 코멘트 전체 복사</button><span class="muted sm" id="cmMsg">${esc(cmStatus)}</span></div>
-      ${followCard(k, mn)}${ask}${blocks}</div></div></article>`;
+      ${ask}${blocks}</div></div>${followCard(k, mn)}</article>`;
 }
 function cmAutoText(k, gid) {
   const P = pptOf(k), G = CM_GROUPS.find((x) => x.id === gid), B = P && pptBlock(P, G.re);

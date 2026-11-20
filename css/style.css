@@ -1052,12 +1052,24 @@ dialog.editor.drop-on .ed-note { outline: 3px dashed var(--primary); outline-off
 .cm-tg-sp { display: inline-block; width: 26px; }
 .cm-t tr.cm-kid th { padding-left: 30px; }
 @media print { .cm-t tr.cm-kid[hidden] { display: table-row; } .cm-tg, .cm-tbar { display: none; } }
-.fu-list { list-style: none; margin: 6px 0; padding: 0; display: grid; gap: 8px; }
-.fu-it { padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font-size: 13px; }
-.fu-it label { display: flex; gap: 6px; align-items: flex-start; cursor: pointer; }
-.fu-it.done label span { color: var(--muted); text-decoration: line-through; }
-.fu-h { margin: 4px 0 0 22px; font-size: 12.5px; font-weight: 600; }
-.fu-memo { width: calc(100% - 22px); margin: 6px 0 0 22px; font-size: 12.5px; padding: 4px 6px; }
+/* 지난달 보고 후속 확인: 표·코멘트 아래 가로 전체 폭, 한 줄 = 확인 | 지난달 내용 | 자동 판정 | 메모 */
+.rp.cm > .fu { margin-top: 18px; }
+.fu-list { list-style: none; margin: 8px 0; padding: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.fu-it { display: grid; grid-template-columns: 52px minmax(0, 2.2fr) minmax(0, 1.6fr) minmax(200px, 1.2fr); gap: 12px; align-items: center; padding: 9px 12px; border-top: 1px solid var(--line); background: var(--panel); font-size: 13.5px; line-height: 1.45; }
+.fu-it:first-child { border-top: 0; }
+.fu-head { background: var(--primary-soft); font-size: 12.5px; font-weight: 700; color: var(--text); }
+.fu-c { text-align: center; }
+.fu-c input[type="checkbox"] { width: 18px; height: 18px; margin: 0; padding: 0; cursor: pointer; }
+.fu-it.done .fu-t { color: var(--muted); text-decoration: line-through; }
+.fu-h { font-size: 13px; font-weight: 600; }
+.fu-memo { width: 100%; font-size: 13px; padding: 6px 8px; }
+@media (max-width: 900px) {
+  .fu-it { grid-template-columns: 30px minmax(0, 1fr); gap: 4px 8px; }
+  .fu-head { display: none; }
+  .fu-it .fu-h, .fu-it .fu-memo { grid-column: 2; }
+}
+#kpiMode { flex-wrap: wrap; max-width: 100%; flex-shrink: 1; }
+@media (max-width: 600px) { #kpiMode button { padding: 6px 9px; font-size: 13px; } }
 .cm-auto-note { color: var(--warn); margin: 4px 0 0; }
 .mail-text { width: 100%; font-size: 14px; line-height: 1.6; margin-top: 8px; }
 .cm-text.auto { color: var(--muted); }
@@ -1069,7 +1081,7 @@ dialog.editor.drop-on .ed-note { outline: 3px dashed var(--primary); outline-off
 /* 표는 내용 폭만큼 다 보이게(가로 스크롤 없이), 코멘트는 남은 폭(최소 300px) */
 .rp.cm { padding: 22px 20px; }
 .cm-grid { display: grid; grid-template-columns: minmax(0, max-content) minmax(300px, 1fr); gap: 16px; align-items: start; }
-@media (max-width: 1100px) { .cm-grid { grid-template-columns: 1fr; } }
+@media (max-width: 1100px) { .cm-grid { grid-template-columns: minmax(0, 1fr); } .cm-left { min-width: 0; } }
 .cm-t { font-size: 12.5px; width: auto; }
 .cm-t th, .cm-t td { padding: 4px 6px; }
 .cm-t thead th { font-size: 12px; }
