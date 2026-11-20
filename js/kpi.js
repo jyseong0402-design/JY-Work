@@ -445,12 +445,58 @@ const CM_GROUPS = [
 ];
 function pptBlock(P, re) { const i = P.rows.findIndex((r) => r.lv === 1 && re.test(r.label.replace(/\s+/g, ' '))); if (i < 0) return null; const kids = []; for (let j = i + 1; j < P.rows.length && (P.rows[j].lv === 2 || P.rows[j].kind === 'pct'); j++) if (P.rows[j].kind !== 'pct') kids.push(P.rows[j]); return { row: P.rows[i], kids: kids.filter((x) => !x.h || !kids.some((y) => !y.h && y.label === x.label)) }; }
 const sgn = (v, d = 0) => `${v > 0 ? '+' : v < 0 ? '-' : '±'}${Math.abs(v).toLocaleString('ko-KR', { maximumFractionDigits: d, minimumFractionDigits: d })}`;
+// 제목줄: 9월 장표와 같은 문구 — "매출액 단기 Target 초과 달성 +15백만원, +37%," / "계획 대비 -67백만원, -55%"
+//   (조정 EBITDA는 장표처럼 Target 대비 한 줄만)
+const dec = (v) => (Math.abs(v) >= 1 ? 0 : 1);
 function cmHeadline(G, B) {
   const r = B.row, cur = r.a[r.a.length - 1], won = G.unit === '원';
-  const part = (base) => { const d = cur - base; return `${sgn(d, won ? 0 : Math.abs(d) < 10 ? 1 : 0)}${G.unit}${base > 0 && cur >= 0 ? `, ${sgn((cur / base - 1) * 100)}%` : ''}`; };
-  const L = [`${G.name} 단기 Target 대비 ${r.tgt ? part(r.tgt) : '-'}`];
-  if (r.bgt) L.push(`BGT 대비 ${part(r.bgt)}`);
+  // 장표처럼 표에 보이는(반올림된) 숫자끼리 뺌: 55 - 122 = -67
+  const rd = (v) => (won || Math.abs(v) >= 10 ? Math.round(v) : Math.round(v * 10) / 10);
+  const part = (base) => { const d = rd(cur) - rd(base); return `${sgn(d, won ? 0 : dec(d))}${G.unit}${base > 0 && cur >= 0 ? `, ${sgn((cur / base - 1) * 100)}%` : ''}`; };
+  const lead = G.id === 'A' && r.tgt ? (cur >= r.tgt ? '단기 Target 초과 달성' : '단기 Target 미달') : '단기 Target 대비';
+  const L = [`${G.name} ${lead} ${r.tgt ? part(r.tgt) : '-'}`];
+  if (r.bgt && G.id !== 'E') L.push(`계획 대비 ${part(r.bgt)}`);
   return L.join(',\n');
+}
+// 세부 줄(장표 형식): "항목: [사유] 전월 대비 -85원/kg 감소" — [사유]는 현지 확인 후 채울 자리
+const WHY = '[사유] ';
+function cmBullets(k, G, B) {
+  const out = [], n = B.row.a.length, i = n - 1, p = n - 2;
+  if (p < 0) return out;
+  const P = k.ppt, mn = P.months[i];
+  const vol = pptBlock(P, /^매출물량/), kg = vol ? vol.row.a[i] * 1000 : 0, kgp = vol ? vol.row.a[p] * 1000 : 0;
+  const word = (d) => (d > 0 ? '증가' : G.id === 'C' || G.id === 'D' ? '절감' : '감소');
+  // B(원가)는 장표처럼 부호를 붙이고(-85원/kg 감소), 판매·관리비는 절감은 부호 없이(2.8백만원 절감)·증가는 +로
+  const amt = (d, u) => (G.id === 'B' || d > 0 ? sgn(d, u === '백만원' ? 1 : 0) : Math.abs(d).toLocaleString('ko-KR', { maximumFractionDigits: u === '백만원' ? 1 : 0, minimumFractionDigits: u === '백만원' ? 1 : 0 })) + u;
+  if (G.id === 'A') {
+    const M = model(k);
+    const ch = M.chans.filter((x) => Math.abs(x.a[i]) >= 0.05).sort((x, y) => y.a[i] - x.a[i]);
+    for (const x of ch) { const d = x.a[i] - x.a[p]; out.push(`${x.label}: ${WHY}${mn}월 매출 ${f1(x.a[i])}백만원, 전월 대비 ${sgn(d, 1)}백만원 ${d >= 0 ? '증가' : '감소'}`); }
+    if (vol) { const d = vol.row.a[i] - vol.row.a[p]; out.push(`판매물량: ${mn}월 ${vol.row.a[i].toFixed(1)}톤, 전월 대비 ${sgn(d, 1)}톤 ${d >= 0 ? '증가' : '감소'}`); }
+    const pr = pptBlock(P, /^매출단가/);
+    if (pr) { const d = pr.row.a[i] - pr.row.a[p]; out.push(`매출단가: ${WHY}${fP(pr.row.a[i], 'won')}원/kg, 전월 대비 ${sgn(d)}원/kg ${d >= 0 ? '상승' : '하락'}`); }
+    return out;
+  }
+  if (G.id === 'E') {
+    // 조정 EBITDA는 Target과의 차이가 어디서 났는지(GP·판매비·관리비)
+    const parts = [['GP', /^GP$/i, 1], ['판매비', /^판매비/, -1], ['관리비', /^관리비/, -1]].map(([nm, re, s]) => { const b = pptBlock(P, re); if (!b || !b.row.tgt) return ''; const d = (b.row.a[i] - b.row.tgt) * s; return Math.abs(d) >= 0.05 ? `${nm} ${sgn(d, dec(d))}` : ''; }).filter(Boolean);
+    if (parts.length) out.push(`Target 대비 영향(백만원): ${parts.join(', ')}`);
+    return out;
+  }
+  // 세부 항목은 전월 대비 변동이 큰 순서로 최대 3개(작은 변동은 생략)
+  const kids = B.kids.filter((x) => x.kind !== 'pct').map((x) => {
+    const won = x.kind === 'won';
+    // 운반비는 장표처럼 kg당 금액으로
+    if (G.id === 'C' && /운반/.test(x.label) && kg && kgp) { const d = x.a[i] * 1e6 / kg - x.a[p] * 1e6 / kgp; return { x, d, u: '원/kg', big: Math.abs(d) >= 10 }; }
+    const d = x.a[i] - x.a[p];
+    return { x, d, u: won ? '원/kg' : '백만원', big: won ? Math.abs(d) >= 10 : Math.abs(d) >= 0.3 };
+  }).filter((y) => y.big).sort((y, z) => Math.abs(z.d) / (z.u === '원/kg' ? 100 : 1) - Math.abs(y.d) / (y.u === '원/kg' ? 100 : 1)).slice(0, 3);
+  for (const { x, d, u } of kids) out.push(`${x.label}: ${WHY}전월 대비 ${amt(d, u)} ${word(d)}`);
+  if (G.id === 'B') {
+    const w = pptBlock(P, /폐기율/);
+    if (w) { const d = (w.row.a[i] - w.row.a[p]) * 100; out.push(`폐기: ${WHY}폐기율 전월 대비 ${Math.abs(d).toFixed(1)}%p ${d >= 0 ? '상승' : '하락'}`); }
+  }
+  return out;
 }
 function cmFacts(k, G, B) {
   const out = [], n = B.row.a.length, i = n - 1, p = n - 2;
@@ -517,19 +563,20 @@ function renderCmt(k) {
       <div class="cm-head">${esc(cmHeadline(G, B))}</div>
       ${facts.length ? `<ul class="cm-facts">${facts.map((f) => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}
       ${glHtml}
-      <textarea class="cm-text" data-id="${k.id}" data-m="${key}" rows="5" placeholder="현지 확인 내용을 넣어 코멘트를 쓰세요 (자동 저장)">${esc(notes[key] || '')}</textarea></div>`;
+      <textarea class="cm-text${notes[key] ? '' : ' auto'}" data-id="${k.id}" data-m="${key}" rows="6" placeholder="현지 확인 내용을 넣어 코멘트를 쓰세요 (자동 저장)">${esc(notes[key] || cmAutoText(k, G.id))}</textarea>
+      ${notes[key] ? '' : '<p class="muted sm">✍️ 장표 형식 자동 초안입니다. [사유] 자리를 현지 확인 내용으로 바꿔 쓰면 저장됩니다.</p>'}</div>`;
   }).join('');
   const qs = cmQuestions(k);
   const ask = `<details class="cm-ask"><summary>❓ 현지 문의 초안 (${qs.length}건)</summary>${qs.length ? `<ol>${qs.map((x) => `<li>${esc(x)}</li>`).join('')}</ol><button type="button" class="btn sm" id="cmAskCopy">📋 문의 목록 복사</button>` : '<p class="muted">큰 원장 변동이 없습니다.</p>'}</details>`;
   return `<article class="rp cm"><header class="rp-head"><h2>📝 ${k.year}년 ${mn}월 경영회의 베트남 장표 코멘트</h2><p>왼쪽 표는 장표와 같은 숫자, 오른쪽은 A~E 코멘트 초안입니다. 숫자 근거와 원장을 보고 현지 확인 내용을 채운 뒤 복사해 장표에 붙이세요.</p></header>
     <div class="cm-grid"><div class="cm-left">${table}</div><div class="cm-right">
-      <div class="cm-tools"><button type="button" class="btn sm primary" id="cmAi">🤖 AI 초안 만들기</button><button type="button" class="btn sm" id="cmCopy">📋 코멘트 전체 복사</button><span class="muted sm" id="cmMsg">${esc(cmStatus)}</span></div>
+      <div class="cm-tools">${aiEnabled() ? '<button type="button" class="btn sm primary" id="cmAi">🤖 AI 초안 만들기</button>' : ''}<button type="button" class="btn sm" id="cmCopy">📋 코멘트 전체 복사</button><span class="muted sm" id="cmMsg">${esc(cmStatus)}</span></div>
       ${ask}${blocks}</div></div></article>`;
 }
 function cmAutoText(k, gid) {
   const P = k.ppt, G = CM_GROUPS.find((x) => x.id === gid), B = P && pptBlock(P, G.re);
   if (!B) return '';
-  return [cmHeadline(G, B), ...cmFacts(k, G, B).map((f) => `- ${f}`), '- (현지 확인: )'].join('\n');
+  return [cmHeadline(G, B), ...cmBullets(k, G, B).map((f) => `  - ${f}`)].join('\n');
 }
 let cmStatus = '';
 async function cmAi(k) {
@@ -796,6 +843,42 @@ function renderYtd(k, M, n) {
 /* ---------- 화면 ---------- */
 function list() { return [...(store.get().kpi || [])].sort((a, b) => b.year - a.year || String(a.title).localeCompare(String(b.title))); }
 
+/* ---------- 💰 지원금 수익 (aT 지원사업 등): 'Target … PL' 시트의 '지원' 항목 + 원장의 지원 관련 수익 ---------- */
+function subsidyRows(k) {
+  const R = k.target?.rows || [];
+  const tot = R.filter((r) => /지원/.test(r.label) && r.lv <= 2 && !/반영\s*전|못받|미적용/.test(r.label) && r.a.some((v) => Math.abs(v) >= 0.005));
+  return tot.map((t) => ({ tot: t, kids: R.filter((r) => r.lv > t.lv && r.p === t.label && r.a.some((v) => Math.abs(v) >= 0.005)) }));
+}
+function subsidyCard(k, m, M) {
+  const S = subsidyRows(k), i = m - 1, p = m - 2;
+  const glL = (k.gl?.lines || []).filter((l) => l.m === m && /^[57]/.test(l.a) && (/^711/.test(l.a) || /hỗ trợ|support|subsid|tài trợ|\baT\b/i.test(l.d)));
+  if (!S.length && !glL.length) return '';
+  const ab = (v) => Math.abs(v || 0);
+  const first = (r) => r.a.findIndex((v) => ab(v) >= 0.005);
+  let body = '';
+  for (const { tot, kids } of S) {
+    const s0 = Math.max(0, first(tot)), cur = ab(tot.a[i]), prv = p >= 0 ? ab(tot.a[p]) : 0;
+    const cum = tot.a.slice(0, m).reduce((x, v) => x + ab(v), 0);
+    const sales = M.sales?.a[i] || 0, sell = M.sell?.a[i] || 0, eb = M.ebitda?.a[i];
+    const cols = Array.from({ length: m - s0 }, (_, j) => s0 + j);
+    const rowH = (r, cls = '') => `<tr class="${cls}"><th>${esc(r.label)}</th>${cols.map((c) => `<td class="${c === i ? 'b' : ''}">${ab(r.a[c]) >= 0.005 ? f1(ab(r.a[c])) : '-'}</td>`).join('')}<td class="b">${f1(r.a.slice(0, m).reduce((x, v) => x + ab(v), 0))}</td><td>${cur && r !== tot ? pc(ab(r.a[i]) / cur) : ''}</td></tr>`;
+    const stat = (t, v, sub = '') => `<div class="sb-st"><span class="muted sm">${t}</span><b>${v}</b>${sub ? `<small class="muted">${sub}</small>` : ''}</div>`;
+    body += `<div class="sb-stats">
+        ${stat(`${m}월 지원금`, `${f1(cur)}<small>백만원</small>`, p >= 0 ? `전월 ${f1(prv)} (${cur - prv >= 0 ? '+' : ''}${f1(cur - prv)})` : '')}
+        ${stat(`누계 (${s0 + 1}~${m}월)`, `${f1(cum)}<small>백만원</small>`, `${m - s0}개월 · 월평균 ${f1(cum / Math.max(1, m - s0))}`)}
+        ${sales ? stat('매출 대비', pc(cur / sales), `${m}월 매출 ${f1(sales)}백만원`) : ''}
+        ${sell ? stat('판매비 지원율', pc(cur / (sell + cur)), `지원 전 판매비 ${f1(sell + cur)} → 지원 후 ${f1(sell)}`) : ''}
+        ${eb !== undefined ? stat('지원금 없었다면 조정 EBITDA', `${f1(eb - cur)}<small>백만원</small>`, `실제 ${f1(eb)}`) : ''}
+      </div>
+      <div class="kt-scroll"><table class="kt"><thead><tr><th>(백만원)</th>${cols.map((c) => `<th>${c + 1}월</th>`).join('')}<th>누계</th><th>${m}월 비중</th></tr></thead>
+      <tbody>${rowH(tot, 'key')}${kids.map((r) => rowH(r, 'sub')).join('')}</tbody></table></div>`;
+  }
+  const what = S.some(({ tot }) => /aT/i.test(tot.label))
+    ? '<p class="muted sm">ℹ️ <b>aT 지원사업</b> — 한국농수산식품유통공사(aT) 수출 물류 지원. aT 정산서(RD) 기준 운송비 80%, 창고·라벨 90%를 지원받으며, KPI에서는 판매비(운반비·창고·라벨)에서 차감되어 있습니다. 원장에는 회사 부담분만 계상됩니다.</p>' : '';
+  const gl = glL.length ? `<p class="muted sm">📒 원장(${esc(k.gl.sheet)})의 ${m}월 지원 관련 수익 거래</p><ul class="cm-lines">${glL.slice(0, 8).map((l) => `<li><b>${l.a}</b> ${(l.v / 1e6).toFixed(1)}M VND (≈${f1(krwM(l.v))}백만원) · ${esc(l.d)}${l.o ? ` <small class="muted">${esc(l.o)}</small>` : ''}</li>`).join('')}</ul>` : '';
+  return `<div class="card kt-wrap kpi-sub"><div class="kg-h"><b>💰 ${m}월 지원금 수익</b><small class="muted">출처: '${esc(k.target?.sheet || '')}' 시트 지원 항목</small></div>${body || '<p class="muted">Target PL 시트에 지원금 항목이 없습니다.</p>'}${what}${gl}</div>`;
+}
+
 function render() {
   const box = $('#kpiBody');
   if (!box) return;
@@ -882,7 +965,7 @@ function render() {
 
   const when = k.loadedAt ? new Date(k.loadedAt) : null;
   box.innerHTML = `<p class="muted sm kpi-src">📄 ${esc(k.file || '')}${when ? ` · ${when.getMonth() + 1}/${when.getDate()} 불러옴` : ''} · ${esc(k.title)}</p>
-    <div class="kpi-cards">${cards}</div>${tcard}${notes}<div class="kpi-charts">${charts}</div>${table}${detail}
+    <div class="kpi-cards">${cards}</div>${tcard}${subsidyCard(k, m, M)}${notes}<div class="kpi-charts">${charts}</div>${table}${detail}
     <p class="kpi-foot"><button type="button" class="btn sm danger" id="kpiDel">🗑 이 KPI 자료 지우기</button></p>`;
 }
 
@@ -1010,7 +1093,7 @@ export function initKpi({ toast } = {}) {
     const fill = e.target.closest('[data-cm-fill]');
     if (fill && cur) {
       const ta = fill.closest('.cm-block').querySelector('.cm-text');
-      if (ta.value.trim() && !confirm('지금 쓴 내용을 자동 문구로 바꿀까요?')) return;
+      if (ta.value.trim() && !ta.classList.contains('auto') && !confirm('지금 쓴 내용을 자동 문구로 바꿀까요?')) return;
       ta.value = cmAutoText(cur, fill.dataset.cmFill);
       saveNote(ta);
       return;

@@ -1041,6 +1041,13 @@ dialog.editor.drop-on .ed-note { outline: 3px dashed var(--primary); outline-off
 .kt-tsel button { min-height: 34px; padding: 6px 12px; }
 .rt td.tg, .kt td.tg { font-weight: 700; color: var(--warn); }
 .kpi-target { border: 2px solid var(--warn); }
+.kpi-sub { border-left: 4px solid var(--ok, #1f9d62); }
+.sb-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 6px 0 10px; }
+.sb-st { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.sb-st b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.sb-st b small { font-size: 11px; font-weight: 500; color: var(--muted); margin-left: 3px; }
+.cm-text.auto { color: var(--muted); }
+.cm-text.auto:focus { color: inherit; }
 @media print { .kpi-chat, .kt-tsel { display: none !important; } }
 /* 📝 경영회의 코멘트 초안 */
 .kpi-months[hidden] { display: none !important; }
