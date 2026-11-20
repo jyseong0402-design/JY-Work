@@ -425,6 +425,75 @@ function targetFindings(k, m) {
 }
 
 /* ---------- 📝 경영회의 코멘트 초안: 장표 표(PPT 시트) + A~E 코멘트(근거 숫자·원장·현지 문의·AI 초안) ---------- */
+// 장표 표(PPT 시트)는 월 열을 손으로 추가해서, 새 달 KPI를 넣어도 표가 전월까지만 있을 수 있음
+//   → 'Target … PL' 시트의 월 실적으로 빠진 달을 같은 규칙으로 채움 (9월 장표 숫자와 맞춰 확인한 규칙)
+//   매출원가 상품대 = 총원물대 + 총 수출제비용, 판매비 항목 = Target 판매비 항목 − 같은 이름의 AT지원 항목,
+//   관리비 인건비 = 인건비 + 식대 및 접대비, 기타지급수수료 = 회계/세무 + 사무용품 렌트비, '기타…' = 합계 − 나머지
+const nzl = (s) => String(s ?? '').replace(/\(.*?\)/g, '').replace(/[\s/]+/g, '');
+function pptMonth(k, rows, mm) {
+  const T = k.target, j = mm - 1, M = model(k);
+  const tr = (re, lv = 3) => T.rows.find((r) => r.lv <= lv && re.test(nzl(r.label)));
+  const g = (r) => (r ? r.a[j] || 0 : 0);
+  const kidsOf = (re) => T.rows.filter((r) => r.lv === 3 && re.test(nzl(r.p)));
+  const kid = (re, label) => kidsOf(re).find((r) => nzl(r.label) === nzl(label));
+  const items = kidsOf(/^매출액/).map((r) => r.label).filter((l) => nzl(l) !== '팽이');
+  const other = (re) => items.reduce((s, l) => s + g(kid(re, l)), 0);
+  const sales = g(tr(/^매출액/, 1)), qty = g(tr(/^물량/, 1));
+  const cogsParts = { 상품대: g(tr(/^총원물대/)) + g(tr(/^총수출제비용/)), 수입제비용: g(tr(/^총수입제비용/)), 폐기원가: g(tr(/^총폐기금액/)) };
+  const at = kidsOf(/지원/);
+  const sell = (label) => { const L = nzl(label); const a = kidsOf(/^판매비/).filter((r) => nzl(r.label) === L || nzl(r.label).replace(/비$/, '') === L.replace(/비$/, '')); if (!a.length) return null; return a.reduce((s, r) => s + g(r), 0) - at.filter((r) => nzl(r.label) === L).reduce((s, r) => s + g(r), 0); };
+  const ADM = [[/^인건비/, /^인건비|^식대/], [/^사무실/, /^사무실/], [/^숙소/, /^숙소/], [/^여비/, /^여비/], [/^기타지급수수료/, /^회계|^사무용품/]];
+  const adm = (label) => { const L = nzl(label); const m = ADM.find(([re]) => re.test(L)); if (!m) return null; return kidsOf(/^관리비/).filter((r) => m[1].test(nzl(r.label))).reduce((s, r) => s + g(r), 0); };
+  const top = (L) => (/^매출액/.test(L) ? sales : /^매출물량/.test(L) ? qty : /^매출단가/.test(L) ? g(tr(/^판매단가/)) : /^매출원가/.test(L) ? g(tr(/^매출원가/, 1))
+    : /단위원가/.test(L) ? g(tr(/^단위원가/)) : /^GP$/i.test(L) ? g(tr(/^GP$/i, 1)) : /^판매비/.test(L) ? g(tr(/^판매비$/, 1)) : /^CM$/i.test(L) ? g(tr(/^CM$/i, 1))
+      : /^관리비/.test(L) ? g(tr(/^관리비/, 1)) : /^조정EBITDA/i.test(L) ? (M.ebitda ? M.ebitda.a[j] || 0 : g(tr(/^조정EBIT$/i, 1))) : /^EBITDA/i.test(L) ? g(tr(/^EBIT$/i, 1)) : 0);
+  let sec = '', secV = 0;
+  const out = rows.map((r) => {
+    const L = nzl(r.label);
+    if (r.lv === 1 && r.kind !== 'pct') { sec = L; secV = top(L); return secV; }
+    if (r.kind === 'pct') return sales ? secV / sales : 0;
+    const pp = L === '팽이';
+    if (/^매출액/.test(sec)) return L === '기타품목' ? other(/^매출액/) : g(kid(/^매출액/, r.label));
+    if (/^매출물량/.test(sec)) return L === '기타품목' ? other(/^물량/) : g(kid(/^물량/, r.label));
+    if (/^매출단가/.test(sec)) { if (L !== '기타품목') return g(kid(/^판매단가/, r.label)); const q = other(/^물량/); return q ? other(/^매출액/) / q * 1000 : 0; }
+    if (/^매출원가/.test(sec)) return L in cogsParts ? cogsParts[L] : L === '기타품목' ? other(/^매출원가/) : g(kid(/^매출원가/, r.label));
+    if (/^품목별단위원가/.test(sec)) { if (L !== '기타품목') return g(kid(/^단위원가/, r.label)); const q = other(/^물량/); return q ? other(/^매출원가/) / q * 1000 : 0; }
+    if (/^단위원가/.test(sec)) return qty && L in cogsParts ? cogsParts[L] / qty * 1000 : 0;
+    if (/^판매비/.test(sec)) return /^기타/.test(L) ? null : sell(r.label) ?? 0;
+    if (/^관리비/.test(sec)) return /^기타$/.test(L) ? null : adm(r.label) ?? 0;
+    return pp ? 0 : 0; // CM 품목별 등(장표에서 숨긴 행)
+  });
+  // '기타…' = 합계 − 같은 묶음의 나머지(숨긴 행 제외)
+  let s0 = -1;
+  rows.forEach((r, x) => { if (r.lv === 1 && r.kind !== 'pct') s0 = x; if (out[x] === null) { let rest = 0; for (let y = s0 + 1; y < rows.length && !(rows[y].lv === 1 && rows[y].kind !== 'pct'); y++) if (y !== x && !rows[y].h && rows[y].kind !== 'pct' && out[y] !== null) rest += out[y]; out[x] = out[s0] - rest; } });
+  return out;
+}
+let pptCache = null;
+function pptOf(k) {
+  const P = k.ppt;
+  if (!P || !k.target || !P.months.length) return P;
+  const last = P.months[P.months.length - 1];
+  if (last >= k.month || P.months.length !== last) return P;
+  const ck = `${k.id}|${k.loadedAt}|${k.month}`;
+  if (pptCache?.ck === ck) return pptCache.P;
+  const M = model(k), add = [];
+  for (let mm = last + 1; mm <= k.month; mm++) add.push(mm);
+  const vals = add.map((mm) => pptMonth(k, P.rows, mm));
+  const j = k.month - 1;
+  const bOf = (L) => { const r = /^매출액/.test(L) ? M.sales : /^매출물량/.test(L) ? M.qty : /^매출단가/.test(L) ? M.price : /^매출원가/.test(L) ? M.cogs : /^GP$/i.test(L) ? M.gp : /^판매비/.test(L) ? M.sell : /^CM$/i.test(L) ? M.cm : /^관리비/.test(L) ? M.admin : /EBITDA/i.test(L) ? M.ebitda : null; return r ? r.b[j] || 0 : 0; };
+  let secB = 0, salesB = bOf('매출액');
+  const rows = P.rows.map((r, x) => {
+    const a = [...r.a, ...vals.map((v) => v[x])], cur = a[a.length - 1], L = nzl(r.label);
+    let bgt = 0;
+    if (r.lv === 1 && r.kind !== 'pct') { bgt = /단위원가/.test(L) ? (M.qty?.b[j] ? (M.cogs?.b[j] || 0) / M.qty.b[j] * 1000 : 0) : bOf(L); secB = bgt; } else if (r.kind === 'pct') bgt = salesB ? secB / salesB : 0;
+    const ach = (base) => (r.kind === 'pct' ? cur - base : base ? cur / base : 0);
+    return { ...r, a, bgt, bAch: bgt ? ach(bgt) : 0, tAch: r.tgt ? ach(r.tgt) : 0 };
+  });
+  const out = { ...P, months: [...P.months, ...add], rows, auto: add };
+  pptCache = { ck, P: out };
+  return out;
+}
+
 const VND_PER_KRW = 18.5; // KPI 허브와 같은 환산(VND ÷ 18.5 = 원)
 const ACC_NAME = { 511: '매출', 515: '금융수익', 632: '매출원가', 635: '금융비용', 6411: '판매 인건비', 6412: '판매 재료·포장', 6413: '판매 소모품', 6414: '판매 감가상각', 6415: '판매 보증', 6417: '판매 외주용역(운반·창고·라벨 등)', 6418: '판매 기타', 6421: '관리 인건비', 6422: '관리 소모품', 6423: '관리 사무용품', 6424: '관리 감가상각', 6425: '세금·공과', 6426: '충당금', 6427: '관리 외주용역(임차·통신 등)', 6428: '관리 기타', 711: '기타수익', 811: '기타비용', 821: '법인세' };
 const accName = (a) => ACC_NAME[a.slice(0, 4)] || ACC_NAME[a.slice(0, 3)] || '';
@@ -463,7 +532,7 @@ const WHY = '[사유] ';
 function cmBullets(k, G, B) {
   const out = [], n = B.row.a.length, i = n - 1, p = n - 2;
   if (p < 0) return out;
-  const P = k.ppt, mn = P.months[i];
+  const P = pptOf(k), mn = P.months[i];
   const vol = pptBlock(P, /^매출물량/), kg = vol ? vol.row.a[i] * 1000 : 0, kgp = vol ? vol.row.a[p] * 1000 : 0;
   const word = (d) => (d > 0 ? '증가' : G.id === 'C' || G.id === 'D' ? '절감' : '감소');
   // B(원가)는 장표처럼 부호를 붙이고(-85원/kg 감소), 판매·관리비는 절감은 부호 없이(2.8백만원 절감)·증가는 +로
@@ -501,7 +570,7 @@ function cmBullets(k, G, B) {
 function cmFacts(k, G, B) {
   const out = [], n = B.row.a.length, i = n - 1, p = n - 2;
   if (p < 0) return out;
-  const P = k.ppt, vol = pptBlock(P, /^매출물량/);
+  const P = pptOf(k), vol = pptBlock(P, /^매출물량/);
   const kg = vol ? vol.row.a[i] * 1000 : 0, kgp = vol ? vol.row.a[p] * 1000 : 0;
   for (const x of B.kids.filter((x) => x.kind !== 'pct')) {
     const d = x.a[i] - x.a[p];
@@ -544,12 +613,12 @@ function cmQuestions(k) {
   return q;
 }
 function renderCmt(k) {
-  const P = k.ppt;
+  const P = pptOf(k);
   if (!P) return `<div class="card">⚠️ 이 파일에서 경영회의 장표 표(PPT 시트의 Actual·Budget·Target 표)를 찾지 못했습니다.</div>`;
   const n = P.months.length, mn = P.months[n - 1];
   const head = `<tr><th>(단위: 백만원)</th>${P.months.map((m) => `<th>${m}월</th>`).join('')}<th class="bg">BGT<br><small>${mn}월</small></th><th class="bg">% Ach.</th><th class="tg">Target<br><small>${mn}월</small></th><th class="tg">% Ach.</th></tr>`;
   const body = P.rows.filter((r) => !r.h).map((r) => `<tr class="${r.lv === 1 && r.kind !== 'pct' ? 'key' : 'sub'}${r.kind === 'pct' ? ' pct' : ''}"><th>${esc(r.label)}</th>${r.a.map((v, j) => `<td class="${j === n - 1 ? 'hl' : ''} ${v < 0 ? 'neg' : ''}">${fP(v, r.kind)}</td>`).join('')}<td>${fP(r.bgt, r.kind)}</td><td class="muted">${fAch(r.bAch, r.kind)}</td><td class="tg">${fP(r.tgt, r.kind)}</td><td class="muted">${fAch(r.tAch, r.kind)}</td></tr>`).join('');
-  const table = `<div class="kt-scroll"><table class="rt cm-t"><thead>${head}</thead><tbody>${body}</tbody></table></div><p class="muted sm">출처: '${esc(P.sheet)}' 시트 ${P.row}행 표 (경영회의 장표와 같은 표)</p>`;
+  const table = `<div class="kt-scroll"><table class="rt cm-t"><thead>${head}</thead><tbody>${body}</tbody></table></div><p class="muted sm">출처: '${esc(P.sheet)}' 시트 ${P.row}행 표 (경영회의 장표와 같은 표)</p>${P.auto ? `<p class="sm cm-auto-note">⚠️ 이 파일의 '${esc(P.sheet)}' 시트에는 ${P.auto.map((x) => `${x}월`).join('·')} 열이 아직 없어, '${esc(k.target?.sheet || 'Target PL')}' 시트의 월 실적으로 같은 규칙에 따라 채웠습니다. BGT는 Summary 시트 값(세부 항목 BGT는 비움), Target은 장표 값 그대로입니다. 시트에 ${P.auto[P.auto.length - 1]}월 열을 추가하면 그 값을 씁니다.</p>` : ''}`;
   const notes = k.notes || {};
   const blocks = CM_GROUPS.map((G) => {
     const B = pptBlock(P, G.re);
@@ -574,7 +643,7 @@ function renderCmt(k) {
       ${ask}${blocks}</div></div></article>`;
 }
 function cmAutoText(k, gid) {
-  const P = k.ppt, G = CM_GROUPS.find((x) => x.id === gid), B = P && pptBlock(P, G.re);
+  const P = pptOf(k), G = CM_GROUPS.find((x) => x.id === gid), B = P && pptBlock(P, G.re);
   if (!B) return '';
   return [cmHeadline(G, B), ...cmBullets(k, G, B).map((f) => `  - ${f}`)].join('\n');
 }
@@ -582,7 +651,7 @@ let cmStatus = '';
 async function cmAi(k) {
   const msg = $('#cmMsg');
   if (!aiEnabled()) { msg.textContent = '⚙️ 설정에서 Claude API 키를 먼저 넣어주세요.'; return; }
-  const P = k.ppt, mn = P.months[P.months.length - 1];
+  const P = pptOf(k), mn = P.months[P.months.length - 1];
   const parts = CM_GROUPS.map((G) => {
     const B = pptBlock(P, G.re);
     if (!B) return '';
@@ -912,7 +981,7 @@ function mailText(k, M, m) {
     gap();
   }
   // 4) 단위원가 (장표 표: 상품대·수입제비용·폐기원가 등 원/kg)
-  const P = k.ppt, pi = P ? P.months.indexOf(m) : -1, pp = P ? P.months.indexOf(m - 1) : -1;
+  const P = pptOf(k), pi = P ? P.months.indexOf(m) : -1, pp = P ? P.months.indexOf(m - 1) : -1;
   const blk = (re) => (P && pi >= 0 && pp >= 0 ? pptBlock(P, re) : null);
   const uc = blk(/^단위원가/);
   if (uc) {
