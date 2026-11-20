@@ -573,7 +573,7 @@ function cmBullets(k, G, B) {
     for (const x of ch) { const d = x.a[i] - x.a[p]; out.push(`${x.label}: ${WHY}${mn}월 매출 ${f1(x.a[i])}백만원, 전월 대비 ${sgn(d, 1)}백만원 ${d >= 0 ? '증가' : '감소'}`); }
     if (vol) { const d = vol.row.a[i] - vol.row.a[p]; out.push(`판매물량: ${mn}월 ${vol.row.a[i].toFixed(1)}톤, 전월 대비 ${sgn(d, 1)}톤 ${d >= 0 ? '증가' : '감소'}`); }
     const pr = pptBlock(P, /^매출단가/);
-    if (pr) { const d = pr.row.a[i] - pr.row.a[p]; out.push(`매출단가: ${WHY}${fP(pr.row.a[i], 'won')}원/kg, 전월 대비 ${sgn(d)}원/kg ${d >= 0 ? '상승' : '하락'}`); }
+    if (pr) { const d = pr.row.a[i] - pr.row.a[p], why = priceReason(M, mn - 1, mn - 2); out.push(`매출단가: ${WHY}${fP(pr.row.a[i], 'won')}원/kg, 전월 대비 ${sgn(d)}원/kg ${d >= 0 ? '상승' : '하락'}${why.length ? ` (${why.join(' / ')})` : ''}`); }
     return out;
   }
   if (G.id === 'E') {
@@ -591,8 +591,8 @@ function cmBullets(k, G, B) {
     return { x, d, u: won ? '원/kg' : '백만원', big: won ? Math.abs(d) >= 10 : Math.abs(d) >= 0.3 };
   }).filter((y) => y.big).sort((y, z) => Math.abs(z.d) / (z.u === '원/kg' ? 100 : 1) - Math.abs(y.d) / (y.u === '원/kg' ? 100 : 1)).slice(0, 3);
   for (const { x, d, u } of kids) {
-    const why = G.id === 'C' || G.id === 'D' ? glReason(k, G.id === 'C' ? '판매비' : '관리비', x.label, mn) : '';
-    out.push(`${x.label}: ${WHY}전월 대비 ${amt(d, u)} ${word(d)}${why ? ` (원장: ${why})` : ''}`);
+    const why = G.id === 'C' || G.id === 'D' ? glReason(k, G.id === 'C' ? '판매비' : '관리비', x.label, mn) : G.id === 'B' ? costReason(k, x.label, mn) : '';
+    out.push(`${x.label}: ${WHY}전월 대비 ${amt(d, u)} ${word(d)}${why ? ` (${G.id === 'B' ? '' : '원장: '}${why})` : ''}`);
   }
   if (G.id === 'B') {
     const w = pptBlock(P, /폐기율/);
@@ -1026,6 +1026,44 @@ function glReason(k, sec, label, m) {
   return top.map((x) => `${x.n} ${x.d > 0 ? '+' : '-'}${Math.abs(x.d).toFixed(1)}${!x.p ? '(신규)' : !x.c ? '(없음)' : ''}`).join(', ');
 }
 
+/* ---------- 매출단가·단위원가 변동 근거 (KPI 파일 숫자로) ---------- */
+// 매출단가 변동 = 품목 단가 영향(Σ 단가차 × 당월 물량 / 총물량) + 품목 구성(믹스) 영향(나머지)
+function priceReason(M, i, p) {
+  const out = [], f0k = (v) => Math.round(Math.abs(v)).toLocaleString('ko-KR');
+  const it = M.items.map((x) => ({ n: x.label, q: M.qtys.find((y) => y.label === x.label), pr: M.prices.find((y) => y.label === x.label) })).filter((x) => x.q && x.pr);
+  const Q = it.reduce((s, x) => s + (x.q.a[i] || 0), 0), Qp = it.reduce((s, x) => s + (x.q.a[p] || 0), 0);
+  if (!Q || !Qp || !M.price) return out;
+  const eff = it.map((x) => ({ ...x, e: x.pr.a[i] > 0 && x.pr.a[p] > 0 ? (x.pr.a[i] - x.pr.a[p]) * x.q.a[i] / Q : 0 }));
+  const pe = eff.reduce((s, x) => s + x.e, 0), mix = (M.price.a[i] - M.price.a[p]) - pe;
+  const sg = (v) => `${v >= 0 ? '+' : '-'}${f0k(v)}원`;
+  out.push(`품목 단가 변동 영향 ${sg(pe)}, 품목 구성(믹스) 변화 영향 ${sg(mix)}`);
+  for (const x of eff.filter((x) => Math.abs(x.e) >= 10).sort((a, b) => Math.abs(b.e) - Math.abs(a.e)).slice(0, 2)) { const d = x.pr.a[i] - x.pr.a[p]; out.push(`${x.n} 단가 ${f0k(d)}원 ${d >= 0 ? '상승' : '하락'} (${f0k(x.pr.a[p])} → ${f0k(x.pr.a[i])}원/kg)`); }
+  const sh = it.map((x) => ({ n: x.n, c: x.q.a[i] / Q, b: x.q.a[p] / Qp, pr: x.pr.a[i] })).filter((x) => Math.abs(x.c - x.b) >= 0.02).sort((a, b) => Math.abs(b.c - b.b) - Math.abs(a.c - a.b)).slice(0, 2);
+  if (sh.length && Math.abs(mix) >= 10) out.push(`물량 비중: ${sh.map((x) => `${x.n} ${Math.round(x.b * 100)}% → ${Math.round(x.c * 100)}% (${f0k(x.pr)}원/kg)`).join(', ')}`);
+  return out;
+}
+// 단위원가 하위(상품대·수입제비용·폐기원가) 근거: 'Target … PL' 시트 품목별 금액
+function costReason(k, label, m) {
+  const T = k.target;
+  if (!T) return '';
+  const j = m - 1, pj = m - 2, L = nzl(label);
+  const tr = (re) => T.rows.find((r) => re.test(nzl(r.label)));
+  const kids = (re) => T.rows.filter((r) => r.lv === 3 && re.test(nzl(r.p)));
+  const won = (v) => `${v >= 0 ? '+' : '-'}${Math.round(Math.abs(v)).toLocaleString('ko-KR')}원`;
+  const mil = (v) => `${v >= 0 ? '+' : '-'}${Math.abs(v).toFixed(1)}`;
+  if (L === '상품대') {
+    const a = tr(/^kg당원물대/), b = tr(/^kg당수출제비용/);
+    return [a && `kg당 원물대 ${won(a.a[j] - a.a[pj])}`, b && `kg당 수출제비용 ${won(b.a[j] - b.a[pj])}`].filter(Boolean).join(', ');
+  }
+  const amt = L === '수입제비용' ? /^총수입제비용/ : L === '폐기원가' ? /^총폐기금액/ : null;
+  if (!amt) return '';
+  const tot = tr(amt), q = tr(/^물량/);
+  if (!tot) return '';
+  const top = kids(amt).map((r) => ({ n: r.label, d: (r.a[j] || 0) - (r.a[pj] || 0) })).filter((x) => Math.abs(x.d) >= 0.1).sort((a, b) => Math.abs(b.d) - Math.abs(a.d)).slice(0, 2);
+  const head = `총액 ${f1(tot.a[pj])} → ${f1(tot.a[j])}백만원${q ? `, 물량 ${f1(q.a[pj])} → ${f1(q.a[j])}톤` : ''}`;
+  return head + (top.length ? ` / ${top.map((x) => `${x.n} ${mil(x.d)}`).join(', ')}` : '');
+}
+
 /* ---------- ✉️ KPI 송부 메일 요약: 사용자가 보내던 메일 형식(전월 대비 1)~8)) ---------- */
 function mailText(k, M, m) {
   const i = m - 1, p = m - 2;
@@ -1052,9 +1090,7 @@ function mailText(k, M, m) {
   if (M.price) {
     const d = M.price.a[i] - M.price.a[p];
     item(`kg당 매출단가 ${n0(d)}원 ${ud(d)} (${f0(M.price.a[i])}원/kg)`);
-    const ch = M.prices.filter((x) => { const q = M.qtys.find((y) => y.label === x.label); return x.a[p] > 0 && x.a[i] > 0 && (!q || q.a[i] >= 0.1) && ab(x.a[i] / x.a[p] - 1) >= 0.05; })
-      .sort((a, b) => ab(b.a[i] / b.a[p] - 1) - ab(a.a[i] / a.a[p] - 1)).slice(0, 4);
-    for (const x of ch) { const dd = x.a[i] - x.a[p]; sub(`${x.label} 단가 ${n0(dd)}원 ${ud(dd)} (${f0(x.a[p])} → ${f0(x.a[i])}원/kg)`); }
+    for (const t of priceReason(M, i, p)) sub(t);
     sub('[원인 확인]');
     gap();
   }
@@ -1065,7 +1101,7 @@ function mailText(k, M, m) {
   if (uc) {
     const d = uc.row.a[pi] - uc.row.a[pp];
     item(`kg당 단위원가 ${n0(d)}원 ${ud(d)} (${f0(uc.row.a[pi])}원/kg)`);
-    for (const x of uc.kids) { const dd = x.a[pi] - x.a[pp]; if (ab(dd) >= 5) sub(`kg당 ${x.label} ${n0(dd)}원 ${ud(dd)} [사유]`); }
+    for (const x of uc.kids) { const dd = x.a[pi] - x.a[pp]; if (ab(dd) >= 5) { const why = costReason(k, x.label, m); sub(`kg당 ${x.label} ${n0(dd)}원 ${ud(dd)} ${why ? `(${why})` : '[사유]'}`); } }
     gap();
   }
   // 5) GP
