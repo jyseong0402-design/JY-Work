@@ -6,7 +6,7 @@ import { loadXLSX } from './excel.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const ui = { id: null, m: null };
+const ui = { id: null, m: null, mode: (() => { try { return localStorage.getItem('jy-kpimode') || 'month'; } catch { return 'month'; } })() };
 let toastFn = () => {};
 
 /* ---------- 엑셀 읽기 ---------- */
@@ -164,16 +164,20 @@ function findings(M, m) {
 /* ---------- 그래프 (SVG) ---------- */
 function niceMax(v) { if (v <= 0) return 1; const p = 10 ** Math.floor(Math.log10(v)); return Math.ceil(v / p / (v / p > 5 ? 2 : 1)) * p * (v / p > 5 ? 2 : 1); }
 // 월별 막대(실적) + 예산 표시 + (선택) 비율 선
-function barChart({ a, b, m, line, lineLabel, sel, title }) {
+function barChart({ a, b, m, line, lineLabel, sel, title, cnt = 12 }) {
   const W = 640, H = 230, L = 40, R = line ? 40 : 12, T = 14, Bm = 26;
-  const vals = [...a.slice(0, 12), ...(b || []).slice(0, 12)];
-  const hi = niceMax(Math.max(0, ...vals)), lo = Math.min(0, ...vals) < 0 ? -niceMax(-Math.min(...vals)) : 0;
+  const vals = [...a.slice(0, cnt), ...(b || []).slice(0, cnt)];
+  // 눈금: 0을 지나는 깔끔한 간격(1·2·5×10ⁿ)
+  const vmax = Math.max(0, ...vals), vmin = Math.min(0, ...vals);
+  const raw = (vmax - vmin) / 4 || 1, p10 = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((f) => f * p10).find((v) => v >= raw);
+  const hi = Math.ceil(vmax / step) * step || (vmin < 0 ? 0 : step), lo = Math.floor(vmin / step) * step;
   const y = (v) => T + (hi - v) / (hi - lo) * (H - T - Bm);
-  const bw = (W - L - R) / 12;
+  const bw = (W - L - R) / cnt;
   let s = '';
-  for (let k = 0; k <= 4; k++) { const v = lo + (hi - lo) * k / 4; s += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" class="kg-grid"/><text x="${L - 6}" y="${y(v) + 4}" class="kg-ax" text-anchor="end">${Math.round(v * 10) / 10}</text>`; }
+  for (let v = lo; v <= hi + step / 2; v += step) { s += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" class="kg-grid"/><text x="${L - 6}" y="${y(v) + 4}" class="kg-ax" text-anchor="end">${Math.round(v * 100) / 100}</text>`; }
   if (lo < 0) s += `<line x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}" class="kg-zero"/>`;
-  for (let k = 0; k < 12; k++) {
+  for (let k = 0; k < cnt; k++) {
     const x = L + k * bw, v = a[k] || 0, on = k < m;
     if (on) s += `<rect x="${x + bw * .18}" y="${Math.min(y(v), y(0))}" width="${bw * .64}" height="${Math.max(1, Math.abs(y(v) - y(0)))}" rx="3" class="kg-bar ${k === sel - 1 ? 'sel' : ''} ${v < 0 ? 'neg' : ''}"><title>${k + 1}월 ${f1(v)}</title></rect>`;
     if (b && b[k]) s += `<line x1="${x + bw * .1}" x2="${x + bw * .9}" y1="${y(b[k])}" y2="${y(b[k])}" class="kg-bud"><title>${k + 1}월 예산 ${f1(b[k])}</title></line>`;
@@ -203,6 +207,201 @@ function compareBars(title, list, m) {
   return `<div class="card kg"><div class="kg-h"><b>${title}</b><span class="kg-leg"><span class="kl"><i class="kl-bar"></i>${m}월</span>${p >= 0 ? `<span class="kl"><i class="kl-prev"></i>${m - 1}월</span>` : ''}</span></div>${body}</div>`;
 }
 
+/* ---------- 📑 누계 보고 (1~N월) ---------- */
+const sumR = (arr, s, e) => arr.slice(s - 1, e).reduce((t, v) => t + (v || 0), 0); // s~e월 합
+const MONTH_COLORS = ['#2b5ce6', '#1f9d62', '#d98a00', '#8e44ad', '#d64545', '#16a2b8', '#7f8c8d', '#c0392b', '#2c3e50'];
+function quarters(n) {
+  const out = [];
+  for (let q = 0; q * 3 < n; q++) { const s = q * 3 + 1, e = Math.min(q * 3 + 3, n); out.push({ s, e, label: `${q + 1}Q`, part: e - s < 2 }); }
+  return out;
+}
+// 월별 누적 막대(품목·거래처 구성)
+function stackChart(title, list, n, total) {
+  const rows = list.filter((x) => x.a.slice(0, n).some((v) => Math.abs(v) >= 0.05));
+  if (!rows.length) return '';
+  const W = 640, H = 240, L = 40, R = 12, T = 18, Bm = 26;
+  const tot = Array.from({ length: n }, (_, k) => rows.reduce((s, x) => s + Math.max(0, x.a[k]), 0));
+  const hi = niceMax(Math.max(...tot, ...(total ? total.slice(0, n) : [0])));
+  const y = (v) => T + (hi - v) / hi * (H - T - Bm), bw = (W - L - R) / n;
+  let s = '';
+  for (let k = 0; k <= 4; k++) { const v = hi * k / 4; s += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" class="kg-grid"/><text x="${L - 6}" y="${y(v) + 4}" class="kg-ax" text-anchor="end">${Math.round(v)}</text>`; }
+  for (let k = 0; k < n; k++) {
+    let acc = 0;
+    const x = L + k * bw + bw * .15;
+    rows.forEach((r, j) => {
+      const v = Math.max(0, r.a[k]);
+      if (v < 0.01) return;
+      s += `<rect x="${x}" y="${y(acc + v)}" width="${bw * .7}" height="${Math.max(0.5, y(acc) - y(acc + v))}" fill="${MONTH_COLORS[j % MONTH_COLORS.length]}"><title>${k + 1}월 ${esc(r.label)} ${f1(r.a[k])}</title></rect>`;
+      acc += v;
+    });
+    s += `<text x="${x + bw * .35}" y="${y(acc) - 4}" class="kg-ax" text-anchor="middle">${f1(acc)}</text><text x="${x + bw * .35}" y="${H - 8}" class="kg-ax" text-anchor="middle">${k + 1}월</text>`;
+  }
+  const legend = rows.map((r, j) => `<span class="kl"><i style="background:${MONTH_COLORS[j % MONTH_COLORS.length]}"></i>${esc(r.label)}</span>`).join('');
+  return `<div class="card kg"><div class="kg-h"><b>${title}</b></div><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title)}">${s}</svg><div class="kg-leg wrap">${legend}</div></div>`;
+}
+// 비율(GP%·CM%·EBIT%) 월별 선
+function ratioChart(title, series, n) {
+  const W = 640, H = 220, L = 44, R = 48, T = 14, Bm = 26;
+  const vals = series.flatMap((x) => x.v.slice(0, n));
+  const hi = Math.max(0.1, Math.ceil(Math.max(...vals) * 10) / 10), lo = Math.min(0, Math.floor(Math.max(-2, Math.min(...vals)) * 10) / 10);
+  const y = (v) => T + (hi - Math.max(lo, Math.min(hi, v))) / (hi - lo) * (H - T - Bm), bw = (W - L - R) / n;
+  let s = '';
+  const labels = [];
+  for (let k = 0; k <= 4; k++) { const v = lo + (hi - lo) * k / 4; s += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" class="kg-grid"/><text x="${L - 6}" y="${y(v) + 4}" class="kg-ax" text-anchor="end">${pc(v)}</text>`; }
+  if (lo < 0) s += `<line x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}" class="kg-zero"/>`;
+  for (let k = 0; k < n; k++) s += `<text x="${L + k * bw + bw / 2}" y="${H - 8}" class="kg-ax" text-anchor="middle">${k + 1}월</text>`;
+  series.forEach((x, j) => {
+    const pts = x.v.slice(0, n).map((v, k) => [L + k * bw + bw / 2, y(v)]);
+    s += `<polyline fill="none" stroke="${x.c}" stroke-width="2.2" points="${pts.map((p) => p.join(',')).join(' ')}"/>`;
+    s += pts.map(([px, py], k) => `<circle cx="${px}" cy="${py}" r="3.2" fill="var(--panel)" stroke="${x.c}" stroke-width="2"><title>${k + 1}월 ${x.name} ${pc(x.v[k])}</title></circle>`).join('');
+    labels.push({ y: pts[n - 1][1], c: x.c, t: pc(x.v[n - 1]) });
+  });
+  // 끝 값 표시: 오른쪽에 세로로 겹치지 않게
+  labels.sort((p, q) => p.y - q.y).forEach((lb, j, arr) => { if (j && lb.y - arr[j - 1].y < 13) lb.y = arr[j - 1].y + 13; });
+  s += labels.map((lb) => `<text x="${W - R + 8}" y="${lb.y + 4}" class="kg-ax" style="fill:${lb.c};font-weight:700">${lb.t}</text>`).join('');
+  const legend = series.map((x) => `<span class="kl"><i style="height:0;border-top:2px solid ${x.c}"></i>${x.name}</span>`).join('');
+  return `<div class="card kg"><div class="kg-h"><b>${title}</b><span class="kg-leg">${legend}</span></div><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title)}">${s}</svg><p class="muted sm" style="margin:4px 0 0">-200% 아래 값은 그래프 아래끝에 맞춰 표시</p></div>`;
+}
+
+function periodFindings(M, n) {
+  const out = [];
+  const add = (lv, txt) => out.push({ lv, txt });
+  const S = M.sales.a, Q = quarters(n);
+  const lastQ = Q[Q.length - 1], prevQ = Q[Q.length - 2];
+  const avg = (arr, q) => sumR(arr, q.s, q.e) / (q.e - q.s + 1);
+  // 매출 흐름
+  if (n >= 2) add(S[n - 1] >= S[0] ? 'good' : 'bad', `월 매출 1월 ${f1(S[0])} → ${n}월 ${f1(S[n - 1])}백만원 (${S[0] > 0 ? `${(S[n - 1] / S[0]).toFixed(1)}배` : '증가'})`);
+  if (prevQ) {
+    const a = avg(S, prevQ), b = avg(S, lastQ), r = rate(b, a);
+    if (r !== null) add(r >= 0 ? 'good' : 'bad', `${lastQ.label}${lastQ.part ? `(${lastQ.s}~${lastQ.e}월)` : ''} 월평균 매출 ${f1(b)}백만원, ${prevQ.label} 대비 ${r > 0 ? '+' : ''}${Math.round(r * 100)}%`);
+  }
+  const mx = S.slice(0, n).indexOf(Math.max(...S.slice(0, n))), mn = S.slice(0, n).indexOf(Math.min(...S.slice(0, n)));
+  add('info', `최고 매출 ${mx + 1}월 ${f1(S[mx])}백만원 · 최저 ${mn + 1}월 ${f1(S[mn])}백만원`);
+  // 예산
+  const yb = sumR(M.sales.b, 1, n), ya = sumR(S, 1, n);
+  if (yb > 0) add(ya >= yb ? 'good' : 'bad', `누계 매출 예산 달성률 ${Math.round(ya / yb * 100)}% (예산 ${f1(yb)} / 실적 ${f1(ya)}백만원)`);
+  if (M.ebit) { const ea = sumR(M.ebit.a, 1, n), eb = sumR(M.ebit.b, 1, n); if (eb) add(ea >= eb ? 'good' : 'bad', `누계 EBIT ${f1(ea)}백만원, 예산(${f1(eb)}) 대비 ${ea - eb > 0 ? '+' : ''}${f1(ea - eb)}`); }
+  // 수익성
+  if (M.gp && Q.length >= 2) {
+    const g = (q) => sumR(M.gp.a, q.s, q.e) / (sumR(S, q.s, q.e) || 1);
+    const d = g(lastQ) - g(Q[0]);
+    add(d >= 0 ? 'good' : 'bad', `GP% ${Q[0].label} ${pc(g(Q[0]))} → ${lastQ.label} ${pc(g(lastQ))} (${d > 0 ? '+' : ''}${(d * 100).toFixed(1)}%p)`);
+  }
+  for (const [r, nm] of [[M.cm, 'CM'], [M.ebit, 'EBIT']]) if (r) {
+    const a = r.a.slice(0, n);
+    let k = n - 1; while (k >= 0 && a[k] >= 0) k--;
+    if (k < n - 1 && k >= 0) add('good', `${nm} ${k + 2}월부터 흑자 유지 (${n}월 ${f1(a[n - 1])}백만원)`);
+    else if (a[n - 1] < 0) { const w = a.indexOf(Math.min(...a)); if (w < n - 1) add('good', `${nm} 적자 폭 축소: 최대 ${w + 1}월 ${f1(a[w])} → ${n}월 ${f1(a[n - 1])}백만원`); }
+  }
+  if (M.admin && prevQ) { const a = avg(M.admin.a, Q[0]), b = avg(M.admin.a, lastQ), r = rate(b, a); if (r !== null && Math.abs(r) >= 0.1) add(r < 0 ? 'good' : 'bad', `관리비 월평균 ${Q[0].label} ${f1(a)} → ${lastQ.label} ${f1(b)}백만원 (${r > 0 ? '+' : ''}${Math.round(r * 100)}%)`); }
+  if (M.sell && prevQ) { const a = sumR(M.sell.a, Q[0].s, Q[0].e) / (sumR(S, Q[0].s, Q[0].e) || 1), b = sumR(M.sell.a, lastQ.s, lastQ.e) / (sumR(S, lastQ.s, lastQ.e) || 1); if (Math.abs(b - a) >= 0.03) add(b < a ? 'good' : 'bad', `매출 대비 판매비 비율 ${Q[0].label} ${pc(a)} → ${lastQ.label} ${pc(b)}`); }
+  // 품목 비중 변화
+  if (Q.length >= 2) {
+    const share = (x, q) => sumR(x.a, q.s, q.e) / (sumR(S, q.s, q.e) || 1);
+    for (const x of M.items) { const a = share(x, Q[0]), b = share(x, lastQ); if (Math.abs(b - a) >= 0.04) add('info', `${x.label} 매출 비중 ${Q[0].label} ${pc(a)} → ${lastQ.label} ${pc(b)}`); }
+    const ups = [], downs = [];
+    for (const x of M.prices) {
+      const qv = (q) => { const qq = M.qtys.find((y) => y.label === x.label), it = M.items.find((y) => y.label === x.label); const t = qq ? sumR(qq.a, q.s, q.e) : 0; return t && it ? sumR(it.a, q.s, q.e) / t * 1000 : 0; };
+      const a = qv(Q[0]), b = qv(lastQ), r = rate(b, a);
+      if (a && b && r !== null && Math.abs(r) >= 0.05) (r > 0 ? ups : downs).push(`${x.label} ${f0(a)}→${f0(b)}(${r > 0 ? '+' : ''}${Math.round(r * 100)}%)`);
+    }
+    if (ups.length) add('good', `평균 단가 상승 ${Q[0].label}→${lastQ.label}: ${ups.join(', ')} 원/kg`);
+    if (downs.length) add('bad', `평균 단가 하락 ${Q[0].label}→${lastQ.label}: ${downs.join(', ')} 원/kg`);
+  }
+  // 거래처 시작·중단
+  for (const x of M.chans) {
+    const a = x.a.slice(0, n), on = a.map((v) => v >= 0.05);
+    const first = on.indexOf(true), last = on.lastIndexOf(true);
+    if (sumR(a, 1, n) < 3) continue; // 누계 3백만원 미만 소액 거래처는 생략
+    if (first > 0) add('info', `${x.label} ${first + 1}월부터 거래 시작 (누계 ${f1(sumR(a, 1, n))}백만원)`);
+    if (last >= 0 && last < n - 1) add('bad', `${x.label} ${last + 2}월부터 매출 없음 (마지막 ${last + 1}월, 누계 ${f1(sumR(a, 1, n))}백만원)`);
+  }
+  // 파일 점검
+  if (M.chan && M.chans.length) {
+    const bad = [];
+    for (let k = 0; k < n; k++) if (Math.abs(S[k] - M.chan.a[k]) >= 0.1) bad.push(`${k + 1}월(${f1(S[k] - M.chan.a[k])})`);
+    if (bad.length) add('bad', `⚠️ 파일 점검: 품목별 합계와 거래처별 합계가 다른 달 — ${bad.join(', ')}`);
+  }
+  const order = { bad: 0, good: 1, info: 2 };
+  return out.sort((a, b) => order[a.lv] - order[b.lv]);
+}
+
+function renderYtd(k, M, n) {
+  const ytd = (r, w = 'a') => sumR(r[w], 1, n);
+  const div = (a, b) => (b ? a / b : 0);
+  // 카드
+  const card = (r, name, sub) => {
+    if (!r) return '';
+    const a = ytd(r), b = ytd(r, 'b');
+    return `<div class="card kpi-card"><div class="kc-t">${name} <small>1~${n}월 누계</small></div><div class="kc-big ${a < 0 ? 'neg' : ''}">${f1(a)}<small>백만원</small></div>
+      ${sub ? `<div class="kc-sub">${sub}</div>` : ''}
+      <div class="kc-cmp"><div><span class="muted">월평균</span> ${f1(a / n)}</div>${b ? `<div><span class="muted">예산</span> ${f1(b)} ${delta(a, b, 'amt')}${b > 0 ? ` <small class="muted">달성 ${Math.round(a / b * 100)}%</small>` : ''}</div>` : ''}</div></div>`;
+  };
+  const S = ytd(M.sales);
+  const cards = card(M.sales, '매출액', M.qty ? `물량 <b>${f1(ytd(M.qty))}톤</b> · 단가 <b>${f0(div(S, ytd(M.qty)) * 1000)}원/kg</b>` : '')
+    + card(M.gp, 'GP', M.gp ? `GP% <b>${pc(div(ytd(M.gp), S))}</b>` : '') + card(M.cm, 'CM', M.cm ? `CM% <b>${pc(div(ytd(M.cm), S))}</b>` : '')
+    + card(M.ebit, 'EBIT', M.ebit ? `EBIT% <b>${pc(div(ytd(M.ebit), S))}</b>` : '') + card(M.ebitda, '조정 EBITDA', M.adj && ytd(M.adj) ? `조정사항 ${f1(ytd(M.adj))}` : '');
+
+  // 특이사항 + 보고 메모
+  const fs = periodFindings(M, n);
+  const ic = { bad: '<b class="kd dn">▼</b>', good: '<b class="kd up">▲</b>', info: '<b class="kd" style="color:var(--primary)">●</b>' };
+  const key = `ytd${n}`;
+  const notes = `<div class="card kpi-notes"><div class="kg-h"><b>📌 1~${n}월 주요 내용</b><small class="muted">기간 흐름·분기 비교·예산으로 자동 정리</small></div>
+    <ul class="kf">${fs.map((f) => `<li class="${f.lv}">${ic[f.lv]} ${esc(f.txt)}</li>`).join('')}</ul>
+    <label class="kn"><span class="muted sm">✏️ 보고 메모 (1~${n}월 보고에 덧붙일 내용 · 자동 저장)</span><textarea id="kpiNote" data-id="${k.id}" data-m="${key}" rows="4" placeholder="예: 3Q 이마트 입점으로 매출 확대, 관리비 절감(법인장 급여 종료) 효과">${esc((k.notes || {})[key] || '')}</textarea></label></div>`;
+
+  // 월별 손익표 (PPT 형식)
+  const mcols = Array.from({ length: n }, (_, j) => j);
+  const ratioOf = (num) => (num ? (w, s, e) => div(sumR(num[w], s, e), sumR(M.sales[w], s, e)) : null);
+  const priceOf = (it, q) => (w, s, e) => { const t = q ? sumR(q[w], s, e) : 0; return t ? sumR(it[w], s, e) / t * 1000 : 0; };
+  const L = [];
+  const push = (r, name, kind, cls = '', agg) => r && L.push({ r, name, kind, cls, agg });
+  push(M.sales, '매출액', 'amt', 'top');
+  M.items.forEach((x) => push(x, x.label, 'amt', 'sub'));
+  if (M.chans.some((x) => ytd(x))) { L.push({ head: '거래처별 매출' }); M.chans.filter((x) => ytd(x) || ytd(x, 'b')).forEach((x) => push(x, x.label, 'amt', 'sub')); }
+  push(M.qty, '매출물량(톤)', 'ton', 'top');
+  push(M.price, '매출단가(원/kg)', 'won', 'top', M.qty && priceOf(M.sales, M.qty));
+  M.prices.forEach((x) => push(x, x.label, 'won', 'sub', priceOf(M.items.find((y) => y.label === x.label) || x, M.qtys.find((y) => y.label === x.label))));
+  push(M.cogs, '매출원가', 'cost', 'top');
+  push(M.gp, 'GP', 'amt', 'top hl');
+  push(M.gpp, 'GP%', 'pct', 'sub', ratioOf(M.gp));
+  push(M.sell, '판매비', 'cost', 'top');
+  push(M.cm, 'CM', 'amt', 'top hl');
+  push(M.cmp, 'CM%', 'pct', 'sub', ratioOf(M.cm));
+  push(M.admin, '관리비', 'cost', 'top');
+  push(M.ebit, 'EBIT', 'amt', 'top hl');
+  push(M.ebitp, 'EBIT%', 'pct', 'sub', ratioOf(M.ebit));
+  if (M.adj && ytd(M.adj)) push(M.adj, '조정사항', 'amt', 'sub');
+  push(M.ebitda, '조정 EBITDA', 'amt', 'top hl');
+  const aggV = (x, w, s, e) => (x.agg ? x.agg(w, s, e) : x.kind === 'won' || x.kind === 'pct' ? 0 : sumR(x.r[w], s, e));
+  const tbody = L.map((x) => {
+    if (x.head) return `<tr class="kh"><th colspan="${n + 5}">${x.head}</th></tr>`;
+    const F = fmtOf(x.kind), ya = aggV(x, 'a', 1, n), yb = aggV(x, 'b', 1, n);
+    const ach = x.kind === 'pct' ? (yb ? `${((ya - yb) * 100).toFixed(1)}%p` : '') : yb > 0 && ya > -1e9 ? `${Math.round(ya / yb * 100)}%` : '';
+    return `<tr class="${x.cls}"><th>${esc(x.name)}</th>${mcols.map((j) => `<td class="${x.r.a[j] < 0 ? 'neg' : ''}">${F(x.r.a[j])}</td>`).join('')}<td class="b ytd ${ya < 0 ? 'neg' : ''}">${F(ya)}</td><td>${yb ? F(yb) : '-'}</td><td>${yb ? delta(ya, yb, x.kind) : ''}</td><td class="muted">${ach}</td></tr>`;
+  }).join('');
+  const table = `<div class="card kt-wrap"><div class="kg-h"><b>📋 월별 손익 (1~${n}월)</b><small class="muted">단위: 백만원 (물량 톤, 단가 원/kg) · 누계 비율·단가는 합계로 다시 계산</small></div><div class="kt-scroll"><table class="kt kt-m">
+    <thead><tr><th></th>${mcols.map((j) => `<th>${j + 1}월</th>`).join('')}<th>누계</th><th>누계 예산</th><th>예산 대비</th><th>달성률</th></tr></thead><tbody>${tbody}</tbody></table></div></div>`;
+
+  // 분기 비교
+  const Q = quarters(n);
+  const qrows = [[M.sales, '매출액', 'amt'], [M.qty, '물량(톤)', 'ton'], [M.gp, 'GP', 'amt'], [M.gpp, 'GP%', 'pct', ratioOf(M.gp)], [M.sell, '판매비', 'cost'], [M.cm, 'CM', 'amt'], [M.cmp, 'CM%', 'pct', ratioOf(M.cm)], [M.admin, '관리비', 'cost'], [M.ebit, 'EBIT', 'amt'], [M.ebitda, '조정 EBITDA', 'amt']].filter((x) => x[0]);
+  const qv = (x, q) => (x[3] ? x[3]('a', q.s, q.e) : sumR(x[0].a, q.s, q.e) / (x[2] === 'pct' ? 1 : q.e - q.s + 1));
+  const qtable = Q.length >= 2 ? `<div class="card kt-wrap"><div class="kg-h"><b>📆 분기별 비교 (월평균)</b><small class="muted">분기 금액은 월평균, 비율은 분기 합계 기준${Q[Q.length - 1].part ? ` · ${Q[Q.length - 1].label}는 ${Q[Q.length - 1].s}~${Q[Q.length - 1].e}월만` : ''}</small></div><div class="kt-scroll"><table class="kt">
+    <thead><tr><th></th>${Q.map((q) => `<th>${q.label}<br><small>${q.s}~${q.e}월</small></th>`).join('')}<th>직전 분기 대비</th><th>${Q[0].label} 대비</th></tr></thead>
+    <tbody>${qrows.map((x) => { const F = fmtOf(x[2]); const v = Q.map((q) => qv(x, q)); const last = v[v.length - 1]; return `<tr class="${x[2] === 'pct' || x[2] === 'ton' ? 'sub' : ''}"><th>${x[1]}</th>${v.map((t) => `<td class="${t < 0 ? 'neg' : ''}">${F(t)}</td>`).join('')}<td>${delta(last, v[v.length - 2], x[2])}</td><td>${delta(last, v[0], x[2])}</td></tr>`; }).join('')}</tbody></table></div></div>` : '';
+
+  // 그래프
+  const charts = barChart({ a: M.sales.a, b: M.sales.b, m: n, cnt: n, sel: 0, line: M.gpp?.a, lineLabel: 'GP%', title: `월별 매출액과 GP% (1~${n}월)` })
+    + stackChart('품목별 매출 구성 (백만원)', M.items, n, M.sales.a)
+    + ratioChart('수익성 추이', [M.gpp && { name: 'GP%', v: M.gpp.a, c: '#1f9d62' }, M.cmp && { name: 'CM%', v: M.cmp.a, c: '#2b5ce6' }, M.ebitp && { name: 'EBIT%', v: M.ebitp.a, c: '#d64545' }].filter(Boolean), n)
+    + (M.ebit ? barChart({ a: M.ebit.a, b: M.ebit.b, m: n, cnt: n, sel: 0, title: 'EBIT 월별 (백만원)' }) : '')
+    + (M.chans.filter((x) => ytd(x)).length > 1 ? stackChart('거래처별 매출 구성 (백만원)', M.chans, n, M.chan?.a) : '');
+
+  return `<div class="kpi-report-h"><h2>${k.year}년 ${n > 1 ? `1~${n}월` : "1월"} 실적 보고</h2><p class="muted sm">${esc(k.title)} · 📄 ${esc(k.file || '')}</p></div>
+    <div class="kpi-cards">${cards}</div>${notes}${table}${qtable}<div class="kpi-charts">${charts}</div>`;
+}
+
 /* ---------- 화면 ---------- */
 function list() { return [...(store.get().kpi || [])].sort((a, b) => b.year - a.year || String(a.title).localeCompare(String(b.title))); }
 
@@ -212,7 +411,7 @@ function render() {
   const all = list();
   const sel = $('#kpiSel');
   if (!all.length) {
-    sel.hidden = true; $('#kpiMonths').innerHTML = '';
+    sel.hidden = true; $('#kpiMonths').innerHTML = ''; $('#kpiMode').hidden = true;
     box.innerHTML = `<div class="card kpi-empty"><div style="font-size:40px">📈</div><b>KPI 엑셀 파일을 불러와 주세요</b>
       <p class="muted">위의 「📂 KPI 파일 불러오기」를 누르거나 파일을 이 화면에 끌어다 놓으면, Summary 시트의 월별 실적·예산을 읽어 요약·그래프·특이사항·전월 비교를 보여줍니다.<br>파일은 이 기기 안에서만 읽고, 숫자만 저장되어 탭·PC에서 같이 볼 수 있습니다.</p></div>`;
     return;
@@ -221,11 +420,17 @@ function render() {
   if (ui.id !== k.id) { ui.id = k.id; ui.m = k.month; }
   if (!ui.m || ui.m > k.month) ui.m = k.month;
   sel.hidden = all.length < 2;
+  $('#kpiMode').hidden = false;
   sel.innerHTML = all.map((x) => `<option value="${x.id}" ${x.id === k.id ? 'selected' : ''}>${x.year}년 · ${esc(x.title)}</option>`).join('');
   const m = ui.m, i = m - 1, p = m - 2;
-  $('#kpiMonths').innerHTML = Array.from({ length: k.month }, (_, j) => `<button type="button" data-m="${j + 1}" class="${j + 1 === m ? 'on' : ''}">${j + 1}월</button>`).join('');
+  $('#kpiMonths').innerHTML = Array.from({ length: k.month }, (_, j) => `<button type="button" data-m="${j + 1}" class="${j + 1 === m ? 'on' : ''}">${ui.mode === 'ytd' && j ? '1~' : ''}${j + 1}월</button>`).join('');
   const M = model(k);
   if (!M.sales) { box.innerHTML = '<div class="card">⚠️ 이 파일에서 매출액 항목을 찾지 못했습니다.</div>'; return; }
+  document.querySelectorAll('#kpiMode [data-mode]').forEach((b) => b.classList.toggle('on', b.dataset.mode === ui.mode));
+  if (ui.mode === 'ytd') {
+    box.innerHTML = renderYtd(k, M, m) + '<p class="kpi-foot"><button type="button" class="btn sm" id="kpiPrint">🖨 인쇄·PDF 저장</button> <button type="button" class="btn sm danger" id="kpiDel">🗑 이 KPI 자료 지우기</button></p>';
+    return;
+  }
 
   // 요약 카드
   const card = (row, name, kind = 'amt', sub) => {
@@ -298,6 +503,13 @@ export function initKpi({ toast } = {}) {
   view.addEventListener('drop', (e) => { if (!e.dataTransfer?.files?.length) return; e.preventDefault(); view.classList.remove('drop-on'); loadFiles(e.dataTransfer.files); });
   $('#kpiSel').addEventListener('change', (e) => { ui.id = e.target.value; ui.m = null; render(); });
   $('#kpiMonths').addEventListener('click', (e) => { const b = e.target.closest('[data-m]'); if (b) { ui.m = +b.dataset.m; render(); } });
+  $('#kpiMode').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-mode]');
+    if (!b) return;
+    ui.mode = b.dataset.mode;
+    try { localStorage.setItem('jy-kpimode', ui.mode); } catch { /* 저장 불가 */ }
+    render();
+  });
   let t;
   const saveNote = (el, id = el.dataset.id, m = el.dataset.m) => {
     const k = store.find('kpi', id);
@@ -311,6 +523,7 @@ export function initKpi({ toast } = {}) {
   view.addEventListener('input', (e) => { if (e.target.id === 'kpiNote') { clearTimeout(t); const el = e.target; t = setTimeout(() => saveNote(el), 800); } });
   view.addEventListener('focusout', (e) => { if (e.target.id === 'kpiNote') { clearTimeout(t); saveNote(e.target); } });
   view.addEventListener('click', (e) => {
+    if (e.target.id === 'kpiPrint') { window.print(); return; }
     if (e.target.id !== 'kpiDel') return;
     const k = store.find('kpi', ui.id);
     if (k && confirm(`${k.year}년 「${k.title}」 KPI 자료를 지울까요?\n(엑셀 파일은 그대로이고, 사이트에 저장된 숫자와 메모만 지워집니다)`)) { store.remove('kpi', k.id); ui.id = null; render(); }

@@ -203,7 +203,10 @@
             <input type="file" id="kpiIn" accept=".xlsx,.xlsm,.xls" hidden />
           </div>
         </header>
-        <div class="seg kpi-months" id="kpiMonths"></div>
+        <div class="kpi-bar">
+          <div class="seg" id="kpiMode" hidden><button type="button" data-mode="month">📅 월 분석</button><button type="button" data-mode="ytd">📑 누계 보고</button></div>
+          <div class="seg kpi-months" id="kpiMonths"></div>
+        </div>
         <p class="muted sm" id="kpiMsg"></p>
         <div id="kpiBody"></div>
       </section>

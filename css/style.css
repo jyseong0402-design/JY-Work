@@ -883,7 +883,8 @@ dialog.editor.drop-on .ed-note { outline: 3px dashed var(--primary); outline-off
 /* 📈 KPI 현황 */
 #view-kpi.drop-on { outline: 3px dashed var(--primary); outline-offset: 4px; border-radius: 12px; }
 #kpiSel { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--text); }
-.kpi-months { flex-wrap: wrap; margin-bottom: 10px; max-width: 100%; }
+.kpi-bar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+.kpi-months { flex-wrap: wrap; max-width: 100%; }
 .kpi-months:empty { display: none; }
 .kpi-months button { padding: 6px 12px; min-height: 34px; }
 .kpi-src { margin: 0 0 10px; }
@@ -945,3 +946,24 @@ dialog.editor.drop-on .ed-note { outline: 3px dashed var(--primary); outline-off
 .kt tr.sub th { font-weight: 500; color: var(--muted); padding-left: 20px; }
 .kpi-foot { text-align: right; }
 @media (max-width: 600px) { .kpi-charts { grid-template-columns: 1fr; } .kc-big { font-size: 24px; } }
+/* 📑 누계 보고 */
+.kpi-report-h h2 { margin: 4px 0 0; font-size: 22px; }
+.kpi-report-h p { margin: 2px 0 12px; }
+.kc-t small { font-weight: 500; }
+.kg-leg.wrap { flex-wrap: wrap; margin-top: 6px; }
+.kt-m td, .kt-m th { padding: 6px 8px; }
+.kt td.neg { color: var(--danger); }
+.kt td.ytd { background: var(--primary-soft); }
+.kt tr.hl th, .kt tr.hl td { border-top: 2px solid var(--line); }
+.kt tr.hl th { color: var(--primary); }
+.kt tr.kh th { text-align: left; font-size: 12px; color: var(--muted); background: var(--bg); position: static; }
+.kt thead th small { font-weight: 400; }
+@media print {
+  .nav, #view-kpi .vh .bd-tools, .kpi-bar, .kpi-foot, .kpi-src, #kpiMsg, .toast, .kn span { display: none !important; }
+  body, .main { background: #fff !important; }
+  .main { padding: 0 !important; margin: 0 !important; }
+  .card { break-inside: avoid; box-shadow: none; }
+  .kn textarea { border: 0; resize: none; padding: 0; }
+  .kt-scroll { overflow: visible; }
+  .kt { font-size: 10px; }
+}
