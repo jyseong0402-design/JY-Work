@@ -1042,3 +1042,28 @@ dialog.editor.drop-on .ed-note { outline: 3px dashed var(--primary); outline-off
 .rt td.tg, .kt td.tg { font-weight: 700; color: var(--warn); }
 .kpi-target { border: 2px solid var(--warn); }
 @media print { .kpi-chat, .kt-tsel { display: none !important; } }
+/* 📝 경영회의 코멘트 초안 */
+.kpi-months[hidden] { display: none !important; }
+.rp.cm { max-width: none; }
+.cm-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(340px, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 1200px) { .cm-grid { grid-template-columns: 1fr; } }
+.cm-t { font-size: 13px; }
+.cm-t th, .cm-t td { padding: 5px 7px; }
+.cm-t tr.pct th, .cm-t tr.pct td { font-style: italic; }
+.cm-t th.bg { background: var(--bg); }
+.cm-t th.tg { background: color-mix(in srgb, var(--warn) 18%, var(--panel)); }
+.cm-right { display: grid; gap: 12px; }
+.cm-tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.cm-block { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--panel); }
+.cm-h { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.cm-h b { font-size: 16px; }
+.cm-h .btn { margin-left: auto; }
+.cm-head { font-weight: 700; white-space: pre-line; color: var(--primary); font-size: 14.5px; margin-bottom: 4px; }
+.cm-facts { margin: 4px 0 8px; padding-left: 18px; font-size: 13.5px; display: grid; gap: 2px; color: var(--text); }
+.cm-gl { margin: 4px 0 8px; font-size: 13px; }
+.cm-gl summary, .cm-ask summary { cursor: pointer; color: var(--primary); font-weight: 600; }
+.cm-gl .rt { font-size: 12.5px; margin: 6px 0; }
+.cm-lines { margin: 4px 0 0; padding-left: 18px; display: grid; gap: 2px; }
+.cm-text { width: 100%; font: inherit; font-size: 14px; line-height: 1.55; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--text); resize: vertical; }
+.cm-ask { border: 1px dashed var(--warn); border-radius: 12px; padding: 10px 14px; }
+.cm-ask ol { margin: 8px 0; padding-left: 20px; font-size: 13.5px; display: grid; gap: 4px; }

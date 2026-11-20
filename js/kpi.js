@@ -3,7 +3,7 @@
 // 항목 { id, title, year, month(파일의 결산월), file, loadedAt, rows:[{label, top, grp, a:[12], b:[12]}], notes:{ '10': '메모' } }
 import { store } from './store.js';
 import { loadXLSX } from './excel.js';
-import { aiChat, aiEnabled } from './ai.js';
+import { aiChat, aiEnabled, aiJson } from './ai.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -50,7 +50,98 @@ export function parseKpi(XLSX, wb, file = '') {
   }
   if (!rows.length) throw new Error('Summary 시트에서 항목(매출액 등)을 찾지 못했습니다.');
   const target = parseTarget(XLSX, wb);
-  return { id: `k${year}_${hash(title.replace(/\s+/g, ''))}`, title, year, month: Math.min(12, Math.max(1, month)), file, rows, ...(target ? { target } : {}) };
+  const ppt = parsePpt(XLSX, wb);
+  const fm = Math.min(12, Math.max(1, month));
+  const gl = parseGl(XLSX, wb, year, fm);
+  return { id: `k${year}_${hash(title.replace(/\s+/g, ''))}`, title, year, month: fm, file, rows, ...(target ? { target } : {}), ...(ppt ? { ppt } : {}), ...(gl ? { gl } : {}) };
+}
+
+const fullRows = (XLSX, ws) => {
+  if (ws['!ref']) { const r = XLSX.utils.decode_range(ws['!ref']); r.s = { r: 0, c: 0 }; ws['!ref'] = XLSX.utils.encode_range(r); }
+  return XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null, blankrows: true });
+};
+
+// 📝 경영회의 장표 표: 'PPT…' 시트에서 머리글 줄에 'Actual'·'Budget'·'Target'이 같이 있는 묶음
+//   (9월 파일: PPT (2) 128행~, AJ=대항목·AL/AM=세부, AO~AW=1~9월, AX=Budget 당월, AY=%Ach, BC=Target 당월, BD=%Ach)
+const PPT_SHEET = (n) => /^ppt/i.test(n.trim());
+const MON = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+function parsePpt(XLSX, wb) {
+  for (const sn of wb.SheetNames.filter(PPT_SHEET)) {
+    const ws = wb.Sheets[sn], hidden = (ws["!rows"] || []).map((x) => !!(x && x.hidden));
+    const g = fullRows(XLSX, ws);
+    const s = (r, c) => String((g[r] || [])[c] ?? '').trim();
+    for (let r = 0; r < g.length - 2; r++) {
+      const row = g[r] || [];
+      const find = (re) => row.findIndex((v) => re.test(String(v ?? '').trim()));
+      const cB = find(/^budget$|^bgt$/i), cT = find(/^target$/i);
+      let cA = -1; for (let c = cB - 1; c >= 0; c--) if (/actual/i.test(String(row[c] ?? ''))) { cA = c; break; } // Budget 바로 왼쪽의 Actual (왼쪽 다른 표 제외)
+      if (cA < 0 || cB < 0 || cT < 0) continue;
+      const h = g[r + 1] || [];
+      const months = [];
+      for (let c = cA; c < cB; c++) {
+        const raw = h[c];
+        // 'Jan' 글자 또는 날짜 값(서식만 'mmm')
+        const m = typeof raw === 'number' && raw > 20000 ? new Date(Math.round((raw - 25569) * 864e5)).getUTCMonth() + 1 : MON[s(r + 1, c).slice(0, 3).toLowerCase()];
+        if (m) months.push({ c, m });
+      }
+      if (!months.length) continue;
+      let lab0 = -1; for (let c = cA - 1; c >= 0; c--) if (/단위/.test(String(h[c] ?? ''))) { lab0 = c; break; } // 표 바로 왼쪽의 '(단위: 백만원)' 열
+      const L = lab0 >= 0 ? lab0 : Math.max(0, cA - 5);
+      const rows = [];
+      let blank = 0, kind1 = 'amt';
+      for (let rr = r + 2; rr < g.length && blank < 4; rr++) {
+        let label = '', off = -1;
+        for (let c = L; c < cA; c++) if (s(rr, c)) { label = s(rr, c); off = c - L; break; }
+        if (!label) { blank++; continue; }
+        blank = 0;
+        if (/^dep$/i.test(label)) break;
+        const lv = off === 0 ? 1 : 2;
+        const pct = /%/.test(label);
+        if (lv === 1 && !pct) kind1 = /원\/kg/.test(label) ? 'won' : /톤/.test(label) ? 'ton' : 'amt';
+        const kind = pct ? 'pct' : lv === 1 ? kind1 : kind1;
+        const v = (c) => num((g[rr] || [])[c]);
+        rows.push({ label, lv, kind, a: months.map((x) => v(x.c)), bgt: v(cB), bAch: v(cB + 1), tgt: v(cT), tAch: v(cT + 1), ...(hidden[rr] ? { h: 1 } : {}) });
+      }
+      if (rows.length >= 5) return { sheet: sn, row: r + 1, months: months.map((x) => x.m), rows };
+    }
+  }
+  return null;
+}
+
+// 📒 원장: 'GL(원장)' 시트 → 손익 계정(5·6·7·8xx) 월별 합계(VND) + 당월·전월 주요 거래(911 마감분개 제외)
+const GL_SHEET = (n) => /원장|^gl\b/i.test(n.trim());
+function parseGl(XLSX, wb, year, month) {
+  const sn = wb.SheetNames.find(GL_SHEET);
+  if (!sn) return null;
+  const g = fullRows(XLSX, wb.Sheets[sn]);
+  let hr = -1;
+  for (let r = 0; r < 30 && hr < 0; r++) if ((g[r] || []).some((v) => /^account$/i.test(String(v ?? '').trim())) && (g[r] || []).some((v) => /debit/i.test(String(v ?? '')))) hr = r;
+  if (hr < 0) return null;
+  const H = g[hr].map((v) => String(v ?? '').trim().toLowerCase());
+  const col = (re) => H.findIndex((v) => re.test(v));
+  const cAcc = col(/^account$/), cCor = col(/corresponding/), cDr = col(/debit/), cCr = col(/credit/), cDesc = col(/general description/) >= 0 ? col(/general description/) : col(/description/);
+  const cObj = col(/name of object/), cY = col(/^year$/), cM = col(/^month$/), cDate = col(/posting date/);
+  const acc = {}, lines = [];
+  for (let r = hr + 1; r < g.length; r++) {
+    const row = g[r] || [];
+    const a = String(row[cAcc] ?? '').trim();
+    if (!/^[5678]\d{2,}/.test(a) || /^911/.test(String(row[cCor] ?? ''))) continue;
+    if (/profit and loss|lãi lỗ/i.test(String(row[cDesc] ?? ''))) continue; // 손익 마감 대체분개 제외
+    let y = Number(row[cY]), m = Number(row[cM]);
+    if (!(m >= 1) && cDate >= 0) { const d = row[cDate]; const dt = typeof d === 'number' ? new Date(Math.round((d - 25569) * 864e5)) : new Date(String(d)); y = dt.getFullYear(); m = dt.getMonth() + 1; }
+    if (y !== year || !(m >= 1 && m <= 12)) continue;
+    const dr = Number(row[cDr]) || 0, cr = Number(row[cCr]) || 0;
+    const amt = /^[57]/.test(a) ? cr - dr : dr - cr; // 수익은 대변, 비용은 차변이 +
+    if (!amt) continue;
+    (acc[a] ||= Array(12).fill(0))[m - 1] += amt;
+    if ((m === month || m === month - 1) && Math.abs(amt) >= 1e6) {
+      const desc = String(row[cDesc] ?? '').split('/').map((x) => x.trim()).filter(Boolean);
+      lines.push({ m, a, v: Math.round(amt), d: (desc[desc.length - 1] || '').slice(0, 90), o: String(row[cObj] ?? '').trim().slice(0, 40), c: String(row[cCor] ?? '').trim() });
+    }
+  }
+  if (!Object.keys(acc).length) return null;
+  lines.sort((p, q) => Math.abs(q.v) - Math.abs(p.v));
+  return { sheet: sn, acc, lines: lines.slice(0, 400) };
 }
 
 // 🎯 'Target … PL' 시트: 왼쪽은 월별 실적(3행 연도·4행 'N월'), 그 오른쪽 한 칸 띄고 Target 시나리오 열(월 기준 목표치)
@@ -106,8 +197,8 @@ async function readFile(f) {
   const buf = await f.arrayBuffer();
   const names = XLSX.read(buf, { bookSheets: true }).SheetNames;
   const sn = names.find((n) => /^summary/i.test(n.trim()));
-  const tn = names.find(TARGET_SHEET);
-  const wb = XLSX.read(buf, sn ? { sheets: [sn, tn].filter(Boolean) } : {});
+  const extra = names.filter((n) => TARGET_SHEET(n) || PPT_SHEET(n) || GL_SHEET(n));
+  const wb = XLSX.read(buf, sn ? { sheets: [sn, ...extra], cellStyles: true } : {}); // cellStyles: 숨긴 행 정보
   return parseKpi(XLSX, wb, f.name);
 }
 
@@ -331,6 +422,141 @@ function targetFindings(k, m) {
   const under = TM.items.filter((x) => x.t[si] > 0.5 && x.a[i] / x.t[si] < 0.8);
   if (under.length) add('bad', `🎯 Target 미달 품목: ${under.map((x) => `${x.label} ${f1(x.a[i])}/${f1(x.t[si])}`).join(', ')}`);
   return out;
+}
+
+/* ---------- 📝 경영회의 코멘트 초안: 장표 표(PPT 시트) + A~E 코멘트(근거 숫자·원장·현지 문의·AI 초안) ---------- */
+const VND_PER_KRW = 18.5; // KPI 허브와 같은 환산(VND ÷ 18.5 = 원)
+const ACC_NAME = { 511: '매출', 515: '금융수익', 632: '매출원가', 635: '금융비용', 6411: '판매 인건비', 6412: '판매 재료·포장', 6413: '판매 소모품', 6414: '판매 감가상각', 6415: '판매 보증', 6417: '판매 외주용역(운반·창고·라벨 등)', 6418: '판매 기타', 6421: '관리 인건비', 6422: '관리 소모품', 6423: '관리 사무용품', 6424: '관리 감가상각', 6425: '세금·공과', 6426: '충당금', 6427: '관리 외주용역(임차·통신 등)', 6428: '관리 기타', 711: '기타수익', 811: '기타비용', 821: '법인세' };
+const accName = (a) => ACC_NAME[a.slice(0, 4)] || ACC_NAME[a.slice(0, 3)] || '';
+const krwM = (vnd) => vnd / VND_PER_KRW / 1e6; // VND → 백만원
+const fP = (v, kind) => { // 장표 숫자 형식: 음수는 괄호, 10 이상은 정수
+  if (kind === 'pct') return Math.abs(v) < 5e-4 ? '-' : (v < 0 ? `(${Math.abs(v * 100).toFixed(1)}%)` : `${(v * 100).toFixed(1)}%`);
+  if (Math.abs(v) < 0.05 && kind !== 'won') return '-';
+  const a = Math.abs(v), t = kind === 'won' ? Math.round(a).toLocaleString('ko-KR') : a >= 10 ? Math.round(a).toLocaleString('ko-KR') : a.toFixed(1);
+  return v < 0 ? `(${t})` : t;
+};
+const fAch = (v, kind) => (kind === 'pct' ? (Math.abs(v) < 5e-4 ? '-' : `${v > 0 ? '' : '('}${Math.abs(v * 100).toFixed(1)}%p${v > 0 ? '' : ')'}`) : !v ? '-' : `${Math.round(v * 100)}%`);
+const CM_GROUPS = [
+  { id: 'A', name: '매출액', re: /^매출액/, unit: '백만원', acc: /^5/ },
+  { id: 'B', name: '단위원가', re: /^단위원가/, unit: '원', acc: /^632|^1561/ },
+  { id: 'C', name: '판매비', re: /^판매비/, unit: '백만원', acc: /^641/ },
+  { id: 'D', name: '관리비', re: /^관리비/, unit: '백만원', acc: /^642/ },
+  { id: 'E', name: '조정 EBITDA', re: /^조정\s*EBITDA/i, unit: '백만원', acc: null },
+];
+function pptBlock(P, re) { const i = P.rows.findIndex((r) => r.lv === 1 && re.test(r.label.replace(/\s+/g, ' '))); if (i < 0) return null; const kids = []; for (let j = i + 1; j < P.rows.length && (P.rows[j].lv === 2 || P.rows[j].kind === 'pct'); j++) if (P.rows[j].kind !== 'pct') kids.push(P.rows[j]); return { row: P.rows[i], kids: kids.filter((x) => !x.h || !kids.some((y) => !y.h && y.label === x.label)) }; }
+const sgn = (v, d = 0) => `${v > 0 ? '+' : v < 0 ? '-' : '±'}${Math.abs(v).toLocaleString('ko-KR', { maximumFractionDigits: d, minimumFractionDigits: d })}`;
+function cmHeadline(G, B) {
+  const r = B.row, cur = r.a[r.a.length - 1], won = G.unit === '원';
+  const part = (base) => { const d = cur - base; return `${sgn(d, won ? 0 : Math.abs(d) < 10 ? 1 : 0)}${G.unit}${base > 0 && cur >= 0 ? `, ${sgn((cur / base - 1) * 100)}%` : ''}`; };
+  const L = [`${G.name} 단기 Target 대비 ${r.tgt ? part(r.tgt) : '-'}`];
+  if (r.bgt) L.push(`BGT 대비 ${part(r.bgt)}`);
+  return L.join(',\n');
+}
+function cmFacts(k, G, B) {
+  const out = [], n = B.row.a.length, i = n - 1, p = n - 2;
+  if (p < 0) return out;
+  const P = k.ppt, vol = pptBlock(P, /^매출물량/);
+  const kg = vol ? vol.row.a[i] * 1000 : 0, kgp = vol ? vol.row.a[p] * 1000 : 0;
+  for (const x of B.kids.filter((x) => x.kind !== 'pct')) {
+    const d = x.a[i] - x.a[p];
+    if (Math.abs(d) < (x.kind === 'won' ? 1 : 0.05)) continue;
+    const u = x.kind === 'won' ? '원/kg' : x.kind === 'ton' ? '톤' : '백만원';
+    let t = `${x.label}: ${fP(x.a[p], x.kind)} → ${fP(x.a[i], x.kind)}${u === '원/kg' ? '원/kg' : ''} (전월 대비 ${sgn(d, x.kind === 'won' ? 0 : 1)}${u})`;
+    if (x.tgt) t += ` · Target ${fP(x.tgt, x.kind)}`;
+    if (G.id === 'C' && /운반/.test(x.label) && kg && kgp) t += ` · kg당 ${Math.round(x.a[p] * 1e6 / kgp)} → ${Math.round(x.a[i] * 1e6 / kg)}원`;
+    out.push(t);
+  }
+  if (G.id === 'A') {
+    const M = model(k);
+    for (const x of M.chans) { const c = x.a[i], b = x.a[p]; if (Math.abs(c) >= 0.05 || Math.abs(b) >= 0.05) out.push(`${x.label}: ${f1(b)} → ${f1(c)}백만원 (전월 대비 ${sgn(c - b, 1)})`); }
+    if (vol) out.push(`매출물량: ${vol.row.a[p].toFixed(1)} → ${vol.row.a[i].toFixed(1)}톤 · Target ${vol.row.tgt.toFixed(1)}톤`);
+    const pr = pptBlock(P, /^매출단가/); if (pr) out.push(`매출단가: ${fP(pr.row.a[p], 'won')} → ${fP(pr.row.a[i], 'won')}원/kg · Target ${fP(pr.row.tgt, 'won')}`);
+  }
+  if (G.id === 'B') { const w = pptBlock(P, /폐기물량|폐기율/); if (w) out.push(`폐기: ${w.row.label} ${fP(w.row.a[p], w.row.kind)} → ${fP(w.row.a[i], w.row.kind)}`); }
+  return out;
+}
+function cmGl(k, G) {
+  if (!k.gl || !G.acc) return { accs: [], lines: [] };
+  const m = k.month, i = m - 1, p = m - 2;
+  const accs = Object.entries(k.gl.acc).filter(([a]) => G.acc.test(a)).map(([a, v]) => ({ a, cur: v[i] || 0, prev: p >= 0 ? v[p] || 0 : 0 }))
+    .filter((x) => Math.abs(x.cur) + Math.abs(x.prev) > 0).sort((x, y) => Math.abs(y.cur - y.prev) - Math.abs(x.cur - x.prev));
+  const top = new Set(accs.slice(0, 4).map((x) => x.a));
+  const lines = k.gl.lines.filter((l) => l.m === m && top.has(l.a)).slice(0, 8);
+  return { accs: accs.slice(0, 8), lines };
+}
+function cmQuestions(k) {
+  const q = [];
+  for (const G of CM_GROUPS) {
+    const { accs } = cmGl(k, G);
+    for (const x of accs.slice(0, 3)) {
+      const d = x.cur - x.prev;
+      if (Math.abs(krwM(d)) < 0.5) continue;
+      const desc = k.gl.lines.find((l) => l.m === k.month && l.a === x.a)?.d || '';
+      q.push(`[${G.name}] 계정 ${x.a}${accName(x.a) ? `(${accName(x.a)})` : ''}: ${k.month - 1}월 ${(x.prev / 1e6).toFixed(1)}M → ${k.month}월 ${(x.cur / 1e6).toFixed(1)}M VND (${d > 0 ? '+' : ''}${(d / 1e6).toFixed(1)}M, ≈${sgn(krwM(d), 1)}백만원)${desc ? ` — 주요 거래 "${desc}"` : ''} → 변동 사유 확인 부탁드립니다.`);
+    }
+  }
+  return q;
+}
+function renderCmt(k) {
+  const P = k.ppt;
+  if (!P) return `<div class="card">⚠️ 이 파일에서 경영회의 장표 표(PPT 시트의 Actual·Budget·Target 표)를 찾지 못했습니다.</div>`;
+  const n = P.months.length, mn = P.months[n - 1];
+  const head = `<tr><th>(단위: 백만원)</th>${P.months.map((m) => `<th>${m}월</th>`).join('')}<th class="bg">BGT<br><small>${mn}월</small></th><th class="bg">% Ach.</th><th class="tg">Target<br><small>${mn}월</small></th><th class="tg">% Ach.</th></tr>`;
+  const body = P.rows.filter((r) => !r.h).map((r) => `<tr class="${r.lv === 1 && r.kind !== 'pct' ? 'key' : 'sub'}${r.kind === 'pct' ? ' pct' : ''}"><th>${esc(r.label)}</th>${r.a.map((v, j) => `<td class="${j === n - 1 ? 'hl' : ''} ${v < 0 ? 'neg' : ''}">${fP(v, r.kind)}</td>`).join('')}<td>${fP(r.bgt, r.kind)}</td><td class="muted">${fAch(r.bAch, r.kind)}</td><td class="tg">${fP(r.tgt, r.kind)}</td><td class="muted">${fAch(r.tAch, r.kind)}</td></tr>`).join('');
+  const table = `<div class="kt-scroll"><table class="rt cm-t"><thead>${head}</thead><tbody>${body}</tbody></table></div><p class="muted sm">출처: '${esc(P.sheet)}' 시트 ${P.row}행 표 (경영회의 장표와 같은 표)</p>`;
+  const notes = k.notes || {};
+  const blocks = CM_GROUPS.map((G) => {
+    const B = pptBlock(P, G.re);
+    if (!B) return '';
+    const facts = cmFacts(k, G, B);
+    const { accs, lines } = cmGl(k, G);
+    const key = `cm${mn}${G.id}`;
+    const glHtml = accs.length ? `<details class="cm-gl"><summary>📒 원장 확인 (${k.gl.sheet}, VND)</summary><table class="rt"><tr><th>계정</th><th>${mn - 1}월</th><th>${mn}월</th><th>증감</th><th>≈백만원</th></tr>${accs.map((x) => `<tr><th>${x.a} <small class="muted">${esc(accName(x.a))}</small></th><td>${(x.prev / 1e6).toFixed(1)}M</td><td>${(x.cur / 1e6).toFixed(1)}M</td><td class="${x.cur - x.prev > 0 ? 'neg' : ''}">${x.cur - x.prev > 0 ? '+' : ''}${((x.cur - x.prev) / 1e6).toFixed(1)}M</td><td>${sgn(krwM(x.cur - x.prev), 1)}</td></tr>`).join('')}</table>
+      ${lines.length ? `<p class="muted sm">${mn}월 주요 거래 (변동 큰 계정)</p><ul class="cm-lines">${lines.map((l) => `<li><b>${l.a}</b> ${(l.v / 1e6).toFixed(1)}M · ${esc(l.d)}${l.o ? ` <small class="muted">${esc(l.o)}</small>` : ''}</li>`).join('')}</ul>` : ''}</details>` : '';
+    return `<div class="cm-block" data-g="${G.id}"><div class="cm-h"><span class="rp-no">${G.id}</span><b>${G.name}</b><button type="button" class="btn ghost sm" data-cm-fill="${G.id}">↺ 자동 문구</button></div>
+      <div class="cm-head">${esc(cmHeadline(G, B))}</div>
+      ${facts.length ? `<ul class="cm-facts">${facts.map((f) => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}
+      ${glHtml}
+      <textarea class="cm-text" data-id="${k.id}" data-m="${key}" rows="5" placeholder="현지 확인 내용을 넣어 코멘트를 쓰세요 (자동 저장)">${esc(notes[key] || '')}</textarea></div>`;
+  }).join('');
+  const qs = cmQuestions(k);
+  const ask = `<details class="cm-ask"><summary>❓ 현지 문의 초안 (${qs.length}건)</summary>${qs.length ? `<ol>${qs.map((x) => `<li>${esc(x)}</li>`).join('')}</ol><button type="button" class="btn sm" id="cmAskCopy">📋 문의 목록 복사</button>` : '<p class="muted">큰 원장 변동이 없습니다.</p>'}</details>`;
+  return `<article class="rp cm"><header class="rp-head"><h2>📝 ${k.year}년 ${mn}월 경영회의 베트남 장표 코멘트</h2><p>왼쪽 표는 장표와 같은 숫자, 오른쪽은 A~E 코멘트 초안입니다. 숫자 근거와 원장을 보고 현지 확인 내용을 채운 뒤 복사해 장표에 붙이세요.</p></header>
+    <div class="cm-grid"><div class="cm-left">${table}</div><div class="cm-right">
+      <div class="cm-tools"><button type="button" class="btn sm primary" id="cmAi">🤖 AI 초안 만들기</button><button type="button" class="btn sm" id="cmCopy">📋 코멘트 전체 복사</button><span class="muted sm" id="cmMsg">${esc(cmStatus)}</span></div>
+      ${ask}${blocks}</div></div></article>`;
+}
+function cmAutoText(k, gid) {
+  const P = k.ppt, G = CM_GROUPS.find((x) => x.id === gid), B = P && pptBlock(P, G.re);
+  if (!B) return '';
+  return [cmHeadline(G, B), ...cmFacts(k, G, B).map((f) => `- ${f}`), '- (현지 확인: )'].join('\n');
+}
+let cmStatus = '';
+async function cmAi(k) {
+  const msg = $('#cmMsg');
+  if (!aiEnabled()) { msg.textContent = '⚙️ 설정에서 Claude API 키를 먼저 넣어주세요.'; return; }
+  const P = k.ppt, mn = P.months[P.months.length - 1];
+  const parts = CM_GROUPS.map((G) => {
+    const B = pptBlock(P, G.re);
+    if (!B) return '';
+    const { accs, lines } = cmGl(k, G);
+    return `[${G.id} ${G.name}]\n제목줄: ${cmHeadline(G, B).replace(/\n/g, ' ')}\n근거 숫자:\n${cmFacts(k, G, B).map((f) => `- ${f}`).join('\n')}\n원장 계정 증감(VND): ${accs.map((x) => `${x.a}${accName(x.a) ? `(${accName(x.a)})` : ''} ${(x.prev / 1e6).toFixed(1)}M→${(x.cur / 1e6).toFixed(1)}M`).join(', ') || '-'}\n원장 주요 거래: ${lines.map((l) => `${l.a} ${(l.v / 1e6).toFixed(1)}M ${l.d}`).join(' | ') || '-'}\n현지 확인 메모(사용자가 쓴 내용): ${(k.notes || {})[`cm${mn}${G.id}`] || '-'}`;
+  }).filter(Boolean).join('\n\n');
+  const schema = { type: 'object', additionalProperties: false, required: CM_GROUPS.map((g) => g.id), properties: Object.fromEntries(CM_GROUPS.map((g) => [g.id, { type: 'string' }])) };
+  msg.textContent = 'AI가 초안을 쓰는 중…';
+  try {
+    const out = await aiJson({
+      system: '당신은 한국 식품회사 베트남 법인의 월간 경영회의 장표 코멘트를 쓰는 재무 담당자입니다. 각 항목(A~E)마다 한국어 장표 문구를 씁니다. ' +
+        '형식: 첫 줄은 주어진 제목줄 그대로(숫자 바꾸지 말 것, 계획 대신 BGT 표기 가능), 그 아래 2~4줄은 "항목명: 내용" 형태의 짧은 개조식(명사형 종결, 예: "~감소", "~예정"). ' +
+        '원인은 근거 숫자·원장 거래·현지 확인 메모에 있는 것만 쓰고, 근거가 없으면 "(현지 확인 필요: 무엇을)"이라고 남기세요. 금액은 백만원·원/kg 단위로, 원장 VND는 18.5로 나눠 원화로 환산해 쓰세요. 빈 항목은 빈 문자열.',
+      prompt: `${k.year}년 ${mn}월 베트남 법인 실적 장표 코멘트 초안을 써주세요.\n\n${parts}`,
+      schema, maxTokens: 4000,
+    });
+    const notes = { ...(store.find('kpi', k.id)?.notes || {}) };
+    for (const G of CM_GROUPS) if (out[G.id]) notes[`cm${mn}${G.id}`] = out[G.id].trim();
+    store.upsert('kpi', { id: k.id, notes });
+    cmStatus = '✅ AI 초안을 넣었습니다. 현지 확인 후 고쳐 쓰세요.'; ($('#cmMsg') || {}).textContent = cmStatus;
+  } catch (e) { cmStatus = '⚠️ ' + (e.message || e); ($('#cmMsg') || {}).textContent = cmStatus; }
 }
 
 /* ---------- 📑 누계 보고 (1~N월) ---------- */
@@ -588,10 +814,12 @@ function render() {
   $('#kpiMode').hidden = false; $('#kpiChat').hidden = false;
   sel.innerHTML = all.map((x) => `<option value="${x.id}" ${x.id === k.id ? 'selected' : ''}>${x.year}년 · ${esc(x.title)}</option>`).join('');
   const m = ui.m, i = m - 1, p = m - 2;
+  $('#kpiMonths').hidden = ui.mode === 'cmt';
   $('#kpiMonths').innerHTML = Array.from({ length: k.month }, (_, j) => `<button type="button" data-m="${j + 1}" class="${j + 1 === m ? 'on' : ''}">${ui.mode === 'ytd' && j ? '1~' : ''}${j + 1}월</button>`).join('');
   const M = model(k);
   if (!M.sales) { box.innerHTML = '<div class="card">⚠️ 이 파일에서 매출액 항목을 찾지 못했습니다.</div>'; return; }
   document.querySelectorAll('#kpiMode [data-mode]').forEach((b) => b.classList.toggle('on', b.dataset.mode === ui.mode));
+  if (ui.mode === 'cmt') { box.innerHTML = renderCmt(k); return; }
   if (ui.mode === 'ytd') {
     box.innerHTML = renderYtd(k, M, m) + '<p class="kpi-foot"><button type="button" class="btn sm" id="kpiPrint">🖨 인쇄·PDF 저장</button> <button type="button" class="btn sm danger" id="kpiDel">🗑 이 KPI 자료 지우기</button></p>';
     return;
@@ -770,17 +998,35 @@ export function initKpi({ toast } = {}) {
     if (v) notes[m] = v; else delete notes[m];
     store.upsert('kpi', { id: k.id, notes });
   };
-  view.addEventListener('input', (e) => { if (e.target.id === 'kpiNote') { clearTimeout(t); const el = e.target; t = setTimeout(() => saveNote(el), 800); } });
-  view.addEventListener('focusout', (e) => { if (e.target.id === 'kpiNote') { clearTimeout(t); saveNote(e.target); } });
+  const isNote = (el) => el.id === 'kpiNote' || el.classList?.contains('cm-text');
+  view.addEventListener('input', (e) => { if (isNote(e.target)) { clearTimeout(t); const el = e.target; t = setTimeout(() => saveNote(el), 800); } });
+  view.addEventListener('focusout', (e) => { if (isNote(e.target)) { clearTimeout(t); saveNote(e.target); } });
   view.addEventListener('click', (e) => {
     const tb = e.target.closest('[data-tgt]');
     if (tb) { ui.tgt = +tb.dataset.tgt; try { localStorage.setItem('jy-kpitgt', ui.tgt); } catch { /* 저장 불가 */ } render(); return; }
     if (e.target.id === 'kpiPrint') { window.print(); return; }
+    const cur = store.find('kpi', ui.id);
+    const copy = (txt) => navigator.clipboard?.writeText(txt).then(() => toastFn('복사했습니다.'), () => toastFn('복사하지 못했습니다.'));
+    const fill = e.target.closest('[data-cm-fill]');
+    if (fill && cur) {
+      const ta = fill.closest('.cm-block').querySelector('.cm-text');
+      if (ta.value.trim() && !confirm('지금 쓴 내용을 자동 문구로 바꿀까요?')) return;
+      ta.value = cmAutoText(cur, fill.dataset.cmFill);
+      saveNote(ta);
+      return;
+    }
+    if (e.target.id === 'cmAi' && cur) { cmAi(cur); return; }
+    if (e.target.id === 'cmAskCopy' && cur) { copy(cmQuestions(cur).map((x, j) => `${j + 1}. ${x}`).join('\n')); return; }
+    if (e.target.id === 'cmCopy' && cur) {
+      const txt = [...view.querySelectorAll('.cm-block')].map((b) => { const t = b.querySelector('.cm-text').value.trim() || cmAutoText(cur, b.dataset.g); return `${b.dataset.g}. ${t}`; }).join('\n\n');
+      copy(txt);
+      return;
+    }
     if (e.target.id !== 'kpiDel') return;
     const k = store.find('kpi', ui.id);
     if (k && confirm(`${k.year}년 「${k.title}」 KPI 자료를 지울까요?\n(엑셀 파일은 그대로이고, 사이트에 저장된 숫자와 메모만 지워집니다)`)) { store.remove('kpi', k.id); ui.id = null; render(); }
   });
   // 메모 입력 중에는 다시 그리지 않음 (다른 기기 동기화로 커서가 튀지 않게)
-  store.subscribe(() => { if (document.activeElement?.id !== 'kpiNote') render(); });
+  store.subscribe(() => { const a = document.activeElement; if (!(a && (a.id === 'kpiNote' || a.classList?.contains('cm-text')))) render(); });
   render();
 }
