@@ -241,7 +241,8 @@ async function loadFiles(files) {
     store.upsert('kpi', { ...k, loadedAt: new Date().toISOString(), notes: prev?.notes || {} });
     ui.id = k.id; ui.m = k.month;
     msg.textContent = '';
-    toastFn(`${k.year}년 ${k.month}월 KPI를 불러왔습니다.`);
+    let nb = 0; try { nb = kpiChecks(store.find('kpi', k.id)).filter((x) => x.lv === 'bad').length; } catch { /* 점검 실패 무시 */ }
+    toastFn(`${k.year}년 ${k.month}월 KPI를 불러왔습니다.${nb ? ` 🔎 파일 점검: 확인 필요 ${nb}건` : ''}`);
     render();
   } catch (e) {
     msg.textContent = '⚠️ ' + (e.message || e);
@@ -532,6 +533,9 @@ const fP = (v, kind) => { // 장표 숫자 형식: 음수는 괄호, 10 이상�
   const a = Math.abs(v), t = kind === 'won' ? Math.round(a).toLocaleString('ko-KR') : a >= 10 ? Math.round(a).toLocaleString('ko-KR') : a.toFixed(1);
   return v < 0 ? `(${t})` : t;
 };
+// % Ach.는 시트 값이 아니라 당월 값으로 다시 계산 (10월 파일에서 시트 % Ach.가 9월 값으로 남아 있던 문제)
+//   양수 기준: 실적÷기준 / 음수 기준(적자): (실적−기준)÷|기준| / 비율(%) 행: 실적−기준(%p) — 9월 장표 숫자와 같은 방식
+const achOf = (r, base) => { const a = r.a[r.a.length - 1]; if (!base || a == null) return 0; return r.kind === 'pct' ? a - base : base > 0 ? a / base : (a - base) / Math.abs(base); };
 const fAch = (v, kind) => (kind === 'pct' ? (Math.abs(v) < 5e-4 ? '-' : `${v > 0 ? '' : '('}${Math.abs(v * 100).toFixed(1)}%p${v > 0 ? '' : ')'}`) : !v ? '-' : `${Math.round(v * 100)}%`);
 const CM_GROUPS = [
   { id: 'A', name: '매출액', re: /^매출액/, unit: '백만원', acc: /^5/ },
@@ -681,6 +685,53 @@ function cmQuestions(k) {
   }
   return q;
 }
+/* ---------- 🔎 KPI 파일 점검: 불러온 파일에서 숫자가 안 맞거나 빠진 곳을 찾아 알려줌 ---------- */
+function kpiChecks(k) {
+  const out = [], m = k.month, j = m - 1, M = model(k);
+  const add = (lv, txt) => out.push({ lv, txt });
+  // ① 거래처별 매출 합계 = 매출액
+  const tops = k.rows.filter((r) => r.top && /^매출액/.test(r.label));
+  if (tops.length > 1) {
+    const chans = k.rows.filter((r) => !r.top && r.grp === tops[1].grp);
+    const fix = (k.chanFix || []).filter((x) => x.m === m);
+    const orig = chans.reduce((s, r) => s + (r.a[j] || 0), 0) - fix.reduce((s, x) => s + x.v, 0);
+    const gap = (tops[0].a[j] || 0) - orig;
+    if (gap >= 0.5) add('bad', `Summary 거래처별 매출 합계가 매출액보다 ${f1(gap)}백만원 적음${fix.length ? ` — 비어 있던 ${fix.map((x) => x.label).join('·')} 칸을 원장(GL)으로 채워 사용 중` : ''}. Summary 거래처 칸(허브 시트 연결) 확인 필요`);
+    else add('ok', `거래처별 매출 합계 = 매출액 (${f1(tops[0].a[j] || 0)}백만원)`);
+  }
+  // ② 품목별 매출 합계 = 매출액
+  if (M.items.length && M.sales) { const g = (M.sales.a[j] || 0) - M.items.reduce((s, x) => s + (x.a[j] || 0), 0); if (Math.abs(g) >= 0.5) add('bad', `품목별 매출 합계가 매출액과 ${f1(g)}백만원 차이`); }
+  // ③ 장표 표(PPT 시트)에 당월 열이 있는지
+  const P = k.ppt;
+  if (!P) add('warn', "경영회의 장표 표('PPT…' 시트)를 찾지 못함");
+  else if (P.months[P.months.length - 1] < m) add('bad', `'${P.sheet}' 시트 장표 표에 ${m}월 열이 없음 (${P.months[P.months.length - 1]}월까지) — 사이트는 Target PL 시트로 채워 보여 주는 중. 시트에 ${m}월 열 추가 필요`);
+  else {
+    // ④ 장표 표 % Ach.가 당월 숫자로 계산돼 있는지
+    const bad = P.rows.filter((r) => !r.h && r.kind !== 'pct').flatMap((r) => [['BGT', r.bgt, r.bAch], ['Target', r.tgt, r.tAch]].filter(([, base, sheet]) => base && Math.abs(achOf(r, base) - (sheet || 0)) > 0.015).map(([nm, base, sheet]) => `${r.label} ${nm} ${fAch(sheet || 0, r.kind)} → ${fAch(achOf(r, base), r.kind)}`));
+    if (bad.length) add('bad', `'${P.sheet}' 시트 % Ach.가 ${m}월 숫자와 안 맞음 ${bad.length}곳 (예: ${bad.slice(0, 3).join(', ')}) — 사이트 표는 다시 계산한 값으로 표시. 장표에 붙이기 전 시트 수식 확인`);
+    else add('ok', `장표 표 % Ach.가 ${m}월 숫자와 일치`);
+    // ⑤ Summary ↔ 장표 표 주요 숫자
+    const pi = P.months.indexOf(m);
+    const pairs = [['매출액', M.sales, /^매출액/], ['매출물량', M.qty, /^매출물량/], ['매출원가', M.cogs, /^매출원가/], ['GP', M.gp, /^GP$/i], ['판매비', M.sell, /^판매비/], ['CM', M.cm, /^CM$/i], ['관리비', M.admin, /^관리비/], ['조정 EBITDA', M.ebitda, /^조정\s*EBITDA/i]];
+    const diff = pairs.map(([nm, sr, re]) => { const b = pptBlock(P, re); if (!sr || !b || pi < 0) return null; const d = (b.row.a[pi] || 0) - (sr.a[j] || 0); return Math.abs(d) >= 0.05 ? `${nm} 장표 ${f1(b.row.a[pi])} / Summary ${f1(sr.a[j] || 0)}` : null; }).filter(Boolean);
+    if (diff.length) add('bad', `장표 표와 Summary 숫자가 다름: ${diff.join(', ')}`);
+    else add('ok', `장표 표 = Summary (매출·원가·GP·판매비·관리비·EBITDA)`);
+  }
+  // ⑥ Target PL 시트에 당월 실적이 있는지
+  if (!k.target) add('warn', "'Target … PL' 시트를 찾지 못해 Target 대비를 볼 수 없음");
+  else { const s = k.target.rows.find((r) => /^매출액/.test(r.label)); if (s && !(Math.abs(s.a[j] || 0) > 0)) add('bad', `'${k.target.sheet}' 시트에 ${m}월 실적이 비어 있음`); }
+  // ⑦ 원장(GL) 매출 = Summary 매출액
+  const gs = k.gl?.acc && Object.entries(k.gl.acc).filter(([a]) => /^511/.test(a)).reduce((s, [, v]) => s + (v[j] || 0), 0);
+  if (gs && M.sales) { const d = krwM(gs) - (M.sales.a[j] || 0); if (Math.abs(d) >= 0.5) add('warn', `원장(GL) 매출 ${f1(krwM(gs))}백만원과 Summary 매출액 ${f1(M.sales.a[j] || 0)}백만원이 ${f1(Math.abs(d))} 차이`); }
+  return out;
+}
+function checksCard(k) {
+  const C = kpiChecks(k), bad = C.filter((x) => x.lv !== 'ok');
+  const ic = { bad: '⚠️', warn: 'ℹ️', ok: '✅' };
+  return `<details class="card kpi-chk${bad.length ? ' has-bad' : ''}" ${bad.length ? 'open' : ''}><summary><b>🔎 ${k.month}월 KPI 파일 점검</b> <small class="muted">${bad.length ? `확인 필요 ${bad.length}건` : '이상 없음'}</small></summary>
+    <ul class="kchk">${[...bad, ...C.filter((x) => x.lv === 'ok')].map((x) => `<li class="${x.lv}">${ic[x.lv]} ${esc(x.txt)}</li>`).join('')}</ul></details>`;
+}
+
 /* ---------- 📌 지난달 보고 후속 확인: 지난달 경영회의 PPT 베트남 장표에서 "예정·목표·추진·협의…" 문장을 뽑아 체크리스트로 ---------- */
 const unx = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
 async function readPrevPpt(file) {
@@ -770,7 +821,7 @@ function renderCmt(k) {
   const body = vis.map((r, x) => {
     const key = r.lv === 1 && r.kind !== 'pct', kid = r.lv === 2, g = grp[x], open = cmOpen.has(g);
     const tg = key && hasKids.has(g) ? `<button type="button" class="cm-tg" data-cmg="${g}" aria-expanded="${open}">${open ? '▾' : '▸'}</button>` : key ? '<span class="cm-tg-sp"></span>' : '';
-    return `<tr class="${key ? 'key' : 'sub'}${r.kind === 'pct' ? ' pct' : ''}${kid ? ' cm-kid' : ''}"${kid ? ` data-cmk="${g}"${open ? '' : ' hidden'}` : ''}><th>${tg}${esc(r.label)}</th>${r.a.map((v, j) => `<td class="${j === n - 1 ? 'hl' : ''} ${v < 0 ? 'neg' : ''}">${fP(v, r.kind)}</td>`).join('')}<td>${fP(r.bgt, r.kind)}</td><td class="muted">${fAch(r.bAch, r.kind)}</td><td class="tg">${fP(r.tgt, r.kind)}</td><td class="muted">${fAch(r.tAch, r.kind)}</td></tr>`;
+    return `<tr class="${key ? 'key' : 'sub'}${r.kind === 'pct' ? ' pct' : ''}${kid ? ' cm-kid' : ''}"${kid ? ` data-cmk="${g}"${open ? '' : ' hidden'}` : ''}><th>${tg}${esc(r.label)}</th>${r.a.map((v, j) => `<td class="${j === n - 1 ? 'hl' : ''} ${v < 0 ? 'neg' : ''}">${fP(v, r.kind)}</td>`).join('')}<td>${fP(r.bgt, r.kind)}</td><td class="muted">${fAch(achOf(r, r.bgt), r.kind)}</td><td class="tg">${fP(r.tgt, r.kind)}</td><td class="muted">${fAch(achOf(r, r.tgt), r.kind)}</td></tr>`;
   }).join('');
   const allOpen = hasKids.size && [...hasKids].every((g) => cmOpen.has(g));
   const table = `<div class="cm-tbar"><button type="button" class="btn sm ghost" id="cmAllTg">${allOpen ? '▴ 세부 모두 접기' : '▾ 세부 모두 펼치기'}</button><span class="muted sm">▸ 를 누르면 세부 항목이 펼쳐집니다</span></div><div class="kt-scroll"><table class="rt cm-t"><thead>${head}</thead><tbody>${body}</tbody></table></div><p class="muted sm">출처: '${esc(P.sheet)}' 시트 ${P.row}행 표 (경영회의 장표와 같은 표)</p>${P.auto ? `<p class="sm cm-auto-note">⚠️ 이 파일의 '${esc(P.sheet)}' 시트에는 ${P.auto.map((x) => `${x}월`).join('·')} 열이 아직 없어, '${esc(k.target?.sheet || 'Target PL')}' 시트의 월 실적으로 같은 규칙에 따라 채웠습니다. BGT는 Summary 시트 값(세부 항목 BGT는 비움), Target은 장표 값 그대로입니다. 시트에 ${P.auto[P.auto.length - 1]}월 열을 추가하면 그 값을 씁니다.</p>` : ''}`;
@@ -1293,8 +1344,9 @@ function render() {
   document.querySelectorAll('#kpiMode [data-mode]').forEach((b) => b.classList.toggle('on', b.dataset.mode === ui.mode));
   // 화면 하나가 오류 나도 멈추지 않고 이유를 보여줌
   const safe = (f, name) => { try { return f(); } catch (e) { console.error(e); return `<div class="card">⚠️ ${name} 화면을 만들다 오류가 났습니다: ${esc(e.message || e)}<br><small class="muted">새로고침(Ctrl+Shift+R) 후에도 같으면 이 문구를 알려주세요.</small></div>`; } };
-  if (ui.mode === 'cmt') { box.innerHTML = safe(() => renderCmt(k), '경영회의 코멘트'); return; }
-  if (ui.mode === 'mail') { box.innerHTML = safe(() => renderMail(k, M, m), '메일 초안'); return; }
+  const chk = safe(() => checksCard(k), '파일 점검');
+  if (ui.mode === 'cmt') { box.innerHTML = chk + safe(() => renderCmt(k), '경영회의 코멘트'); return; }
+  if (ui.mode === 'mail') { box.innerHTML = chk + safe(() => renderMail(k, M, m), '메일 초안'); return; }
   if (ui.mode === 'ytd') {
     box.innerHTML = renderYtd(k, M, m) + '<p class="kpi-foot"><button type="button" class="btn sm" id="kpiPrint">🖨 인쇄·PDF 저장</button> <button type="button" class="btn sm danger" id="kpiDel">🗑 이 KPI 자료 지우기</button></p>';
     return;
@@ -1356,7 +1408,7 @@ function render() {
     <thead><tr><th></th><th>매출(백만원)</th><th>전월 대비</th><th>물량(톤)</th><th>전월 대비</th><th>단가(원/kg)</th><th>전월 대비</th></tr></thead><tbody>${det}</tbody></table></div></div>` : '';
 
   const when = k.loadedAt ? new Date(k.loadedAt) : null;
-  box.innerHTML = `<p class="muted sm kpi-src">📄 ${esc(k.file || '')}${when ? ` · ${when.getMonth() + 1}/${when.getDate()} 불러옴` : ''} · ${esc(k.title)}</p>${chanFixNote(k, m)}
+  box.innerHTML = `<p class="muted sm kpi-src">📄 ${esc(k.file || '')}${when ? ` · ${when.getMonth() + 1}/${when.getDate()} 불러옴` : ''} · ${esc(k.title)}</p>${chk}${chanFixNote(k, m)}
     <div class="kpi-cards">${cards}</div>${tcard}${subsidyCard(k, m, M)}${notes}<div class="kpi-charts">${charts}</div>${table}${detail}
     <p class="kpi-foot"><button type="button" class="btn sm danger" id="kpiDel">🗑 이 KPI 자료 지우기</button></p>`;
 }

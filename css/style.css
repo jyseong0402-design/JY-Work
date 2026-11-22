@@ -1070,6 +1070,11 @@ dialog.editor.drop-on .ed-note { outline: 3px dashed var(--primary); outline-off
 }
 #kpiMode { flex-wrap: wrap; max-width: 100%; flex-shrink: 1; }
 @media (max-width: 600px) { #kpiMode button { padding: 6px 9px; font-size: 13px; } }
+.kpi-chk { margin-bottom: 12px; }
+.kpi-chk.has-bad { border-left: 4px solid var(--warn); }
+.kpi-chk summary { cursor: pointer; }
+.kchk { margin: 8px 0 0; padding-left: 4px; list-style: none; display: grid; gap: 5px; font-size: 13.5px; line-height: 1.5; }
+.kchk li.ok { color: var(--muted); }
 .cm-auto-note { color: var(--warn); margin: 4px 0 0; }
 .mail-text { width: 100%; font-size: 14px; line-height: 1.6; margin-top: 8px; }
 .cm-text.auto { color: var(--muted); }
