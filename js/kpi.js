@@ -226,12 +226,18 @@ const form = { busy: '', res: null, month: 0, file: '', made: null };
 const KIND = { value: ['수식 → 값', 'bad', '지난달은 수식이었는데 이번 달은 숫자를 직접 입력'], blank: ['수식 빠짐', 'bad', '지난달은 수식이었는데 이번 달은 비어 있음'], formula: ['수식 형태 다름', 'warn', '지난달 수식을 옆으로 옮긴 모양과 다름'], newformula: ['값 → 수식', 'info', '지난달은 숫자였는데 이번 달은 수식'], style: ['서식 다름', 'info', '표시 형식·글꼴·채우기 등 서식 번호가 다름'] };
 function renderForm(k) {
   const m = form.month || k.month;
-  const r = form.res;
+  let r = form.res;
   let body = '';
   if (r) {
+    // '의도한 변경'으로 확인 처리한 칸은 경고에서 뺌 (notes['formOk{월}'] = {'시트!주소': 1})
+    const okMap = (k.notes || {})[`formOk${m}`] || {};
+    const isOk = (sh, i) => okMap[`${sh}!${i.addr}`];
+    r = r.map((b) => ({ ...b, okCnt: b.issues.filter((i) => isOk(b.sheet, i)).length, issues: b.issues.filter((i) => !isOk(b.sheet, i)) }));
+    const okTotal = r.reduce((s, b) => s + b.okCnt, 0);
     const all = r.flatMap((b) => b.issues.map((i) => ({ ...i, sheet: b.sheet, head: b.head })));
     const miss = r.filter((b) => b.missing);
     const cnt = (kd) => all.filter((i) => i.kind === kd).length;
+    const need = miss.length + all.filter((i) => KIND[i.kind][1] !== 'info').length;
     const chips = [`<span class="fm-chip ${miss.length ? 'bad' : 'ok'}">당월 열 없음 ${miss.length}</span>`, ...Object.entries(KIND).map(([kd, [nm, lv]]) => `<span class="fm-chip ${cnt(kd) ? lv : 'ok'}">${nm} ${cnt(kd)}</span>`)].join('');
     const sheets = [...new Set(r.map((b) => b.sheet))].map((sh) => {
       const bs = r.filter((b) => b.sheet === sh), is = bs.flatMap((b) => b.issues.map((i) => ({ ...i, head: b.head }))), ms = bs.filter((b) => b.missing);
@@ -239,10 +245,11 @@ function renderForm(k) {
       const rows = bs.reduce((s, b) => s + b.stats.rows, 0);
       const list = [...ms.map((b) => `<li class="bad"><b>당월 열 없음</b> ${esc(b.head)} 표에 ${m}월 열이 없음</li>`),
         ...['value', 'blank', 'formula', 'newformula', 'style'].flatMap((kd) => { const xs = is.filter((i) => i.kind === kd); if (!xs.length) return []; const [nm, lv, ds] = KIND[kd];
-          return [`<li class="${lv}"><b>${nm} ${xs.length}칸</b> <small class="muted">${ds}</small><ul>${xs.slice(0, kd === 'style' ? 5 : 30).map((i) => `<li><code>${esc(i.addr)}</code> ${kd === 'style' ? `서식 ${i.prev} → ${i.cur}` : `${m - 1}월 <code>${esc(String(i.prev).slice(0, 120))}</code> → ${m}월 <code>${esc(String(i.cur).slice(0, 120)) || '(빈칸)'}</code>${i.want ? ` <small class="muted">예상 <code>${esc(i.want.slice(0, 120))}</code></small>` : ''}`}</li>`).join('')}${xs.length > (kd === 'style' ? 5 : 30) ? `<li class="muted">… 외 ${xs.length - (kd === 'style' ? 5 : 30)}칸</li>` : ''}</ul></li>`]; })];
-      return `<details class="fm-sh" ${bad ? 'open' : ''}><summary>${bad ? '⚠️' : '✅'} <b>${esc(sh)}</b> <small class="muted">월 표 ${bs.length}개 · ${rows}줄 확인${is.length ? ` · 확인 필요 ${bad}` : ''}</small></summary>${list.length ? `<ul class="fm-list">${list.join('')}</ul>` : '<p class="muted sm">지난달과 같은 모양입니다.</p>'}</details>`;
+          return [`<li class="${lv}"><b>${nm} ${xs.length}칸</b> <small class="muted">${ds}</small> <button type="button" class="btn sm ghost fm-okall" data-fm-okall="${esc(sh)}|${kd}">✔ 모두 의도한 변경</button><ul>${xs.slice(0, kd === 'style' ? 5 : 30).map((i) => `<li><label class="fm-ok" title="의도한 변경이면 체크 — 이번 달 경고에서 뺌"><input type="checkbox" data-fm-ok="${esc(sh)}!${esc(i.addr)}"></label> <code>${esc(i.addr)}</code> ${kd === 'style' ? `서식 ${i.prev} → ${i.cur}` : `${m - 1}월 <code>${esc(String(i.prev).slice(0, 120))}</code> → ${m}월 <code>${esc(String(i.cur).slice(0, 120)) || '(빈칸)'}</code>${i.want ? ` <small class="muted">예상 <code>${esc(i.want.slice(0, 120))}</code></small>` : ''}`}</li>`).join('')}${xs.length > (kd === 'style' ? 5 : 30) ? `<li class="muted">… 외 ${xs.length - (kd === 'style' ? 5 : 30)}칸</li>` : ''}</ul></li>`]; })];
+      const okN = bs.reduce((s, b) => s + b.okCnt, 0);
+      return `<details class="fm-sh" ${bad ? 'open' : ''}><summary>${bad ? '⚠️' : '✅'} <b>${esc(sh)}</b> <small class="muted">월 표 ${bs.length}개 · ${rows}줄 확인${bad ? ` · 확인 필요 ${bad}` : ''}${okN ? ` · 의도한 변경 ${okN}칸 확인됨` : ''}</small></summary>${list.length ? `<ul class="fm-list">${list.join('')}</ul>` : '<p class="muted sm">지난달과 같은 모양입니다.</p>'}</details>`;
     }).join('');
-    body = `<div class="fm-chips">${chips}</div><p class="muted sm">「${esc(form.file)}」 ${m}월 열을 ${m - 1}월 열과 칸마다 비교 (원본 데이터 시트 GL·TB·Detail of sales·매출원가·폐기원가 등은 제외)</p>${sheets}`;
+    body = `<p class="fm-verdict ${need ? 'bad' : 'ok'}">${need ? `⚠️ 확인 필요 ${need}건` : '✅ 지난달과 이어지는 양식에 문제 없음'}${okTotal ? ` <small class="muted">(의도한 변경으로 확인한 ${okTotal}칸 제외 · <button type="button" class="btn sm ghost" id="fmOkReset">확인 취소</button>)</small>` : ''}</p><div class="fm-chips">${chips}</div><p class="muted sm">「${esc(form.file)}」 ${m}월 열을 ${m - 1}월 열과 칸마다 비교 (원본 데이터 시트 GL·TB·Detail of sales·매출원가·폐기원가 등은 제외)</p>${sheets}`;
   }
   const made = form.made ? `<div class="card fm-made"><b>📄 ${form.made.next}월 양식을 만들었습니다</b> — 「${esc(form.made.name)}」 내려받기 됨
     <ul class="fm-list">${form.made.report.inserted.length ? `<li><b>열 추가</b> ${form.made.report.inserted.map(esc).join(', ')}</li>` : ''}
@@ -1690,6 +1697,13 @@ export function initKpi({ toast } = {}) {
       } catch (err) { toastFn('PPT를 읽지 못했습니다: ' + (err.message || err)); }
       return;
     }
+    const fo = e.target.dataset?.fmOk;
+    if (fo !== undefined) {
+      const key = `formOk${form.month || cur.month}`, ok = { ...((cur.notes || {})[key] || {}) };
+      if (e.target.checked) ok[fo] = 1; else delete ok[fo];
+      store.upsert('kpi', { id: cur.id, notes: { ...(cur.notes || {}), [key]: ok } });
+      return;
+    }
     const cl = e.target.dataset?.closeI;
     if (cl !== undefined) {
       const key = `close${cur.month}`, d = { ...((cur.notes || {})[key] || {}) };
@@ -1768,6 +1782,14 @@ export function initKpi({ toast } = {}) {
     if (e.target.id === 'fmRun' && cur) { formRun(cur, false); return; }
     if (e.target.id === 'fmMake' && cur) { formRun(cur, true); return; }
     if (e.target.id === 'fmPick') { view.querySelector('#fmIn')?.click(); return; }
+    // 의도한 변경 확인 처리(달마다 따로 저장)
+    const okAll = e.target.closest('[data-fm-okall]');
+    if ((okAll || e.target.id === 'fmOkReset') && cur && form.res) {
+      const key = `formOk${form.month || cur.month}`, ok = { ...((cur.notes || {})[key] || {}) };
+      if (okAll) { const [sh, kd] = okAll.dataset.fmOkall.split('|'); for (const b of form.res) if (b.sheet === sh) for (const i of b.issues) if (i.kind === kd) ok[`${sh}!${i.addr}`] = 1; }
+      store.upsert('kpi', { id: cur.id, notes: { ...(cur.notes || {}), [key]: okAll ? ok : {} } });
+      return;
+    }
     if (e.target.id === 'mailCopy') { copy(view.querySelector('.mail-text')?.value || ''); return; }
     if (e.target.id === 'mailReset' && cur) {
       const ta = view.querySelector('.mail-text');

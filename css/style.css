@@ -1090,6 +1090,11 @@ dialog.editor.drop-on .ed-note { outline: 3px dashed var(--primary); outline-off
 .fm-list li.bad > b { color: var(--danger); }
 .fm-list li.warn > b { color: var(--warn); }
 .fm-list code { font-size: 12px; background: var(--bg); padding: 0 4px; border-radius: 4px; word-break: break-all; }
+.fm-verdict { font-size: 16px; font-weight: 700; margin: 10px 0 4px; }
+.fm-verdict.ok { color: var(--ok); }
+.fm-verdict.bad { color: var(--warn); }
+.fm-ok input { width: 15px; height: 15px; margin: 0; vertical-align: middle; cursor: pointer; }
+.fm-okall { margin-left: 6px; padding: 2px 8px; font-size: 12px; }
 .fm-made { border-left: 4px solid var(--ok); margin: 10px 0; }
 .kpi-chk { margin-bottom: 12px; }
 .kpi-chk.has-bad { border-left: 4px solid var(--warn); }
