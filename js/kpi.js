@@ -535,7 +535,8 @@ const fP = (v, kind) => { // 장표 숫자 형식: 음수는 괄호, 10 이상�
 };
 // % Ach.는 시트 값이 아니라 당월 값으로 다시 계산 (10월 파일에서 시트 % Ach.가 9월 값으로 남아 있던 문제)
 //   양수 기준: 실적÷기준 / 음수 기준(적자): (실적−기준)÷|기준| / 비율(%) 행: 실적−기준(%p) — 9월 장표 숫자와 같은 방식
-const achOf = (r, base) => { const a = r.a[r.a.length - 1]; if (!base || a == null) return 0; return r.kind === 'pct' ? a - base : base > 0 ? a / base : (a - base) / Math.abs(base); };
+//   EBITDA 행은 장표 원래 수식 그대로 1 − 실적÷기준 (=-IFERROR(AW/AY,)+1)
+const achOf = (r, base) => { const a = r.a[r.a.length - 1]; if (!base || a == null) return 0; if (r.kind === 'pct') return a - base; if (/EBITDA/i.test(r.label)) return 1 - a / base; return base > 0 ? a / base : (a - base) / Math.abs(base); };
 const fAch = (v, kind) => (kind === 'pct' ? (Math.abs(v) < 5e-4 ? '-' : `${v > 0 ? '' : '('}${Math.abs(v * 100).toFixed(1)}%p${v > 0 ? '' : ')'}`) : !v ? '-' : `${Math.round(v * 100)}%`);
 const CM_GROUPS = [
   { id: 'A', name: '매출액', re: /^매출액/, unit: '백만원', acc: /^5/ },
@@ -761,8 +762,14 @@ function kpiChecks(k) {
   else if (P.months[P.months.length - 1] < m) add('bad', `'${P.sheet}' 시트 장표 표에 ${m}월 열이 없음 (${P.months[P.months.length - 1]}월까지) — 사이트는 Target PL 시트로 채워 보여 주는 중. 시트에 ${m}월 열 추가 필요`);
   else {
     // ④ 장표 표 % Ach.가 당월 숫자로 계산돼 있는지
-    const bad = P.rows.filter((r) => !r.h && r.kind !== 'pct').flatMap((r) => [['BGT', r.bgt, r.bAch], ['Target', r.tgt, r.tAch]].filter(([, base, sheet]) => base && Math.abs(achOf(r, base) - (sheet || 0)) > 0.015).map(([nm, base, sheet]) => `${r.label} ${nm} ${fAch(sheet || 0, r.kind)} → ${fAch(achOf(r, base), r.kind)}`));
-    if (bad.length) add('bad', `'${P.sheet}' 시트 % Ach.가 ${m}월 숫자와 안 맞음 ${bad.length}곳 (예: ${bad.slice(0, 3).join(', ')}) — 사이트 표는 다시 계산한 값으로 표시. 장표에 붙이기 전 시트 수식 확인`);
+    // % 행(% of revenue·% margin)도 포함 — 시트에서 나눗셈 수식을 아래로 복사하면 %p 행이 망가짐
+    let par = '';
+    const bad = P.rows.filter((r) => !r.h).flatMap((r) => { if (r.lv === 1 && r.kind !== 'pct') par = r.label; return [['BGT', r.bgt, r.bAch], ['Target', r.tgt, r.tAch]].filter(([, base, sheet]) => base && Math.abs(achOf(r, base) - (sheet || 0)) > 0.015).map(([nm, base, sheet]) => ({ r, t: `${r.kind === 'pct' ? `${par} ${r.label}` : r.label} ${nm} ${fAch(sheet || 0, r.kind)} → ${fAch(achOf(r, base), r.kind)}` })); });
+    if (bad.length) {
+      const pct = bad.some((x) => x.r.kind === 'pct'), eb = bad.some((x) => /EBITDA/i.test(x.r.label) && x.r.kind !== 'pct'), plain = bad.some((x) => x.r.kind !== 'pct' && !/EBITDA/i.test(x.r.label));
+      const how = [plain && `일반 행은 =IFERROR(당월실적/기준,)`, pct && `% of revenue·% margin 행은 =당월실적−기준 (%p)`, eb && `EBITDA·조정 EBITDA 행은 =-IFERROR(당월실적/기준,)+1`].filter(Boolean).join(', ');
+      add('bad', `'${P.sheet}' 시트 % Ach.가 ${m}월 숫자와 안 맞음 ${bad.length}곳 (예: ${bad.slice(0, 3).map((x) => x.t).join(', ')}) — 사이트 표는 다시 계산한 값으로 표시. 시트 수식: ${how}`);
+    }
     else add('ok', `장표 표 % Ach.가 ${m}월 숫자와 일치`);
     // ⑤ Summary ↔ 장표 표 주요 숫자
     const pi = P.months.indexOf(m);
