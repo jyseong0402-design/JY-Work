@@ -635,8 +635,8 @@ function cmBullets(k, G, B) {
     out.push(`${x.label}: ${now}전월 대비 ${amt(d, u)} ${word(d)}${why ? ` (${G.id === 'B' ? '' : '원장: '}${why})` : ''}${d > 0 ? CHK : ''}`);
   }
   if (G.id === 'B') {
-    const w = pptBlock(P, /폐기율/);
-    if (w) { const d = (w.row.a[i] - w.row.a[p]) * 100; out.push(`폐기: ${WHY}폐기율 전월 대비 ${Math.abs(d).toFixed(1)}%p ${d >= 0 ? '상승' : '하락'}`); }
+    const wl = wasteLine(k, mn);
+    if (wl) out.push(`폐기: ${wl}${wasteOf(k, mn).rate > WASTE_GOAL ? CHK : ''}`);
   }
   return out;
 }
@@ -685,6 +685,60 @@ function cmQuestions(k) {
   }
   return q;
 }
+/* ---------- 🗑 폐기물량·폐기율 (KPI 파일에 톤 데이터가 없어 지난달 장표 표 + 이번 달 입력) ---------- */
+// 폐기율 = 폐기물량 ÷ (판매물량 + 폐기물량) — 9월 장표(1월 2.4톤/39.8%, 2월 3.3톤/26.9%)로 확인한 식
+const WASTE_GOAL = 0.03;
+function wasteOf(k, m) {
+  const w = (k.notes || {}).waste || {}, M = model(k), raw = w[m];
+  if (raw == null || raw === '' || !M.qty) return null;
+  const t = typeof raw === 'object' ? +raw.t : +raw;
+  if (typeof raw === 'object' && Number.isFinite(raw.r)) return { t, rate: raw.r }; // 지난 장표 값 그대로
+  const q = M.qty.a[m - 1] || 0;
+  return { t, rate: q + t > 0 ? t / (q + t) : 0 };
+}
+const wasteT = (v) => (v == null ? '' : typeof v === 'object' ? v.t : v);
+function wasteCard(k, mn) {
+  const P = pptOf(k), b = P && pptBlock(P, /^매출원가/), kid = b?.kids.find((x) => /폐기/.test(x.label));
+  const ms = Array.from({ length: mn }, (_, j) => j + 1), w = (k.notes || {}).waste || {};
+  const cell = (m) => { const x = wasteOf(k, m); return x ? `${(x.rate * 100).toFixed(1)}%` : '-'; };
+  const cur = wasteOf(k, mn);
+  return `<div class="card waste"><div class="kg-h"><b>🗑 폐기물량·폐기율</b><small class="muted">폐기율 = 폐기물량 ÷ (판매물량 + 폐기물량), 목표 ${WASTE_GOAL * 100}%</small></div>
+    <div class="kt-scroll"><table class="rt cm-t wt"><thead><tr><th></th>${ms.map((m) => `<th>${m}월</th>`).join('')}</tr></thead><tbody>
+    <tr><th>폐기물량(톤)</th>${ms.map((m) => `<td><input class="wt-in" data-waste-m="${m}" inputmode="decimal" value="${wasteT(w[m])}" placeholder="${m === mn ? '입력' : ''}"></td>`).join('')}</tr>
+    <tr class="key"><th>폐기율(%)</th>${ms.map((m) => { const x = wasteOf(k, m); return `<td class="${x && x.rate > WASTE_GOAL ? 'neg' : ''}">${cell(m)}</td>`; }).join('')}</tr>
+    ${kid && P ? `<tr class="sub"><th>폐기원가(백만원)</th>${ms.map((m) => { const i = P.months.indexOf(m); return `<td>${i >= 0 ? fP(kid.a[i], 'amt') : '-'}</td>`; }).join('')}</tr>` : ''}
+    </tbody></table></div>
+    <p class="muted sm">${cur ? `${mn}월 폐기율 ${(cur.rate * 100).toFixed(1)}% — 코멘트 B·메일 초안에 자동 반영` : `${mn}월 폐기물량(톤)을 입력하면 폐기율이 계산되어 코멘트 B·메일 초안에 들어갑니다. 지난달 PPT를 불러오면 지난 달들 값은 장표 표에서 채워집니다.`}</p></div>`;
+}
+const wasteLine = (k, mn) => { const c = wasteOf(k, mn), p = wasteOf(k, mn - 1); if (!c) return ''; return `폐기율 ${(c.rate * 100).toFixed(1)}%${p ? `(${mn - 1}월 ${(p.rate * 100).toFixed(1)}%)` : ''}, 폐기물량 ${c.t.toFixed(1)}톤${p ? `(${mn - 1}월 ${p.t.toFixed(1)})` : ''}${c.rate <= WASTE_GOAL ? ` — 목표 ${WASTE_GOAL * 100}% 이내 관리` : ` — 목표 ${WASTE_GOAL * 100}%까지 축소 추진`}`; };
+
+/* ---------- 🗓 베트남 KPI 월 마감 체크리스트 (매달 손으로 하는 단계, 사용자 작업 방식 기준) ---------- */
+const CLOSE_STEPS = [
+  ['결산월 변경', 'Summary·허브(닥터애그베트남삼도결산기준) B3 결산월을 당월로'],
+  ['로우데이터 붙여넣기', 'FS(GL·TB·PL·Detail of sales·import), 수불 원가계산용, 회차별 수입제비용, 폐기'],
+  ['허브 당월 열 보완', '이마트 블록·판매비·관리비 당월 열 수식 이어 붙이기', 'chan'],
+  ['aT 지원금 입력', '월별조정 운반·라벨·창고·인건비 (aT 정산서 RD 기준)', 'at'],
+  ['정산 하드코딩 확인', '운반비·라벨비·창고·숙소·인원수, 시식급여(TB 월 열 참조)'],
+  ['Target·detail 시트 월 열', "Target 3 PL·detail 품목별·비적격 64289 당월 열 추가", 'tgt'],
+  ['장표 시트(PPT (2)) 월 열·% Ach.', '장표 표에 당월 열 추가, BGT·Target 당월 값과 % Ach. 수식 갱신', 'ppt'],
+  ['GL 수기 태그', 'GL(원장) Q·R·T열 태그'],
+  ['허브 Check = 0', '허브 시트 당월 Check 0 확인'],
+];
+function closeCard(k) {
+  const m = k.month, done = (k.notes || {})[`close${m}`] || {}, C = kpiChecks(k);
+  const has = (re) => C.find((x) => re.test(x.txt));
+  const sub = subsidyRows(k)[0];
+  const auto = {
+    chan: () => { const x = has(/거래처별 매출 합계/); return x ? (x.lv === 'ok' ? '✅ 거래처 합계 = 매출액' : '⚠️ 거래처 칸 비어 있음') : ''; },
+    at: () => (sub ? (Math.abs(sub.tot.a[m - 1] || 0) >= 0.05 ? `✅ ${m}월 aT 지원금 ${f1(Math.abs(sub.tot.a[m - 1]))}백만원 반영` : `⚠️ ${m}월 aT 지원금 0`) : ''),
+    tgt: () => (has(/Target PL|Target … PL|실적이 비어/) ? '⚠️ 당월 실적 비어 있음' : '✅ 당월 실적 있음'),
+    ppt: () => (has(/열이 없음|% Ach\.가 .*안 맞음/) ? '⚠️ 월 열 또는 % Ach. 확인 필요' : '✅ 당월 열·% Ach. 정상'),
+  };
+  const n = CLOSE_STEPS.filter((_, j) => done[j]).length;
+  return `<details class="card kpi-chk kpi-close" ${ui.closeOpen ? 'open' : ''}><summary><b>🗓 ${m}월 KPI 마감 체크리스트</b> <small class="muted">${n}/${CLOSE_STEPS.length} 완료</small></summary>
+    <ul class="kchk">${CLOSE_STEPS.map(([t, d, a], j) => { const s = a ? auto[a]() : ''; return `<li class="${done[j] ? 'done' : ''}"><label><input type="checkbox" data-close-i="${j}" ${done[j] ? 'checked' : ''}><span><b>${esc(t)}</b> <small class="muted">${esc(d)}</small>${s ? `<br><small>${esc(s)}</small>` : ''}</span></label></li>`; }).join('')}</ul></details>`;
+}
+
 /* ---------- 🔎 KPI 파일 점검: 불러온 파일에서 숫자가 안 맞거나 빠진 곳을 찾아 알려줌 ---------- */
 function kpiChecks(k) {
   const out = [], m = k.month, j = m - 1, M = model(k);
@@ -745,7 +799,18 @@ async function readPrevPpt(file) {
     const body = xml.replace(/<a:tbl>[\s\S]*?<\/a:tbl>/g, '');
     const paras = [...body.matchAll(/<a:p>([\s\S]*?)<\/a:p>/g)].map((m) => ({ t: unx([...m[1].matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((x) => x[1]).join('')).replace(/\s+/g, ' ').trim(), lv: +((m[1].match(/<a:pPr[^>]*lvl="(\d)"/) || [])[1] || 0) })).filter((x) => x.t.length > 1);
     const mon = +((plain.match(/베트남법인(\d{1,2})월실적Issue/) || [])[1] || 0);
-    return { slide: n, mon, paras };
+    // 장표 오른쪽 폐기 표(1월…N월 / 폐기물량(톤) / 폐기율(%))에서 월별 폐기물량을 읽음
+    const waste = {};
+    for (const tb of xml.match(/<a:tbl>[\s\S]*?<\/a:tbl>/g) || []) {
+      const rows = [...tb.matchAll(/<a:tr[^>]*>([\s\S]*?)<\/a:tr>/g)].map((r) => [...r[1].matchAll(/<a:tc[^>]*>([\s\S]*?)<\/a:tc>/g)].map((c) => [...c[1].matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((x) => x[1]).join('').trim()));
+      const h = rows.find((r) => r.filter((c) => /^\d{1,2}월$/.test(c)).length >= 3), w = rows.find((r) => /폐기물량/.test(r[0] || '')), rt = rows.find((r) => /폐기율/.test(r[0] || ''));
+      if (!h || !w) continue;
+      h.forEach((c, i) => {
+        const mm = /^(\d{1,2})월$/.exec(c); const v = parseFloat(String(w[i] || '').replace(/,/g, '')); const r = rt ? parseFloat(String(rt[i] || '').replace(/[,%]/g, '')) : NaN;
+        if (mm && Number.isFinite(v)) waste[+mm[1]] = Number.isFinite(r) ? { t: v, r: r / 100 } : v; // 장표에 적힌 폐기율도 같이 (톤 반올림 오차 방지)
+      });
+    }
+    return { slide: n, mon, paras, waste };
   }
   return null;
 }
@@ -795,15 +860,23 @@ function followHint(k, text, mn) {
   if (/인센티브|판매사원|시식|진열/.test(text)) { const v = kv(kid(/^판매비/, /인건비/)); if (v) return `ℹ️ 판매 인건비 ${f1(v[0])}백만원 (전월 ${f1(v[1])}) — 효과는 현지 확인`; }
   return '';
 }
+// 지난달 PPT를 안 넣어도: 사이트에 저장된 지난달 코멘트(A~E)의 "예정·목표…" 문장을 이번 달 후속 목록으로
+function autoFollow(k, mn) {
+  const texts = ['A', 'B', 'C', 'D', 'E'].map((g) => (k.notes || {})[`cm${mn - 1}${g}`]).filter(Boolean);
+  if (!texts.length) return null;
+  const paras = texts.flatMap((t) => t.split('\n').filter((l) => l.trim()).map((l) => ({ t: l.replace(/^\s*-\s*/, '').trim(), lv: /^\s*-/.test(l) ? 1 : 0 })));
+  const items = prevItems(paras);
+  return items.length ? { src: `업무노트 ${mn - 1}월 코멘트`, mon: mn - 1, items, auto: 1 } : null;
+}
 function followCard(k, mn) {
-  const fu = (k.notes || {})[`fu${mn}`];
+  const fu = (k.notes || {})[`fu${mn}`] || autoFollow(k, mn);
   const items = fu?.items || [];
   const left = items.filter((x) => !x.done).length;
   // 가로로 긴 표: 확인 | 지난달 보고 내용 | 이번 달 자동 판정 | 결과·현지 답변 메모
   const rows = items.map((x, j) => { const h = followHint(k, x.t, mn); return `<li class="fu-it${x.done ? ' done' : ''}"><label class="fu-c"><input type="checkbox" data-fu-i="${j}" ${x.done ? 'checked' : ''} aria-label="확인"></label><div class="fu-t">${esc(x.t)}</div><div class="fu-h">${h ? esc(h) : '<span class="muted">수치 없음 — 직접 확인</span>'}</div><input class="fu-memo" data-fu-m="${j}" value="${esc(x.memo || '')}" placeholder="${mn}월 결과·현지 답변 메모"></li>`; }).join('');
   const head = items.length ? `<li class="fu-it fu-head"><div class="fu-c">확인</div><div class="fu-t">지난달 보고 내용 (예정·목표·추진)</div><div class="fu-h">${mn}월 숫자로 자동 판정</div><div>결과·현지 답변 메모</div></li>` : '';
   return `<details class="cm-ask fu" ${items.length ? 'open' : ''}><summary>📌 지난달 보고 후속 확인 ${items.length ? `(${items.length - left}/${items.length} 확인)` : ''}</summary>
-    <p class="muted sm">${fu ? `「${esc(fu.src)}」${fu.mon ? ` ${fu.mon}월 장표` : ''}에서 예정·목표·추진 문장을 뽑았습니다. 이번 달 숫자로 판정 가능한 것은 ✅/⚠️로 표시합니다.` : '지난달 경영회의 PPT(.pptx)를 불러오면 베트남 장표에서 "~예정 / ~목표 / ~추진 / 협의 중" 문장을 뽑아 이번 달 확인 목록을 만듭니다.'}</p>
+    <p class="muted sm">${fu ? `${fu.auto ? `지난달 업무노트에 쓴 ${fu.mon}월 코멘트(A~E)` : `「${esc(fu.src)}」${fu.mon ? ` ${fu.mon}월 장표` : ''}`}에서 예정·목표·추진 문장을 뽑았습니다.${fu.auto ? ' 최종 장표 기준으로 바꾸려면 지난달 PPT를 불러오세요.' : ''} 이번 달 숫자로 판정 가능한 것은 ✅/⚠️로 표시합니다.` : '지난달 경영회의 PPT(.pptx)를 불러오면 베트남 장표에서 "~예정 / ~목표 / ~추진 / 협의 중" 문장을 뽑아 이번 달 확인 목록을 만듭니다.'}</p>
     ${items.length ? `<ul class="fu-list">${head}${rows}</ul>` : ''}
     <div class="cm-tools"><button type="button" class="btn sm" id="fuLoad">📂 지난달 PPT 불러오기</button>${items.length ? '<button type="button" class="btn sm" id="fuCopy">📋 미확인 항목 복사(현지 문의용)</button>' : ''}<input type="file" id="fuIn" accept=".pptx" hidden></div></details>`;
 }
@@ -844,7 +917,7 @@ function renderCmt(k) {
   const qs = cmQuestions(k);
   const ask = `<details class="cm-ask"><summary>❓ 현지 문의 초안 (${qs.length}건)</summary>${qs.length ? `<ol>${qs.map((x) => `<li>${esc(x)}</li>`).join('')}</ol><button type="button" class="btn sm" id="cmAskCopy">📋 문의 목록 복사</button>` : '<p class="muted">큰 원장 변동이 없습니다.</p>'}</details>`;
   return `<article class="rp cm"><header class="rp-head"><h2>📝 ${k.year}년 ${mn}월 경영회의 베트남 장표 코멘트</h2><p>왼쪽 표는 장표와 같은 숫자, 오른쪽은 A~E 코멘트 초안입니다. 숫자 근거와 원장을 보고 현지 확인 내용을 채운 뒤 복사해 장표에 붙이세요.</p></header>
-    <div class="cm-grid"><div class="cm-left">${table}</div><div class="cm-right">
+    <div class="cm-grid"><div class="cm-left">${table}${wasteCard(k, mn)}</div><div class="cm-right">
       <div class="cm-tools">${aiEnabled() ? '<button type="button" class="btn sm primary" id="cmAi">🤖 AI 초안 만들기</button>' : ''}<button type="button" class="btn sm" id="cmCopy">📋 코멘트 전체 복사</button><span class="muted sm" id="cmMsg">${esc(cmStatus)}</span></div>
       ${ask}${blocks}</div></div>${followCard(k, mn)}</article>`;
 }
@@ -1265,6 +1338,8 @@ function mailText(k, M, m) {
     const d = uc.row.a[pi] - uc.row.a[pp];
     item(`kg당 단위원가 ${n0(d)}원 ${ud(d)} (${f0(uc.row.a[pi])}원/kg)`);
     for (const x of uc.kids) { const dd = x.a[pi] - x.a[pp]; if (ab(dd) >= 5) { const why = costReason(k, x.label, m); sub(`kg당 ${x.label} ${n0(dd)}원 ${ud(dd)} ${why ? `(${why})` : '[사유]'}`); } }
+    const wl = wasteLine(k, m);
+    if (wl) sub(wl);
     gap();
   }
   // 5) GP
@@ -1408,7 +1483,7 @@ function render() {
     <thead><tr><th></th><th>매출(백만원)</th><th>전월 대비</th><th>물량(톤)</th><th>전월 대비</th><th>단가(원/kg)</th><th>전월 대비</th></tr></thead><tbody>${det}</tbody></table></div></div>` : '';
 
   const when = k.loadedAt ? new Date(k.loadedAt) : null;
-  box.innerHTML = `<p class="muted sm kpi-src">📄 ${esc(k.file || '')}${when ? ` · ${when.getMonth() + 1}/${when.getDate()} 불러옴` : ''} · ${esc(k.title)}</p>${chk}${chanFixNote(k, m)}
+  box.innerHTML = `<p class="muted sm kpi-src">📄 ${esc(k.file || '')}${when ? ` · ${when.getMonth() + 1}/${when.getDate()} 불러옴` : ''} · ${esc(k.title)}</p>${chk}${safe(() => closeCard(k), '마감 체크리스트')}${chanFixNote(k, m)}
     <div class="kpi-cards">${cards}</div>${tcard}${subsidyCard(k, m, M)}${notes}<div class="kpi-charts">${charts}</div>${table}${detail}
     <p class="kpi-foot"><button type="button" class="btn sm danger" id="kpiDel">🗑 이 KPI 자료 지우기</button></p>`;
 }
@@ -1517,7 +1592,7 @@ export function initKpi({ toast } = {}) {
   });
   // 📌 지난달 보고 후속 확인
   const fuKey = (k) => { const P = pptOf(k); return P ? `fu${P.months[P.months.length - 1]}` : null; };
-  const fuSave = (k, upd) => { const key = fuKey(k); if (!key) return; const notes = { ...(k.notes || {}) }; notes[key] = upd({ ...(notes[key] || { items: [] }) }); store.upsert('kpi', { id: k.id, notes }); };
+  const fuSave = (k, upd) => { const key = fuKey(k); if (!key) return; const notes = { ...(k.notes || {}) }; notes[key] = upd({ ...(notes[key] || autoFollow(k, +key.slice(2)) || { items: [] }) }); store.upsert('kpi', { id: k.id, notes }); };
   view.addEventListener('change', async (e) => {
     const cur = store.find('kpi', ui.id);
     if (!cur) return;
@@ -1528,13 +1603,30 @@ export function initKpi({ toast } = {}) {
         if (!r) { toastFn('이 PPT에서 베트남법인 실적 장표를 찾지 못했습니다.'); return; }
         const items = prevItems(r.paras);
         fuSave(cur, () => ({ src: f.name, mon: r.mon, items }));
-        toastFn(`지난달 장표에서 확인할 항목 ${items.length}개를 찾았습니다.`);
+        const wn = Object.keys(r.waste || {}).length;
+        if (wn) { const c2 = store.find('kpi', cur.id); store.upsert('kpi', { id: cur.id, notes: { ...(c2.notes || {}), waste: { ...r.waste, ...((c2.notes || {}).waste || {}) } } }); }
+        toastFn(`지난달 장표에서 확인할 항목 ${items.length}개${wn ? `, 폐기물량 ${wn}개월` : ''}을 가져왔습니다.`);
       } catch (err) { toastFn('PPT를 읽지 못했습니다: ' + (err.message || err)); }
+      return;
+    }
+    const cl = e.target.dataset?.closeI;
+    if (cl !== undefined) {
+      const key = `close${cur.month}`, d = { ...((cur.notes || {})[key] || {}) };
+      if (e.target.checked) d[cl] = 1; else delete d[cl];
+      store.upsert('kpi', { id: cur.id, notes: { ...(cur.notes || {}), [key]: d } });
+      return;
+    }
+    const wm = e.target.dataset?.wasteM;
+    if (wm !== undefined) {
+      const v = e.target.value.trim().replace(/,/g, ''), waste = { ...((cur.notes || {}).waste || {}) };
+      if (v === '' || !Number.isFinite(+v)) delete waste[wm]; else waste[wm] = +v;
+      store.upsert('kpi', { id: cur.id, notes: { ...(cur.notes || {}), waste } });
       return;
     }
     const ci = e.target.dataset?.fuI;
     if (ci !== undefined) fuSave(cur, (fu) => ({ ...fu, items: fu.items.map((x, j) => (j === +ci ? { ...x, done: e.target.checked } : x)) }));
   });
+  view.addEventListener('toggle', (e) => { if (e.target.classList?.contains('kpi-close')) ui.closeOpen = e.target.open; }, true);
   view.addEventListener('focusout', (e) => {
     const mi = e.target.dataset?.fuM, cur = store.find('kpi', ui.id);
     if (mi === undefined || !cur) return;
@@ -1588,7 +1680,7 @@ export function initKpi({ toast } = {}) {
     }
     if (e.target.id === 'fuLoad') { view.querySelector('#fuIn')?.click(); return; }
     if (e.target.id === 'fuCopy' && cur) {
-      const fu = (cur.notes || {})[fuKey(cur)], mn = +fuKey(cur).slice(2);
+      const mn = +fuKey(cur).slice(2), fu = (cur.notes || {})[fuKey(cur)] || autoFollow(cur, mn);
       copy(`[${mn}월 베트남 실적 — 지난달 보고 후속 확인 요청]\n` + (fu?.items || []).filter((x) => !x.done).map((x, j) => `${j + 1}. ${x.t}${followHint(cur, x.t, mn) ? `\n   → ${followHint(cur, x.t, mn)}` : ''}\n   → ${mn}월 진행 결과:`).join('\n'));
       return;
     }

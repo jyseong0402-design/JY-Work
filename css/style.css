@@ -1070,6 +1070,12 @@ dialog.editor.drop-on .ed-note { outline: 3px dashed var(--primary); outline-off
 }
 #kpiMode { flex-wrap: wrap; max-width: 100%; flex-shrink: 1; }
 @media (max-width: 600px) { #kpiMode button { padding: 6px 9px; font-size: 13px; } }
+.card.waste { margin-top: 12px; padding: 12px 14px; }
+.wt td { min-width: 52px; }
+.wt-in { width: 56px; padding: 3px 5px; font-size: 12.5px; text-align: right; }
+.kpi-close .kchk li label { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
+.kpi-close .kchk li input { width: 16px; height: 16px; flex: none; margin: 3px 0 0; }
+.kpi-close .kchk li.done span { color: var(--muted); text-decoration: line-through; }
 .kpi-chk { margin-bottom: 12px; }
 .kpi-chk.has-bad { border-left: 4px solid var(--warn); }
 .kpi-chk summary { cursor: pointer; }
