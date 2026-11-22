@@ -220,9 +220,75 @@ function parseTarget(XLSX, wb) {
   return { sheet: sn, scen: scen.map((x) => x.name), rows };
 }
 
+/* ---------- 🧮 양식 점검 · 다음 달 양식 만들기 (js/kpicheck.js) ---------- */
+let lastFile = null; // { name, buf }
+const form = { busy: '', res: null, month: 0, file: '', made: null };
+const KIND = { value: ['수식 → 값', 'bad', '지난달은 수식이었는데 이번 달은 숫자를 직접 입력'], blank: ['수식 빠짐', 'bad', '지난달은 수식이었는데 이번 달은 비어 있음'], formula: ['수식 형태 다름', 'warn', '지난달 수식을 옆으로 옮긴 모양과 다름'], newformula: ['값 → 수식', 'info', '지난달은 숫자였는데 이번 달은 수식'], style: ['서식 다름', 'info', '표시 형식·글꼴·채우기 등 서식 번호가 다름'] };
+function renderForm(k) {
+  const m = form.month || k.month;
+  const r = form.res;
+  let body = '';
+  if (r) {
+    const all = r.flatMap((b) => b.issues.map((i) => ({ ...i, sheet: b.sheet, head: b.head })));
+    const miss = r.filter((b) => b.missing);
+    const cnt = (kd) => all.filter((i) => i.kind === kd).length;
+    const chips = [`<span class="fm-chip ${miss.length ? 'bad' : 'ok'}">당월 열 없음 ${miss.length}</span>`, ...Object.entries(KIND).map(([kd, [nm, lv]]) => `<span class="fm-chip ${cnt(kd) ? lv : 'ok'}">${nm} ${cnt(kd)}</span>`)].join('');
+    const sheets = [...new Set(r.map((b) => b.sheet))].map((sh) => {
+      const bs = r.filter((b) => b.sheet === sh), is = bs.flatMap((b) => b.issues.map((i) => ({ ...i, head: b.head }))), ms = bs.filter((b) => b.missing);
+      const bad = is.filter((i) => KIND[i.kind][1] !== 'info').length + ms.length;
+      const rows = bs.reduce((s, b) => s + b.stats.rows, 0);
+      const list = [...ms.map((b) => `<li class="bad"><b>당월 열 없음</b> ${esc(b.head)} 표에 ${m}월 열이 없음</li>`),
+        ...['value', 'blank', 'formula', 'newformula', 'style'].flatMap((kd) => { const xs = is.filter((i) => i.kind === kd); if (!xs.length) return []; const [nm, lv, ds] = KIND[kd];
+          return [`<li class="${lv}"><b>${nm} ${xs.length}칸</b> <small class="muted">${ds}</small><ul>${xs.slice(0, kd === 'style' ? 5 : 30).map((i) => `<li><code>${esc(i.addr)}</code> ${kd === 'style' ? `서식 ${i.prev} → ${i.cur}` : `${m - 1}월 <code>${esc(String(i.prev).slice(0, 120))}</code> → ${m}월 <code>${esc(String(i.cur).slice(0, 120)) || '(빈칸)'}</code>${i.want ? ` <small class="muted">예상 <code>${esc(i.want.slice(0, 120))}</code></small>` : ''}`}</li>`).join('')}${xs.length > (kd === 'style' ? 5 : 30) ? `<li class="muted">… 외 ${xs.length - (kd === 'style' ? 5 : 30)}칸</li>` : ''}</ul></li>`]; })];
+      return `<details class="fm-sh" ${bad ? 'open' : ''}><summary>${bad ? '⚠️' : '✅'} <b>${esc(sh)}</b> <small class="muted">월 표 ${bs.length}개 · ${rows}줄 확인${is.length ? ` · 확인 필요 ${bad}` : ''}</small></summary>${list.length ? `<ul class="fm-list">${list.join('')}</ul>` : '<p class="muted sm">지난달과 같은 모양입니다.</p>'}</details>`;
+    }).join('');
+    body = `<div class="fm-chips">${chips}</div><p class="muted sm">「${esc(form.file)}」 ${m}월 열을 ${m - 1}월 열과 칸마다 비교 (원본 데이터 시트 GL·TB·Detail of sales·매출원가·폐기원가 등은 제외)</p>${sheets}`;
+  }
+  const made = form.made ? `<div class="card fm-made"><b>📄 ${form.made.next}월 양식을 만들었습니다</b> — 「${esc(form.made.name)}」 내려받기 됨
+    <ul class="fm-list">${form.made.report.inserted.length ? `<li><b>열 추가</b> ${form.made.report.inserted.map(esc).join(', ')}</li>` : ''}
+    <li><b>수식·서식 채움</b> ${form.made.report.filled.map(esc).join(', ') || '없음'}</li>
+    ${form.made.report.pointers.length ? `<li><b>당월 참조 이동</b>(BGT·Target·% Ach.·누계 열) ${form.made.report.pointers.map(esc).join(', ')}</li>` : ''}
+    ${form.made.report.months.length ? `<li><b>결산월</b> ${form.made.report.months.map(esc).join(', ')}</li>` : ''}
+    ${form.made.report.manual.length ? `<li class="warn"><b>직접 입력 칸 ${form.made.report.manual.length}개</b> <small class="muted">이번 달에 숫자를 손으로 넣은 칸 — 다음 달도 직접 입력 (aT 지원금·정산 하드코딩 등)</small><br><small>${form.made.report.manual.slice(0, 40).map(esc).join(', ')}${form.made.report.manual.length > 40 ? ' …' : ''}</small></li>` : ''}
+    ${form.made.report.noCol.length ? `<li class="warn"><b>열을 못 만든 표</b> ${form.made.report.noCol.map(esc).join(', ')}</li>` : ''}
+    <li class="muted">다음 단계: 엑셀에서 열고(처음 1~2분 다시 계산) → 원본 데이터 시트(GL·TB·PL·Detail of sales·매출원가·폐기원가 등)에 ${form.made.next}월 로우데이터 붙여넣기 → 저장 후 여기서 다시 「양식 점검」</li></ul></div>` : '';
+  return `<article class="rp fm"><header class="rp-head"><h2>🧮 베트남 KPI 양식 점검</h2>
+    <p>KPI 파일의 <b>${m}월 열</b>이 <b>${m - 1}월 열</b>과 같은 수식·서식으로 이어졌는지 칸마다 확인합니다. 마감 뒤에는 <b>${m + 1}월 양식</b>(${m + 1}월 열 수식·서식을 미리 만든 파일)을 만들어 로우데이터만 붙이면 되게 합니다.</p></header>
+    <div class="cm-tools"><button type="button" class="btn sm primary" id="fmRun" ${form.busy ? 'disabled' : ''}>🔍 양식 점검</button>
+      <button type="button" class="btn sm" id="fmMake" ${form.busy || m >= 12 ? 'disabled' : ''}>📄 ${m + 1}월 양식 만들기</button>
+      <button type="button" class="btn sm ghost" id="fmPick">📂 다른 KPI 파일</button><input type="file" id="fmIn" accept=".xlsx,.xlsm" hidden>
+      <span class="muted sm">${form.busy ? esc(form.busy) : lastFile ? `대상: 「${esc(lastFile.name)}」` : '이번에 불러온 파일이 없어 📂로 KPI 파일을 골라 주세요'}</span></div>
+    ${made}${body}</article>`;
+}
+async function formRun(k, make) {
+  if (!lastFile) { $('#fmIn')?.click(); return; }
+  const KC = await import('./kpicheck.js');
+  const prog = (t) => { form.busy = t; const s = document.querySelector('.fm .cm-tools .muted'); if (s) s.textContent = t; };
+  try {
+    prog('파일 여는 중…');
+    const book = await KC.openBook(lastFile.buf.slice(0));
+    // 결산월: Summary B3 (없으면 불러온 KPI 월)
+    const sm = book.sheets.find((s) => /^summary/i.test(s.name.trim()));
+    let m = k.month;
+    if (sm) { const c = KC.parseSheet(await book.zip.file(sm.path).async('string'), book.sst).get('3,2'); if (c && typeof c.v === 'number' && c.v >= 1 && c.v <= 12) m = c.v; }
+    form.month = m; form.file = lastFile.name;
+    if (!make) { form.res = await KC.checkBook(book, m, prog); form.made = null; }
+    else {
+      const { blob, report } = await KC.makeNextMonth(book, m, prog);
+      const yymm = String(k.year).slice(2) + String(m + 1).padStart(2, '0');
+      const name = /\d{4}/.test(lastFile.name) ? lastFile.name.replace(/(\d{2})(\d{2})(?=[^\d]*$|_)/, yymm).replace(/_v\w+(\.xls\w)$/i, '_양식$1') : `KPI_베트남_${yymm}_양식.xlsx`;
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name.endsWith('.xlsx') ? name : name.replace(/\.\w+$/, '') + '.xlsx'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+      form.made = { name: a.download, next: m + 1, report };
+    }
+  } catch (e) { toastFn('양식 작업 실패: ' + (e.message || e)); }
+  form.busy = '';
+  render();
+}
+
 async function readFile(f) {
   const XLSX = await loadXLSX();
   const buf = await f.arrayBuffer();
+  lastFile = { name: f.name, buf }; // 🧮 양식 점검·다음 달 양식에서 다시 씀(메모리에만)
   const names = XLSX.read(buf, { bookSheets: true }).SheetNames;
   const sn = names.find((n) => /^summary/i.test(n.trim()));
   const extra = names.filter((n) => TARGET_SHEET(n) || PPT_SHEET(n) || GL_SHEET(n));
@@ -1429,6 +1495,7 @@ function render() {
   const chk = safe(() => checksCard(k), '파일 점검');
   if (ui.mode === 'cmt') { box.innerHTML = chk + safe(() => renderCmt(k), '경영회의 코멘트'); return; }
   if (ui.mode === 'mail') { box.innerHTML = chk + safe(() => renderMail(k, M, m), '메일 초안'); return; }
+  if (ui.mode === 'form') { box.innerHTML = safe(() => renderForm(k), '양식 점검'); return; }
   if (ui.mode === 'ytd') {
     box.innerHTML = renderYtd(k, M, m) + '<p class="kpi-foot"><button type="button" class="btn sm" id="kpiPrint">🖨 인쇄·PDF 저장</button> <button type="button" class="btn sm danger" id="kpiDel">🗑 이 KPI 자료 지우기</button></p>';
     return;
@@ -1603,6 +1670,13 @@ export function initKpi({ toast } = {}) {
   view.addEventListener('change', async (e) => {
     const cur = store.find('kpi', ui.id);
     if (!cur) return;
+    if (e.target.id === 'fmIn' && e.target.files.length) {
+      const f = e.target.files[0];
+      lastFile = { name: f.name, buf: await f.arrayBuffer() };
+      e.target.value = '';
+      formRun(cur, false);
+      return;
+    }
     if (e.target.id === 'fuIn' && e.target.files.length) {
       const f = e.target.files[0];
       try {
@@ -1691,6 +1765,9 @@ export function initKpi({ toast } = {}) {
       copy(`[${mn}월 베트남 실적 — 지난달 보고 후속 확인 요청]\n` + (fu?.items || []).filter((x) => !x.done).map((x, j) => `${j + 1}. ${x.t}${followHint(cur, x.t, mn) ? `\n   → ${followHint(cur, x.t, mn)}` : ''}\n   → ${mn}월 진행 결과:`).join('\n'));
       return;
     }
+    if (e.target.id === 'fmRun' && cur) { formRun(cur, false); return; }
+    if (e.target.id === 'fmMake' && cur) { formRun(cur, true); return; }
+    if (e.target.id === 'fmPick') { view.querySelector('#fmIn')?.click(); return; }
     if (e.target.id === 'mailCopy') { copy(view.querySelector('.mail-text')?.value || ''); return; }
     if (e.target.id === 'mailReset' && cur) {
       const ta = view.querySelector('.mail-text');
