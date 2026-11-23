@@ -57,7 +57,7 @@ export function parseKpi(XLSX, wb, file = '') {
   // 같은 KPI를 다시 불러오면 저장된 항목에 덮어써지므로(합치기), 이번 파일에 없는 값도 null/[]로 넣어 예전 값이 남지 않게 함
   const hub = parseHubChan(XLSX, wb);
   const imp = parseImpTable(XLSX, wb);
-  return { chanFix, id: `k${year}_${hash(title.replace(/\s+/g, ''))}`, title, year, month: fm, file, rows, target: target || null, ppt: ppt || null, gl: gl || null, chanQty: hub?.qty || null, chanPrice: hub?.price || null, imp: imp || null };
+  return { chanFix, id: `k${year}_${hash(title.replace(/\s+/g, ''))}`, title, year, month: fm, file, rows, target: target || null, ppt: ppt || null, gl: gl || null, chanQty: hub?.qty || null, chanPrice: hub?.price || null, staff: hub?.staff && Object.keys(hub.staff).length ? hub.staff : null, imp: imp || null };
 }
 
 // 허브 시트('…결산기준'): 거래처별 매출물량(톤)·매출단가(원/kg) — D열 구역 제목(매출물량(톤)/매출단가) 아래 F열 거래처 행, 월 열은 위쪽 1~12 줄
@@ -71,7 +71,15 @@ function parseHubChan(XLSX, wb) {
   for (let r = 0; r < 12 && mr < 0; r++) { const row = g[r] || []; for (let c = 0; c < row.length - 2; c++) if (row[c] === 1 && row[c + 1] === 2 && row[c + 2] === 3) { mr = r; mc = c; break; } }
   if (mr < 0) return null;
   // 거래처 행: D열=구역 이름(매출물량(톤)/매출단가…), E열 비고 F열=거래처 (품목 행은 E열)
-  const out = { qty: {}, price: {} };
+  const out = { qty: {}, price: {}, staff: {} };
+  const vals = (r) => Array.from({ length: 12 }, (_, j) => num((g[r] || [])[mc + j]));
+  // 인원수(E열 '인원수', G열 시식인원수/관리인원수) + 바로 아래 '인당 급여'
+  for (let r = mr + 1; r < g.length; r++) {
+    if (s(r, 4) !== '인원수') continue;
+    const key = /시식|판매/.test(s(r, 6)) ? 'sell' : /관리/.test(s(r, 6)) ? 'admin' : '';
+    if (!key || out.staff[key]) continue;
+    out.staff[key] = { n: vals(r), per: /인당/.test(s(r + 1, 4)) ? vals(r + 1) : null };
+  }
   for (let r = mr + 1; r < Math.min(g.length, 400); r++) {
     const d = s(r, 3), f = s(r, 5);
     if (!f || s(r, 4)) continue;
@@ -765,8 +773,8 @@ function cmBullets(k, G, B) {
     const v0 = (v) => (Math.abs(v) < 0.05 && x.kind !== 'won' ? '0' : fP(v, x.kind));
     const now = `${v0(x.a[i])}${x.kind === 'won' ? '원/kg' : '백만원'}(${pm}월 ${v0(x.a[p])}), `;
     // 데이터로 사유가 설명되는 원가 항목(수입제비용·상품대)은 [현지 확인] 생략
-    const explained = G.id === 'B' && why && !/폐기/.test(x.label);
-    out.push(`${x.label}: ${now}전월 대비 ${amt(d, u)} ${word(d)}${why ? ` (${G.id === 'B' ? '' : '원장: '}${why})` : ''}${d > 0 && !explained ? CHK : ''}`);
+    const explained = (G.id === 'B' && why && !/폐기/.test(x.label)) || /인원 \d+→\d+명\(\+/.test(why || ''); // 인원 증가로 설명되는 인건비도
+    out.push(`${x.label}: ${now}전월 대비 ${amt(d, u)} ${word(d)}${why ? ` (${why})` : ''}${d > 0 && !explained ? CHK : ''}`);
   }
   if (G.id === 'B') {
     const wl = wasteLine(k, mn);
@@ -1408,30 +1416,43 @@ const GL_ITEM = [
   ['판매비', /창고/, (a) => /^64175/.test(a)],
   ['판매비', /라벨/, (a) => /^64177/.test(a)],
   ['판매비', /^기타/, (a) => /^641(3|8)/.test(a)],
+  ['판매비', /판매수수료/, (a) => /^521/.test(a)], // 매출 차감(롯데 수수료) — 허브 1092행 판매수수료와 같은 금액
   ['관리비', /인건비/, (a) => /^6421/.test(a)],
   ['관리비', /사무실/, (a) => /^64274/.test(a)],
   ['관리비', /숙소/, (a, d) => /^642/.test(a) && /rent house|apartment|accommodation|management fee c/i.test(d)],
   ['관리비', /여비/, (a) => /^64273/.test(a)],
-  ['관리비', /^기타$/, (a, d) => /^642/.test(a) && !/^6421|^64274|^64273/.test(a) && !/rent house|apartment|accommodation|management fee c/i.test(d)],
+  ['관리비', /기타지급수수료/, (a) => /^6427[67]/.test(a)], // 회계·세무(선급 상각)+PC 렌트 — 9월 1.29+0.34=1.62 확인
+  ['관리비', /^기타$/, (a, d) => /^642/.test(a) && !/^6421|^64274|^64273|^6427[67]/.test(a) && !/rent house|apartment|accommodation|management fee c/i.test(d)],
 ];
-const GL_KO = [[/refrigerated transport/i, '냉장운송비'], [/delivery fee/i, '배송비'], [/accrued for service fee/i, '물류 서비스료'], [/shui|union fee/i, '사회보험·노조비'], [/salary/i, '급여'],
+const GL_KO = [[/trade discount/i, '판매수수료(트레이드 디스카운트)'], [/refrigerated transport/i, '냉장운송비'], [/delivery fee/i, '배송비'], [/accrued for service fee/i, '물류 서비스료'], [/shui|union fee/i, '사회보험·노조비'], [/salary/i, '급여'],
   [/mooncake/i, '월병(고객 선물)'], [/customer sampling/i, '시식용 버섯'], [/sample/i, '샘플'], [/promotional support/i, '판촉 지원금'], [/carton/i, '박스 구매'], [/car rental/i, '차량 렌트'],
   [/office rental/i, '사무실 임차료'], [/rent house|apartment/i, '숙소 임차료'], [/management fee/i, '숙소 관리비'], [/legal/i, '법률 자문료'], [/health check/i, '건강검진'], [/visa/i, '비자'], [/\btrc\b/i, '체류증(TRC)'],
   [/computer rental/i, 'PC 렌트'], [/allocating prepaid/i, '선급비용 상각'], [/accounting|audit|tax/i, '회계·세무 수수료'], [/supplies/i, '소모품']];
 const GL_WHO = [[/lotte|\blot$/i, '롯데'], [/cj logistics/i, 'CJ'], [/việt nhật|viet nhat/i, '비엣냣'], [/cobi/i, 'COBI ONE'], [/jang car/i, 'Jang Car'], [/jipyong/i, '지평'], [/bệnh viện|hospital/i, '병원']];
 function glReason(k, sec, label, m) {
+  // 인건비는 허브 시트 인원수·인당 급여 변동을 먼저 (시식/판매사원 = 판매비, 관리 = 관리비)
+  let staff = '';
+  if (/인건비/.test(nzl(label)) && k.staff) {
+    const st = k.staff[sec === '판매비' ? 'sell' : 'admin'];
+    if (st) {
+      const n = st.n[m - 1] || 0, np = st.n[m - 2] || 0, pr = st.per?.[m - 1], pp = st.per?.[m - 2];
+      staff = `${sec === '판매비' ? '판매·시식' : '관리'} 인원 ${np}→${n}명${n !== np ? `(${n > np ? '+' : ''}${n - np})` : ''}${pr && pp ? `, 인당 ${pp.toFixed(2)}→${pr.toFixed(2)}백만원` : ''}`;
+    }
+  }
   const R = GL_ITEM.find(([s, re]) => s === sec && re.test(nzl(label)));
-  if (!R || !k.gl?.lines) return '';
+  if (!R || !k.gl?.lines) return staff;
   const g = {};
   for (const l of k.gl.lines) {
     if ((l.m !== m && l.m !== m - 1) || !R[2](l.a, l.d)) continue;
     const ko = GL_KO.find(([re]) => re.test(l.d)), who = GL_WHO.find(([re]) => re.test(l.o));
     const name = (ko ? ko[1] : l.d.replace(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?/gi, '').replace(/[\d.,–-]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 28)) + (who ? `(${who[1]})` : '');
     const x = (g[name] ||= { c: 0, p: 0 });
-    if (l.m === m) x.c += l.v; else x.p += l.v;
+    const v = /^5/.test(l.a) ? -l.v : l.v; // 매출 차감 계정(수수료)은 비용 방향으로
+    if (l.m === m) x.c += v; else x.p += v;
   }
   const top = Object.entries(g).map(([n, x]) => ({ n, d: krwM(x.c - x.p), c: x.c, p: x.p })).filter((x) => Math.abs(x.d) >= 0.1).sort((a, b) => Math.abs(b.d) - Math.abs(a.d)).slice(0, 3);
-  return top.map((x) => `${x.n} ${x.d > 0 ? '+' : '-'}${Math.abs(x.d).toFixed(1)}${!x.p ? '(신규)' : !x.c ? '(없음)' : ''}`).join(', ');
+  const gl = top.map((x) => `${x.n} ${x.d > 0 ? '+' : '-'}${Math.abs(x.d).toFixed(1)}${!x.p ? '(신규)' : !x.c ? '(없음)' : ''}`).join(', ');
+  return [staff, gl && `원장: ${gl}`].filter(Boolean).join(' / ');
 }
 
 /* ---------- 매출단가·단위원가 변동 근거 (KPI 파일 숫자로) ---------- */
@@ -1544,7 +1565,7 @@ function mailText(k, M, m) {
     const b = blk(re), tot = row ? r1(row.a[i]) - r1(row.a[p]) : 0;
     item(`${name} 특이사항 : ${row ? `${f1(row.a[i])}백만원, 전월 대비 ${n1(tot)}백만원 ${ud(tot)}` : ''}`);
     let any = false;
-    if (b) for (const x of b.kids.slice().sort((a, c) => ab(c.a[pi] - c.a[pp]) - ab(a.a[pi] - a.a[pp]))) { const dd = x.a[pi] - x.a[pp]; if (ab(dd) >= 0.3) { const why = glReason(k, name, x.label, m); sub(`${x.label} ${n1(dd)}백만원 ${ud(dd)} ${why ? `(원장: ${why})` : '[사유]'}`); any = true; } }
+    if (b) for (const x of b.kids.slice().sort((a, c) => ab(c.a[pi] - c.a[pp]) - ab(a.a[pi] - a.a[pp]))) { const dd = x.a[pi] - x.a[pp]; if (ab(dd) >= 0.3) { const why = glReason(k, name, x.label, m); sub(`${x.label} ${n1(dd)}백만원 ${ud(dd)} ${why ? `(${why})` : '[사유]'}`); any = true; } }
     return any;
   };
   const any6 = costs('판매비', /^판매비/, M.sell);
