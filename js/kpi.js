@@ -810,9 +810,41 @@ function wasteCard(k, mn) {
     <tr class="key"><th>폐기율(%)</th>${ms.map((m) => { const x = wasteOf(k, m); return `<td class="${x && x.rate > WASTE_GOAL ? 'neg' : ''}">${cell(m)}</td>`; }).join('')}</tr>
     ${kid && P ? `<tr class="sub"><th>폐기원가(백만원)</th>${ms.map((m) => { const i = P.months.indexOf(m); return `<td>${i >= 0 ? fP(kid.a[i], 'amt') : '-'}</td>`; }).join('')}</tr>` : ''}
     </tbody></table></div>
-    <p class="muted sm">${cur ? `${mn}월 폐기율 ${(cur.rate * 100).toFixed(1)}% — 코멘트 B·메일 초안에 자동 반영` : `${mn}월 폐기물량(톤)을 입력하면 폐기율이 계산되어 코멘트 B·메일 초안에 들어갑니다. 지난달 PPT를 불러오면 지난 달들 값은 장표 표에서 채워집니다.`}</p></div>`;
+    <div class="cm-tools"><button type="button" class="btn sm" id="wfLoad">📂 폐기 파일 불러오기</button><input type="file" id="wfIn" accept=".xlsx,.xlsm" hidden>
+      <span class="muted sm">「YYMM_베트남 폐기.xlsx」의 '삼도 결산' 시트 '삼도 폐기물량(톤)'을 월별로 채웁니다${(k.notes || {}).wasteSrc ? ` · 마지막: 「${esc(k.notes.wasteSrc)}」` : ''}</span></div>
+    <p class="muted sm">${cur ? `${mn}월 폐기율 ${(cur.rate * 100).toFixed(1)}% — 코멘트 B·메일 초안에 자동 반영` : `${mn}월 폐기물량(톤)을 입력하거나 폐기 파일을 불러오면 폐기율이 계산되어 코멘트 B·메일 초안에 들어갑니다.`}</p></div>`;
 }
-const wasteLine = (k, mn) => { const c = wasteOf(k, mn), p = wasteOf(k, mn - 1); if (!c) return ''; return `폐기율 ${(c.rate * 100).toFixed(1)}%${p ? `(${mn - 1}월 ${(p.rate * 100).toFixed(1)}%)` : ''}, 폐기물량 ${c.t.toFixed(1)}톤${p ? `(${mn - 1}월 ${p.t.toFixed(1)})` : ''}${c.rate <= WASTE_GOAL ? ` — 목표 ${WASTE_GOAL * 100}% 이내 관리` : ` — 목표 ${WASTE_GOAL * 100}%까지 축소 추진`}`; };
+// 폐기 파일(YYMM_베트남 폐기.xlsx) 읽기: B열 '…폐기물량(톤)' 행 + 위쪽 월 머리글(1~12), 아래 C열 품목별 톤
+async function readWasteFile(file) {
+  const KC = await import('./kpicheck.js');
+  const book = await KC.openBook(await file.arrayBuffer());
+  const list = [...book.sheets.filter((s) => /삼도\s*결산/.test(s.name)), ...book.sheets.filter((s) => !/삼도\s*결산/.test(s.name))];
+  for (const s of list) {
+    const f = book.zip.file(s.path);
+    if (!f || f._data?.uncompressedSize > 5e6) continue; // 큰 원본 시트는 건너뜀
+    const cells = KC.parseSheet(await f.async('string'), book.sst);
+    const lab = [...cells.values()].find((x) => x.c <= 3 && /폐기물량\s*\(톤\)/.test(String(x.v ?? '')));
+    if (!lab) continue;
+    const blk = KC.monthBlocks(cells).filter((b) => b.row < lab.r && b.first > lab.c).sort((a, b) => b.row - a.row || a.first - b.first)[0];
+    if (!blk) continue;
+    const tons = {}, items = {};
+    for (const [m, c] of Object.entries(blk.cols)) {
+      const v = cells.get(lab.r + ',' + c)?.v;
+      if (typeof v === 'number') tons[m] = Math.round(v * 1000) / 1000;
+      // 바로 아래 품목 행(C열 품목명)
+      for (let r = lab.r + 1; r <= lab.r + 10; r++) {
+        const nm = cells.get(r + ',' + (lab.c + 1))?.v, iv = cells.get(r + ',' + c)?.v;
+        if (!nm || typeof nm !== 'string' || cells.get(r + ',' + lab.c)?.v) break;
+        if (typeof iv === 'number') (items[m] ||= {})[nm] = Math.round(iv * 1000) / 1000;
+      }
+    }
+    return { sheet: s.name, tons, items };
+  }
+  return null;
+}
+// 품목별 폐기물량 증감 상위 2개 (폐기 파일을 불러온 경우)
+const wasteItemsLine = (k, mn) => { const it = (k.notes || {}).wasteItems || {}, c = it[mn], p = it[mn - 1] || {}; if (!c) return ''; const d = Object.keys(c).map((n) => ({ n, d: (c[n] || 0) - (p[n] || 0) })).filter((x) => Math.abs(x.d) >= 0.05).sort((a, b) => Math.abs(b.d) - Math.abs(a.d)).slice(0, 2); return d.length ? ` (${d.map((x) => `${x.n} ${x.d > 0 ? '+' : '-'}${Math.abs(x.d).toFixed(2)}톤`).join(', ')})` : ''; };
+const wasteLine = (k, mn) => { const c = wasteOf(k, mn), p = wasteOf(k, mn - 1); if (!c) return ''; return `폐기율 ${(c.rate * 100).toFixed(1)}%${p ? `(${mn - 1}월 ${(p.rate * 100).toFixed(1)}%)` : ''}, 폐기물량 ${c.t.toFixed(1)}톤${p ? `(${mn - 1}월 ${p.t.toFixed(1)})` : ''}${wasteItemsLine(k, mn)}${c.rate <= WASTE_GOAL ? ` — 목표 ${WASTE_GOAL * 100}% 이내 관리` : ` — 목표 ${WASTE_GOAL * 100}%까지 축소 추진`}`; };
 
 /* ---------- 🗓 베트남 KPI 월 마감 체크리스트 (매달 손으로 하는 단계, 사용자 작업 방식 기준) ---------- */
 const CLOSE_STEPS = [
@@ -1706,6 +1738,21 @@ export function initKpi({ toast } = {}) {
   view.addEventListener('change', async (e) => {
     const cur = store.find('kpi', ui.id);
     if (!cur) return;
+    if (e.target.id === 'wfIn' && e.target.files.length) {
+      const f = e.target.files[0];
+      e.target.value = '';
+      try {
+        toastFn('폐기 파일 읽는 중…');
+        const w = await readWasteFile(f);
+        if (!w || !Object.keys(w.tons).length) { toastFn("이 파일에서 '폐기물량(톤)' 표를 찾지 못했습니다."); return; }
+        const c2 = store.find('kpi', cur.id), old = (c2.notes || {}).waste || {}, waste = { ...old };
+        // 지난 장표에 적힌 폐기율(r)이 있는 달은 그 율은 그대로 두고 톤만 파일 값으로
+        for (const [m, t] of Object.entries(w.tons)) { const o = old[m]; waste[m] = o && typeof o === 'object' && Number.isFinite(o.r) ? { t, r: o.r } : t; }
+        store.upsert('kpi', { id: cur.id, notes: { ...(c2.notes || {}), waste, wasteItems: w.items, wasteSrc: f.name } });
+        toastFn(`폐기물량 ${Object.keys(w.tons).length}개월을 「${w.sheet}」 시트에서 가져왔습니다.`);
+      } catch (err) { toastFn('폐기 파일을 읽지 못했습니다: ' + (err.message || err)); }
+      return;
+    }
     if (e.target.id === 'fmIn' && e.target.files.length) {
       const f = e.target.files[0];
       lastFile = { name: f.name, buf: await f.arrayBuffer() };
@@ -1811,6 +1858,7 @@ export function initKpi({ toast } = {}) {
     if (e.target.id === 'fmRun' && cur) { formRun(cur, false); return; }
     if (e.target.id === 'fmMake' && cur) { formRun(cur, true); return; }
     if (e.target.id === 'fmPick') { view.querySelector('#fmIn')?.click(); return; }
+    if (e.target.id === 'wfLoad') { view.querySelector('#wfIn')?.click(); return; }
     // 의도한 변경 확인 처리(달마다 따로 저장)
     const okAll = e.target.closest('[data-fm-okall]');
     if ((okAll || e.target.id === 'fmOkReset') && cur && form.res) {
