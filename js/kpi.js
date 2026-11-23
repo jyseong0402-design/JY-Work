@@ -56,7 +56,8 @@ export function parseKpi(XLSX, wb, file = '') {
   const chanFix = gl ? fixChans(rows, gl, fm) : [];
   // 같은 KPI를 다시 불러오면 저장된 항목에 덮어써지므로(합치기), 이번 파일에 없는 값도 null/[]로 넣어 예전 값이 남지 않게 함
   const hub = parseHubChan(XLSX, wb);
-  return { chanFix, id: `k${year}_${hash(title.replace(/\s+/g, ''))}`, title, year, month: fm, file, rows, target: target || null, ppt: ppt || null, gl: gl || null, chanQty: hub?.qty || null, chanPrice: hub?.price || null };
+  const imp = parseImpTable(XLSX, wb);
+  return { chanFix, id: `k${year}_${hash(title.replace(/\s+/g, ''))}`, title, year, month: fm, file, rows, target: target || null, ppt: ppt || null, gl: gl || null, chanQty: hub?.qty || null, chanPrice: hub?.price || null, imp: imp || null };
 }
 
 // 허브 시트('…결산기준'): 거래처별 매출물량(톤)·매출단가(원/kg) — D열 구역 제목(매출물량(톤)/매출단가) 아래 F열 거래처 행, 월 열은 위쪽 1~12 줄
@@ -80,6 +81,30 @@ function parseHubChan(XLSX, wb) {
   return Object.keys(out.qty).length ? out : null;
 }
 const chanQtyOf = (k, label) => (k.chanQty || {})[label] || null;
+// '회차별 Summary' 시트 월별 통관 표: 머리글 줄(월·횟수·물량·회당 물량·통관비용·회당 통관비용·kg당 통관비용) 아래 1~12월
+const IMP_SHEET = (n) => /회차별\s*summary/i.test(n);
+function parseImpTable(XLSX, wb) {
+  const sn = wb.SheetNames.find(IMP_SHEET);
+  if (!sn || !wb.Sheets[sn]) return null;
+  const g = fullRows(XLSX, wb.Sheets[sn]);
+  for (let r = 0; r < g.length; r++) {
+    const row = (g[r] || []).map((v) => String(v ?? '').replace(/\s+/g, ''));
+    const ci = (re) => row.findIndex((v) => re.test(v));
+    const cN = ci(/^횟수$/), cT = ci(/^물량$/), cP = ci(/^회당물량$/), cC = ci(/^통관비용$/), cK = ci(/^kg당통관비용$/);
+    if (cN < 0 || cT < 0 || cK < 0) continue;
+    const cM = ci(/^월$/);
+    const out = {};
+    for (let rr = r + 1; rr < r + 14 && rr < g.length; rr++) {
+      const x = g[rr] || [], m = Number(x[cM >= 0 ? cM : cN - 1]);
+      if (!(m >= 1 && m <= 12)) continue;
+      out[m] = { n: num(x[cN]), ton: num(x[cT]), per: cP >= 0 ? num(x[cP]) : 0, cost: cC >= 0 ? num(x[cC]) : 0, kg: num(x[cK]) };
+    }
+    return Object.keys(out).length ? out : null;
+  }
+  return null;
+}
+// 원장 폐기(재고 폐기 'hủy hàng …') 장소 이름
+const WASTE_LOC = [[/lotte\s*k[ýy]\s*g[ửu]i/i, '롯데 특정(위탁)'], [/lotte\s*b[áa]n\s*đ[ứu]t|lotte\s*ban\s*dut/i, '롯데 직매입'], [/emart|e-mart/i, '이마트'], [/kho|warehouse|anpha/i, '창고'], [/an\s*c[áa]t/i, 'An Cát'], [/k&k|k-?market/i, '케이마켓'], [/kamereo/i, '카메레오']];
 
 // 거래처별 매출: Summary 거래처 칸이 비어 있는데(예: 10월 이마트 0) 거래처 합 < 매출액이면, 원장 511 거래처 금액으로 채움
 //   원장 거래처명 → Summary 거래처 라벨 (THISO RETAIL = 베트남 이마트 운영사)
@@ -170,7 +195,7 @@ function parseGl(XLSX, wb, year, month) {
   const col = (re) => H.findIndex((v) => re.test(v));
   const cAcc = col(/^account$/), cCor = col(/corresponding/), cDr = col(/debit/), cCr = col(/credit/), cDesc = col(/general description/) >= 0 ? col(/general description/) : col(/description/);
   const cObj = col(/name of object/), cY = col(/^year$/), cM = col(/^month$/), cDate = col(/posting date/);
-  const acc = {}, lines = [], cust = {}; // cust: 매출(511) 거래처별 월 합계 VND
+  const acc = {}, lines = [], cust = {}, wloc = {}; // cust: 매출(511) 거래처별 월 합계 VND, wloc: 폐기 장소별 VND
 
   for (let r = hr + 1; r < g.length; r++) {
     const row = g[r] || [];
@@ -185,6 +210,11 @@ function parseGl(XLSX, wb, year, month) {
     if (!amt) continue;
     (acc[a] ||= Array(12).fill(0))[m - 1] += amt;
     if (/^511/.test(a)) { const o = String(row[cObj] ?? '').trim() || '(거래처 없음)'; (cust[o] ||= Array(12).fill(0))[m - 1] += amt; }
+    // 재고 폐기(Xuất kho hủy hàng <장소>/ Inventory write-off) 장소별 월 합계
+    if (/^632/.test(a)) {
+      const dsc = String(row[cDesc] ?? ''), hm = dsc.match(/h[ủu]y\s*h[àa]ng\s+([^/]+)/i);
+      if (hm || /write-?off/i.test(dsc)) { const raw = hm ? hm[1].trim() : '기타'; const loc = (WASTE_LOC.find(([re]) => re.test(raw)) || [, raw.slice(0, 20)])[1]; (wloc[loc] ||= Array(12).fill(0))[m - 1] += amt; }
+    }
     if ((m === month || m === month - 1) && Math.abs(amt) >= 1e6) {
       const desc = String(row[cDesc] ?? '').split('/').map((x) => x.trim()).filter(Boolean);
       lines.push({ m, a, v: Math.round(amt), d: (desc[desc.length - 1] || '').slice(0, 90), o: String(row[cObj] ?? '').trim().slice(0, 40), c: String(row[cCor] ?? '').trim() });
@@ -192,7 +222,7 @@ function parseGl(XLSX, wb, year, month) {
   }
   if (!Object.keys(acc).length) return null;
   lines.sort((p, q) => Math.abs(q.v) - Math.abs(p.v));
-  return { sheet: sn, acc, cust, lines: lines.slice(0, 400) };
+  return { sheet: sn, acc, cust, wloc, lines: lines.slice(0, 400) };
 }
 
 // 🎯 'Target … PL' 시트: 왼쪽은 월별 실적(3행 연도·4행 'N월'), 그 오른쪽 한 칸 띄고 Target 시나리오 열(월 기준 목표치)
@@ -321,7 +351,7 @@ async function readFile(f) {
   lastFile = { name: f.name, buf }; // 🧮 양식 점검·다음 달 양식에서 다시 씀(메모리에만)
   const names = XLSX.read(buf, { bookSheets: true }).SheetNames;
   const sn = names.find((n) => /^summary/i.test(n.trim()));
-  const extra = names.filter((n) => TARGET_SHEET(n) || PPT_SHEET(n) || GL_SHEET(n) || HUB_SHEET(n));
+  const extra = names.filter((n) => TARGET_SHEET(n) || PPT_SHEET(n) || GL_SHEET(n) || HUB_SHEET(n) || IMP_SHEET(n));
   const wb = XLSX.read(buf, sn ? { sheets: [sn, ...extra], cellStyles: true } : {}); // cellStyles: 숨긴 행 정보
   return parseKpi(XLSX, wb, f.name);
 }
@@ -734,7 +764,9 @@ function cmBullets(k, G, B) {
     const why = G.id === 'C' || G.id === 'D' ? glReason(k, G.id === 'C' ? '판매비' : '관리비', x.label, mn) : G.id === 'B' ? costReason(k, x.label, mn) : '';
     const v0 = (v) => (Math.abs(v) < 0.05 && x.kind !== 'won' ? '0' : fP(v, x.kind));
     const now = `${v0(x.a[i])}${x.kind === 'won' ? '원/kg' : '백만원'}(${pm}월 ${v0(x.a[p])}), `;
-    out.push(`${x.label}: ${now}전월 대비 ${amt(d, u)} ${word(d)}${why ? ` (${G.id === 'B' ? '' : '원장: '}${why})` : ''}${d > 0 ? CHK : ''}`);
+    // 데이터로 사유가 설명되는 원가 항목(수입제비용·상품대)은 [현지 확인] 생략
+    const explained = G.id === 'B' && why && !/폐기/.test(x.label);
+    out.push(`${x.label}: ${now}전월 대비 ${amt(d, u)} ${word(d)}${why ? ` (${G.id === 'B' ? '' : '원장: '}${why})` : ''}${d > 0 && !explained ? CHK : ''}`);
   }
   if (G.id === 'B') {
     const wl = wasteLine(k, mn);
@@ -1429,7 +1461,23 @@ function costReason(k, label, m) {
   const mil = (v) => `${v >= 0 ? '+' : '-'}${Math.abs(v).toFixed(1)}`;
   if (L === '상품대') {
     const a = tr(/^kg당원물대/), b = tr(/^kg당수출제비용/);
-    return [a && `kg당 원물대 ${won(a.a[j] - a.a[pj])}`, b && `kg당 수출제비용 ${won(b.a[j] - b.a[pj])}`].filter(Boolean).join(', ');
+    const parts = [a && `kg당 원물대 ${won(a.a[j] - a.a[pj])}`, b && `kg당 수출제비용 ${won(b.a[j] - b.a[pj])}`].filter(Boolean);
+    // 품목별 kg당 (원물대+수출제비용) 단가 영향 vs 품목 구성(믹스) 영향
+    const qk = kids(/^물량/), pa = kids(/^kg당원물대/), pb = kids(/^kg당수출제비용/);
+    const items = qk.map((x) => { const u = (row, jj) => (pa.find((y) => y.label === x.label)?.a[jj] || 0) + (pb.find((y) => y.label === x.label)?.a[jj] || 0); return { n: x.label, q: x.a[j] || 0, qp: x.a[pj] || 0, u: u(null, j), up: u(null, pj) }; }).filter((x) => x.q > 0);
+    const Q = items.reduce((s, x) => s + x.q, 0), Qp = items.reduce((s, x) => s + x.qp, 0);
+    if (Q && Qp && a && b) {
+      const pe = items.reduce((s, x) => s + (x.up ? (x.u - x.up) * x.q : 0), 0) / Q;
+      const tot = (a.a[j] + b.a[j]) - (a.a[pj] + b.a[pj]), mix = tot - pe;
+      const big = items.map((x) => ({ ...x, d: x.q / Q - x.qp / Qp })).sort((x, y) => Math.abs(y.d) - Math.abs(x.d))[0];
+      parts.push(`품목 단가 영향 ${won(pe)}, 품목 구성 영향 ${won(mix)}${big && Math.abs(big.d) >= 0.01 ? `(${big.n} 비중 ${Math.round(big.qp / Qp * 100)}→${Math.round(big.q / Q * 100)}%)` : ''}`);
+    }
+    return parts.join(', ');
+  }
+  if (L === '수입제비용' && k.imp?.[m] && k.imp?.[m - 1]) {
+    // 회차별 Summary 월별 통관 표: 선적 횟수·회당 물량·kg당 통관비
+    const c = k.imp[m], p = k.imp[m - 1];
+    return `선적 ${c.n}회(전월 ${p.n}회)·회당 물량 ${c.per.toFixed(1)}톤(전월 ${p.per.toFixed(1)}톤), 입고 기준 kg당 통관비 ${Math.round(p.kg)}→${Math.round(c.kg)}원${c.per > p.per && c.kg < p.kg ? ' — 회당 물량 확대로 고정 통관비 분산' : c.kg > p.kg && c.per < p.per ? ' — 회당 물량 축소로 kg당 통관비 상승' : ''}`;
   }
   const amt = L === '수입제비용' ? /^총수입제비용/ : L === '폐기원가' ? /^총폐기금액/ : null;
   if (!amt) return '';
@@ -1437,7 +1485,13 @@ function costReason(k, label, m) {
   if (!tot) return '';
   const top = kids(amt).map((r) => ({ n: r.label, d: (r.a[j] || 0) - (r.a[pj] || 0) })).filter((x) => Math.abs(x.d) >= 0.1).sort((a, b) => Math.abs(b.d) - Math.abs(a.d)).slice(0, 2);
   const head = `총액 ${f1(tot.a[pj])} → ${f1(tot.a[j])}백만원${q ? `, 물량 ${f1(q.a[pj])} → ${f1(q.a[j])}톤` : ''}`;
-  return head + (top.length ? ` / ${top.map((x) => `${x.n} ${mil(x.d)}`).join(', ')}` : '');
+  let loc = '';
+  if (L === '폐기원가' && k.gl?.wloc) {
+    // 원장 재고 폐기 장소별 증감(백만원)
+    const ls = Object.entries(k.gl.wloc).map(([n, v]) => ({ n, c: krwM(v[j] || 0), p: krwM(v[pj] || 0) })).map((x) => ({ ...x, d: x.c - x.p })).filter((x) => Math.abs(x.d) >= 0.1).sort((a, b) => Math.abs(b.d) - Math.abs(a.d)).slice(0, 3);
+    if (ls.length) loc = ` / 장소: ${ls.map((x) => `${x.n} ${mil(x.d)}${x.p < 0.05 ? '(신규)' : ''}`).join(', ')}`;
+  }
+  return head + (top.length ? ` / 품목: ${top.map((x) => `${x.n} ${mil(x.d)}`).join(', ')}` : '') + loc;
 }
 
 /* ---------- ✉️ KPI 송부 메일 요약: 사용자가 보내던 메일 형식(전월 대비 1)~8)) ---------- */
