@@ -55,8 +55,31 @@ export function parseKpi(XLSX, wb, file = '') {
   const gl = parseGl(XLSX, wb, year, fm);
   const chanFix = gl ? fixChans(rows, gl, fm) : [];
   // 같은 KPI를 다시 불러오면 저장된 항목에 덮어써지므로(합치기), 이번 파일에 없는 값도 null/[]로 넣어 예전 값이 남지 않게 함
-  return { chanFix, id: `k${year}_${hash(title.replace(/\s+/g, ''))}`, title, year, month: fm, file, rows, target: target || null, ppt: ppt || null, gl: gl || null };
+  const hub = parseHubChan(XLSX, wb);
+  return { chanFix, id: `k${year}_${hash(title.replace(/\s+/g, ''))}`, title, year, month: fm, file, rows, target: target || null, ppt: ppt || null, gl: gl || null, chanQty: hub?.qty || null, chanPrice: hub?.price || null };
 }
+
+// 허브 시트('…결산기준'): 거래처별 매출물량(톤)·매출단가(원/kg) — D열 구역 제목(매출물량(톤)/매출단가) 아래 F열 거래처 행, 월 열은 위쪽 1~12 줄
+const HUB_SHEET = (n) => /결산기준/.test(n);
+function parseHubChan(XLSX, wb) {
+  const sn = wb.SheetNames.find(HUB_SHEET);
+  if (!sn || !wb.Sheets[sn]) return null;
+  const g = fullRows(XLSX, wb.Sheets[sn]);
+  const s = (r, c) => String((g[r] || [])[c] ?? '').trim();
+  let mr = -1, mc = -1;
+  for (let r = 0; r < 12 && mr < 0; r++) { const row = g[r] || []; for (let c = 0; c < row.length - 2; c++) if (row[c] === 1 && row[c + 1] === 2 && row[c + 2] === 3) { mr = r; mc = c; break; } }
+  if (mr < 0) return null;
+  // 거래처 행: D열=구역 이름(매출물량(톤)/매출단가…), E열 비고 F열=거래처 (품목 행은 E열)
+  const out = { qty: {}, price: {} };
+  for (let r = mr + 1; r < Math.min(g.length, 400); r++) {
+    const d = s(r, 3), f = s(r, 5);
+    if (!f || s(r, 4)) continue;
+    const key = /^매출물량/.test(d) && !/비중/.test(d) ? 'qty' : /^매출단가/.test(d) ? 'price' : '';
+    if (key && !out[key][f]) out[key][f] = Array.from({ length: 12 }, (_, j) => num((g[r] || [])[mc + j]));
+  }
+  return Object.keys(out.qty).length ? out : null;
+}
+const chanQtyOf = (k, label) => (k.chanQty || {})[label] || null;
 
 // 거래처별 매출: Summary 거래처 칸이 비어 있는데(예: 10월 이마트 0) 거래처 합 < 매출액이면, 원장 511 거래처 금액으로 채움
 //   원장 거래처명 → Summary 거래처 라벨 (THISO RETAIL = 베트남 이마트 운영사)
@@ -298,7 +321,7 @@ async function readFile(f) {
   lastFile = { name: f.name, buf }; // 🧮 양식 점검·다음 달 양식에서 다시 씀(메모리에만)
   const names = XLSX.read(buf, { bookSheets: true }).SheetNames;
   const sn = names.find((n) => /^summary/i.test(n.trim()));
-  const extra = names.filter((n) => TARGET_SHEET(n) || PPT_SHEET(n) || GL_SHEET(n));
+  const extra = names.filter((n) => TARGET_SHEET(n) || PPT_SHEET(n) || GL_SHEET(n) || HUB_SHEET(n));
   const wb = XLSX.read(buf, sn ? { sheets: [sn, ...extra], cellStyles: true } : {}); // cellStyles: 숨긴 행 정보
   return parseKpi(XLSX, wb, f.name);
 }
@@ -660,7 +683,12 @@ function cmBullets(k, G, B) {
     const M = model(k), s = B.row, d = s.a[i] - s.a[p];
     out.push(`${mn}월 매출 ${f1(s.a[i])}백만원(${pm}월 ${f1(s.a[p])})${best(s.a) ? '으로 연중 최고 실적' : ''}, 전월 대비 ${sgn(d, 1)}백만원(${pc0(s.a[i], s.a[p])}) ${d >= 0 ? '성장' : '감소'}`);
     const ch = M.chans.filter((x) => Math.abs(x.a[i]) >= 0.05).sort((x, y) => (y.a[i] - y.a[p]) - (x.a[i] - x.a[p]));
-    for (const x of ch) { const dd = x.a[i] - x.a[p]; out.push(`${x.label}: ${mn}월 매출 ${f1(x.a[i])}백만원(${pm}월 ${f1(x.a[p])}), 전월 대비 ${sgn(dd, 1)}백만원(${pc0(x.a[i], x.a[p])}) ${dd >= 0 ? '성장' : '감소'}${CHK}`); }
+    for (const x of ch) {
+      const dd = x.a[i] - x.a[p], q = chanQtyOf(k, x.label);
+      // 거래처별 판매물량(허브 시트) — 장표 형식 "매출 50백만원, 판매물량 8.6톤"
+      const qs = q && Math.abs(q[mn - 1] || 0) >= 0.005 ? `, 판매물량 ${q[mn - 1].toFixed(1)}톤(${pm}월 ${(q[mn - 2] || 0).toFixed(1)})` : '';
+      out.push(`${x.label}: ${mn}월 매출 ${f1(x.a[i])}백만원(${pm}월 ${f1(x.a[p])})${qs}, 전월 대비 매출 ${sgn(dd, 1)}백만원(${pc0(x.a[i], x.a[p])}) ${dd >= 0 ? '성장' : '감소'}${CHK}`);
+    }
     if (vol) { const v = vol.row; out.push(`판매물량 ${v.a[i].toFixed(1)}톤(${pm}월 ${v.a[p].toFixed(1)})${v.tgt ? `, 단기 Target ${v.tgt.toFixed(1)}톤 대비 ${Math.round(v.a[i] / v.tgt * 100)}% 달성` : ''}`); }
     const pr = pptBlock(P, /^매출단가/);
     if (pr) {
@@ -1397,7 +1425,8 @@ function mailText(k, M, m) {
   item(`매출액 ${n1(ds)}백만원 ${ud(ds)} (${f1(s.a[i])}백만원)`);
   for (const x of M.chans.filter((x) => ab(x.a[i] - x.a[p]) >= 1).sort((a, b) => ab(b.a[i] - b.a[p]) - ab(a.a[i] - a.a[p]))) {
     const d = r1(x.a[i]) - r1(x.a[p]);
-    sub(ab(x.a[p]) < 0.05 ? `${x.label} 신규 ${f1(x.a[i])}백만원` : ab(x.a[i]) < 0.05 ? `${x.label} 매출 없음 (전월 ${f1(x.a[p])}백만원)` : `${x.label} ${n1(d)}백만원 ${ud(d)} (${f1(x.a[i])}백만원)`);
+    const q = chanQtyOf(k, x.label), qs = q && ab(q[i] || 0) >= 0.005 ? `, 물량 ${(q[i] || 0).toFixed(1)}톤(전월 ${(q[p] || 0).toFixed(1)})` : '';
+    sub(ab(x.a[p]) < 0.05 ? `${x.label} 신규 ${f1(x.a[i])}백만원${qs}` : ab(x.a[i]) < 0.05 ? `${x.label} 매출 없음 (전월 ${f1(x.a[p])}백만원)` : `${x.label} ${n1(d)}백만원 ${ud(d)} (${f1(x.a[i])}백만원${qs})`);
   }
   gap();
   // 2) 물량
