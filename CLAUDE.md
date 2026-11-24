@@ -1,6 +1,6 @@
 # JY 업무노트 – 작업 규칙
 
-갤럭시 탭 S8(S펜) + PC에서 쓰는 업무용 PWA. 빌드 없이 정적 파일로 GitHub Pages(`main` / root)에서 배포됨.
+갤럭시 탭 S8(S펜) + PC에서 쓰는 업무용 PWA. 이름 「Dr.AG 업무노트」(short_name Dr.AG), 색은 닥터애그 로고 초록(--primary #2a9157, 메뉴 --nav-bg #17452c), 아이콘 icons/icon.svg = 버섯+Dr.AG. 빌드 없이 정적 파일로 GitHub Pages(`main` / root)에서 배포됨.
 사이트: https://jyseong0402-design.github.io/JY-Work/
 
 ## 업데이트할 때마다 꼭
