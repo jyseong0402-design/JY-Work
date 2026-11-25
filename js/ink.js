@@ -269,6 +269,19 @@ export class InkPad {
     if (a.type === 'imgmove') {
       Object.assign(a.s, reverse ? a.from : a.to);
       this.redraw(a.page);
+    } else if (a.type === 'imgpage') {
+      if (reverse) {
+        const t = this.pages[a.to].strokes, j = t.indexOf(a.s);
+        if (j >= 0) t.splice(j, 1);
+        this.pages[a.from].strokes.splice(a.i, 0, a.s);
+        if (a.created && a.to === this.pages.length - 1 && !this.pages[a.to].strokes.length) { this.pages.pop(); this.renderPages(); }
+      } else {
+        if (a.created && a.to >= this.pages.length) { this.pages.push({ strokes: [] }); this.renderPages(); }
+        const f = this.pages[a.from].strokes, j = f.indexOf(a.s);
+        if (j >= 0) f.splice(j, 1);
+        this.pages[a.to].strokes.push(a.s);
+      }
+      this.redraw(a.from); if (this.pages[a.to]) this.redraw(a.to);
     } else if (a.type === 'add') {
       const list = this.pages[a.page].strokes;
       if (reverse) list.splice(list.indexOf(a.stroke), 1); else list.push(a.stroke);
@@ -325,19 +338,40 @@ export class InkPad {
     return s;
   }
   deselect() { this.sel?.el.remove(); this.sel = null; }
+  // 사진을 다른 쪽으로: 마지막 쪽에서 아래로 보내면 새 쪽을 만듦
+  moveImgPage(from, s, to) {
+    if (to < 0) return;
+    const list = this.pages[from].strokes, i = list.indexOf(s);
+    if (i < 0) return;
+    const created = to >= this.pages.length;
+    if (created) { this.pages.push({ strokes: [] }); this.renderPages(); }
+    list.splice(i, 1);
+    this.pages[to].strokes.push(s);
+    this.push({ type: 'imgpage', s, from, to, i, created });
+    this.deselect();
+    this.redraw(from); this.redraw(to);
+    this.changed();
+    this.selectImg(to, s);
+    this.pagesEl.children[to]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
   selectImg(page, s) {
     this.deselect();
     const host = this.pagesEl.children[page];
     if (!host) return;
     const el = document.createElement('div');
     el.className = 'img-sel';
-    el.innerHTML = '<span class="img-bar"><button type="button" data-a="zoom" title="크게 보기·저장">🔍</button><button type="button" data-a="del" title="사진 빼기">🗑</button></span><i class="rs" title="크기 조절"></i>';
+    el.innerHTML = `<span class="img-bar">${page > 0 ? '<button type="button" data-a="up" title="이전 쪽으로 옮기기">⬆</button>' : ''}<button type="button" data-a="down" title="다음 쪽으로 옮기기 (마지막 쪽이면 새 쪽)">⬇</button><button type="button" data-a="zoom" title="크게 보기·저장">🔍</button><button type="button" data-a="del" title="사진 빼기">🗑</button></span><i class="rs" title="크기 조절"></i>`;
     host.appendChild(el);
     this.sel = { el, page, s };
     const place = () => Object.assign(el.style, { left: s.x * this.scale + 'px', top: s.y * this.scale + 'px', width: s.w * this.scale + 'px', height: s.h * this.scale + 'px' });
     this.sel.place = place;
     place();
     el.querySelector('[data-a=zoom]').onclick = () => this.opts.onImageOpen?.(s.pid);
+    // 다른 쪽으로 옮기기(위치·크기는 그대로)
+    for (const [a, d] of [['up', -1], ['down', 1]]) {
+      const b = el.querySelector(`[data-a=${a}]`);
+      if (b) b.onclick = () => this.moveImgPage(page, s, page + d);
+    }
     el.querySelector('[data-a=del]').onclick = () => {
       const list = this.pages[page].strokes;
       const i = list.indexOf(s);
