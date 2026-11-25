@@ -1,11 +1,17 @@
 :root {
-  --bg: #f5f7fb;
+  /* Dr.AG 로고 초록 (2026-11-24) */
+  --bg: #f4f7f5;
   --panel: #ffffff;
-  --text: #1c2333;
-  --muted: #6b7486;
-  --line: #e3e7ef;
-  --primary: #2b5ce6;
-  --primary-soft: #e8eefd;
+  --text: #1c2a22;
+  --muted: #66766c;
+  --line: #e0e8e3;
+  --primary: #2a9157;
+  --primary-soft: #e4f3ea;
+  --nav-bg: #17452c;
+  --nav-fg: #dfeee5;
+  --nav-sub: #9fe0b8;
+  --nav-hover: #1f5537;
+  --nav-active: #2a9157;
   --danger: #d64545;
   --ok: #1f9d62;
   --warn: #d98a00;
@@ -15,13 +21,18 @@
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #12151c;
-    --panel: #1b2029;
-    --text: #e7eaf1;
-    --muted: #9aa3b5;
-    --line: #2b3240;
-    --primary: #6d8ff5;
-    --primary-soft: #232d48;
+    --bg: #111613;
+    --panel: #19201c;
+    --text: #e6eee9;
+    --muted: #93a39a;
+    --line: #27322b;
+    --primary: #5cc98b;
+    --primary-soft: #1c3327;
+    --nav-bg: #0d1a12;
+    --nav-fg: #d5e6dc;
+    --nav-sub: #7fcf9f;
+    --nav-hover: #173022;
+    --nav-active: #2a9157;
     --danger: #ef6b6b;
     --ok: #41c486;
     --warn: #f0ae3c;
@@ -47,17 +58,19 @@ p { margin: 4px 0 12px; }
 
 .app { display: flex; min-height: 100vh; }
 .nav {
-  width: 200px; flex-shrink: 0; background: var(--panel); border-right: 1px solid var(--line);
+  width: 200px; flex-shrink: 0; background: var(--nav-bg); color: var(--nav-fg); border-right: 1px solid var(--nav-bg);
   padding: 16px 10px; display: flex; flex-direction: column; gap: 4px; position: sticky; top: 0; height: 100vh;
 }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 17px; padding: 4px 10px 16px; }
-.brand img { width: 28px; height: 28px; }
+.brand img { width: 30px; height: 30px; border-radius: 8px; }
+.brand span { color: #fff; font-weight: 800; letter-spacing: .3px; }
+.brand small { color: var(--nav-sub); font-size: 12px; font-weight: 500; margin-left: 2px; }
 .nav button {
   display: flex; align-items: center; gap: 10px; background: none; border: 0; padding: 10px 12px; border-radius: 10px;
-  font: inherit; color: var(--text); cursor: pointer; text-align: left;
+  font: inherit; color: var(--nav-fg); cursor: pointer; text-align: left;
 }
-.nav button:hover { background: var(--bg); }
-.nav button.active { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
+.nav button:hover { background: var(--nav-hover); }
+.nav button.active { background: var(--nav-active); color: #fff; font-weight: 600; }
 .ic { width: 20px; text-align: center; }
 
 .main { flex: 1; min-width: 0; padding: 24px 28px 40px; max-width: 1100px; }
@@ -335,7 +348,7 @@ form[data-tab=ink] [data-pane=ink], form[data-tab=text] [data-pane=text] { displ
 @media (min-width: 761px) and (max-width: 1099px) {
   .nav { width: 92px; padding: 12px 6px; align-items: stretch; }
   .brand { justify-content: center; padding: 4px 0 14px; }
-  .brand span { display: none; }
+  .brand span, .brand small { display: none; }
   .nav button { flex-direction: column; gap: 2px; font-size: 12px; align-items: center; padding: 10px 4px; }
   .nav .ic { font-size: 22px; width: auto; }
   .main { padding: 20px 20px 32px; }
@@ -521,7 +534,8 @@ form.focus .focus-exit {
   margin-top: auto; font-size: 12px !important; color: var(--muted) !important; justify-content: center;
   padding: 8px !important; opacity: .8;
 }
-.nav-ver:hover { opacity: 1; color: var(--primary) !important; }
+.nav-ver { color: var(--nav-sub) !important; }
+.nav-ver:hover { opacity: 1; color: #fff !important; }
 .update-bar {
   position: fixed; left: 50%; top: calc(12px + env(safe-area-inset-top)); transform: translateX(-50%); z-index: 50;
   display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 16px; border-radius: 12px;
@@ -584,7 +598,7 @@ form[data-tab=text] .tbb.tool { color: var(--bar-dim); }
 .palette.open { display: flex; }
 .pal-row { display: flex; gap: 6px; }
 .palette button { width: 42px; height: 42px; border-radius: 10px; border: 2px solid transparent; background: none; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; color: var(--bar-fg); }
-.palette button.on { border-color: #6d8ff5; background: rgba(109, 143, 245, .15); }
+.palette button.on { border-color: var(--primary); background: var(--primary-soft); }
 .palette .sw::after { content: ''; width: 24px; height: 24px; border-radius: 50%; background: var(--sw); }
 .palette .sz i { display: block; width: var(--d); height: var(--d); border-radius: 50%; background: currentColor; }
 .palette .hl-only { display: none; }
@@ -864,11 +878,11 @@ dialog.dlg-make { width: min(1000px, calc(100vw - 24px)); padding: 0; }
 
 /* 메모 사진 (2026-11-19) */
 /* 쪽 안의 사진: 고른 사진 테두리·옮기기·크기 조절 */
-.ink-page .img-sel { position: absolute; z-index: 3; border: 2px solid #2b5ce6; box-shadow: 0 0 0 1px #fff; cursor: move; touch-action: none; }
+.ink-page .img-sel { position: absolute; z-index: 3; border: 2px solid var(--primary); box-shadow: 0 0 0 1px #fff; cursor: move; touch-action: none; }
 .img-sel .img-bar { position: absolute; top: -44px; left: 50%; transform: translateX(-50%); display: flex; gap: 4px; background: #262930; border-radius: 10px; padding: 3px; box-shadow: 0 4px 14px rgba(0,0,0,.35); }
 .img-sel .img-bar button { width: 38px; height: 34px; border: 0; border-radius: 8px; background: none; font-size: 17px; cursor: pointer; color: #fff; }
 .img-sel .img-bar button:hover { background: rgba(255,255,255,.12); }
-.img-sel .rs { position: absolute; right: -11px; bottom: -11px; width: 22px; height: 22px; border-radius: 50%; background: #2b5ce6; border: 2px solid #fff; cursor: nwse-resize; }
+.img-sel .rs { position: absolute; right: -11px; bottom: -11px; width: 22px; height: 22px; border-radius: 50%; background: var(--primary); border: 2px solid #fff; cursor: nwse-resize; }
 .ink-page canvas.live.sel-mode { cursor: default; }
 .tb-group[data-tool=select] .cur-color { opacity: .45; }
 dialog.photo-view { width: min(96vw, 1400px); max-height: 96vh; padding: 0; background: #111; border: 0; display: none; flex-direction: column; }
