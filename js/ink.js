@@ -61,7 +61,38 @@ function drawImg(ctx, s, scale, onload) {
   ctx.fillText('📷 사진 불러오는 중…', x + w / 2, y + h / 2);
   ctx.restore();
 }
-// 사진을 먼저(아래) 그리고 그 위에 필기
+/* ---- 글상자: { t:'txt', x, y, w, h, text, c, fs } — 펜 필기 중에도 'T' 도구로 쪽 위에 글자 입력 ---- */
+export const isTxt = (s) => s.t === 'txt';
+export const isBox = (s) => s.t === 'img' || s.t === 'txt'; // 옮기기·크기 조절 도구로 다루는 것
+export const TXT_LH = 1.35;
+const TXT_FONT = (px) => `${px}px "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif`;
+let measureCtx = null;
+// 줄 나눔은 논리 좌표(가로 1000)에서 계산 → 화면 크기와 상관없이 같은 위치에서 줄이 바뀜
+export function txtLines(s) {
+  measureCtx ||= document.createElement('canvas').getContext('2d');
+  measureCtx.font = TXT_FONT(s.fs);
+  const out = [];
+  for (const para of String(s.text || '').split('\n')) {
+    let line = '';
+    for (const ch of para) {
+      if (line && measureCtx.measureText(line + ch).width > s.w) { out.push(line); line = ch.trim() ? ch : ''; } else line += ch;
+    }
+    out.push(line);
+  }
+  s.h = Math.max(s.fs * TXT_LH, out.length * s.fs * TXT_LH); // 고르기·지우개용 높이
+  return out;
+}
+function drawText(ctx, s, scale) {
+  const lines = txtLines(s);
+  ctx.save();
+  ctx.fillStyle = s.c;
+  ctx.font = TXT_FONT(s.fs * scale);
+  ctx.textBaseline = 'middle';
+  lines.forEach((l, i) => ctx.fillText(l, s.x * scale, (s.y + (i + 0.5) * s.fs * TXT_LH) * scale));
+  ctx.restore();
+}
+
+// 사진을 먼저(아래) 그리고 그 위에 필기·글상자(쓴 순서대로)
 export function drawAll(ctx, strokes, scale, onload) {
   for (const s of strokes) if (isImg(s)) drawImg(ctx, s, scale, onload);
   for (const s of strokes) if (!isImg(s)) drawStroke(ctx, s, scale);
@@ -69,6 +100,7 @@ export function drawAll(ctx, strokes, scale, onload) {
 
 export function drawStroke(ctx, s, scale) {
   if (isImg(s)) return;
+  if (isTxt(s)) { if (!s.editing) drawText(ctx, s, scale); return; }
   const p = s.p;
   if (!p || p.length < 3) return;
   ctx.save();
@@ -162,7 +194,8 @@ export class InkPad {
       <button type="button" class="tbb tool" data-tool="pen" title="펜">${icon('pen')}</button>
       <button type="button" class="tbb tool" data-tool="hl" title="형광펜">${icon('hl')}</button>
       <button type="button" class="tbb tool" data-tool="eraser" title="지우개 (S펜 버튼을 누르고 문질러도 지워짐)">${icon('eraser')}</button>
-      <button type="button" class="tbb tool" data-tool="select" title="사진 옮기기·크기 조절 (사진을 누르세요)">${icon('select')}</button>
+      <button type="button" class="tbb tool" data-tool="text" title="글자 넣기 (쪽을 누르고 입력, 글상자를 누르면 고치기)">${icon('tbox')}</button>
+      <button type="button" class="tbb tool" data-tool="select" title="사진·글상자 옮기기·크기 조절 (누르세요)">${icon('select')}</button>
       <span class="pal-wrap">
         <button type="button" class="tbb cur-color" data-act="palette" title="색·굵기"><i></i></button>
         <div class="palette" role="dialog" aria-label="색·굵기">
@@ -186,14 +219,15 @@ export class InkPad {
   onTool(e) {
     const b = e.target.closest('button');
     if (!b) return;
+    this.commitText();
     const d = b.dataset;
     if (d.tool) this.tool.t = d.tool;
-    if (d.color) { this.tool.c = d.color; this.tool.t = 'pen'; }
+    if (d.color) { this.tool.c = d.color; if (this.tool.t !== 'text') this.tool.t = 'pen'; }
     if (d.hcolor) { this.tool.hc = d.hcolor; this.tool.t = 'hl'; }
     if (d.size) this.tool.w = +d.size;
     if (this.tool.t !== 'select') this.deselect();
     if (d.act === 'palette') {
-      if (this.tool.t === 'eraser' || this.tool.t === 'select') this.tool.t = 'pen';
+      if (this.tool.t === 'eraser' || this.tool.t === 'select') this.tool.t = 'pen'; // 글자 도구는 그대로(글자 색·크기)
       this.palette.classList.toggle('open');
     }
     if (d.act === 'undo') this.undo();
@@ -216,6 +250,7 @@ export class InkPad {
     q('[data-hcolor]').forEach((b) => b.classList.toggle('on', b.dataset.hcolor === this.tool.hc));
     q('[data-size]').forEach((b) => b.classList.toggle('on', +b.dataset.size === this.tool.w));
     this.opts.center.dataset.tool = this.tool.t;
+    if (this.pagesEl) this.pagesEl.dataset.tool = this.tool.t;
     const cur = q('.cur-color i')[0];
     if (cur) cur.style.background = this.tool.t === 'hl' ? this.tool.hc : this.tool.c;
     q('[data-act=finger]').forEach((f) => {
@@ -229,6 +264,7 @@ export class InkPad {
 
   /* ---- 데이터 ---- */
   load(data) {
+    if (this.editing) { this.editing.ta.remove(); this.editing = null; } // 다른 메모로 바뀜: 입력 중이던 글상자는 버림
     this.pages = data?.pages?.length ? data.pages.map((p) => ({ strokes: [...p.strokes], ls: p.ls || (p.strokes.length ? LINE : 0) })) : [{ strokes: [] }];
     this.undoStack = [];
     this.redoStack = [];
@@ -266,7 +302,7 @@ export class InkPad {
   push(action) { this.undoStack.push(action); this.redoStack = []; if (this.undoStack.length > 300) this.undoStack.shift(); }
   apply(a, reverse) {
     this.deselect();
-    if (a.type === 'imgmove') {
+    if (a.type === 'imgmove' || a.type === 'txtedit') {
       Object.assign(a.s, reverse ? a.from : a.to);
       this.redraw(a.page);
     } else if (a.type === 'imgpage') {
@@ -292,21 +328,27 @@ export class InkPad {
       else a.removed.forEach(({ s }) => list.splice(list.indexOf(s), 1));
       this.redraw(a.page);
     } else if (a.type === 'page') {
-      if (reverse) this.pages.pop(); else this.pages.push({ strokes: [] });
+      // at 없는 예전 기록 = 맨 끝 쪽
+      if (reverse) this.pages.splice(a.at ?? this.pages.length - 1, 1);
+      else this.pages.splice(a.at ?? this.pages.length, 0, { strokes: [] });
       this.renderPages();
     } else if (a.type === 'clear') {
       if (reverse) { a.after = this.pages; this.pages = a.before; } else { this.pages = a.after || [{ strokes: [] }]; }
       this.renderPages();
     }
   }
-  undo() { const a = this.undoStack.pop(); if (!a) return; this.apply(a, true); this.redoStack.push(a); this.changed(); }
-  redo() { const a = this.redoStack.pop(); if (!a) return; this.apply(a, false); this.undoStack.push(a); this.changed(); }
+  undo() { this.commitText(); const a = this.undoStack.pop(); if (!a) return; this.apply(a, true); this.redoStack.push(a); this.changed(); }
+  redo() { this.commitText(); const a = this.redoStack.pop(); if (!a) return; this.apply(a, false); this.undoStack.push(a); this.changed(); }
 
-  addPage(record) {
-    this.pages.push({ strokes: [] });
-    if (record) this.push({ type: 'page' });
+  // at 위치(0=맨 앞)에 빈 쪽을 끼움. 되돌리기는 순서대로라 다른 기록의 쪽 번호와 어긋나지 않음
+  addPage(record, at = this.pages.length) {
+    this.commitText();
+    at =Math.max(0, Math.min(at, this.pages.length));
+    this.pages.splice(at, 0, { strokes: [] });
+    if (record) this.push({ type: 'page', at });
     this.renderPages();
     this.changed();
+    return at;
   }
 
   /* ---- 화면 ---- */
@@ -338,6 +380,75 @@ export class InkPad {
     return s;
   }
   deselect() { this.sel?.el.remove(); this.sel = null; }
+
+  /* ---- 글상자 입력·고치기 ---- */
+  // 펜 굵기(가늘게·보통·굵게)를 글자 크기로 사용
+  txtSize() { return { 2: 22, 3.5: 28, 6: 40 }[this.tool.w] || 28; }
+  // 글자 도구로 누름: 글상자 위 = 고치기, 입력 중에 바깥 = 입력 끝, 빈 곳 = 새 글상자
+  textAt(page, [x, y], wasEditing = !!this.editing) {
+    const hit = [...this.pages[page].strokes].reverse().find((s) => isTxt(s) && x >= s.x && x <= s.x + s.w && y >= s.y && y <= s.y + (s.h || s.fs * TXT_LH));
+    if (hit && hit === this.editing?.s) return; // 입력 중인 상자 안
+    if (hit) { this.editText(page, hit); return; }
+    if (wasEditing) { this.commitText(); return; }
+    this.newText(page, x, y);
+  }
+  newText(page, x, y) {
+    const fs = this.txtSize();
+    let w = Math.min(560, PAGE_W - x - 20);
+    if (w < 160) { w = 160; x = PAGE_W - 180; }
+    const s = { t: 'txt', x: Math.round(Math.max(0, x)), y: Math.round(Math.max(0, Math.min(PAGE_H - fs * 2, y - fs * 0.7))), w: Math.round(w), h: fs * TXT_LH, text: '', c: this.tool.c, fs };
+    this.editText(page, s, true);
+  }
+  editText(page, s, isNew = false) {
+    this.commitText();
+    this.deselect();
+    const host = this.pagesEl.children[page];
+    if (!host) return;
+    const ta = document.createElement('textarea');
+    ta.className = 'ink-txt';
+    ta.value = s.text || '';
+    ta.placeholder = '글자 입력';
+    ta.spellcheck = false;
+    const sc = this.scale;
+    Object.assign(ta.style, {
+      left: s.x * sc + 'px', top: s.y * sc + 'px', width: s.w * sc + 'px',
+      fontSize: s.fs * sc + 'px', lineHeight: String(TXT_LH), color: s.c,
+    });
+    const fit = () => { ta.style.height = 'auto'; ta.style.height = Math.max(s.fs * TXT_LH * sc, ta.scrollHeight) + 'px'; };
+    ta.addEventListener('input', fit);
+    ta.addEventListener('pointerdown', (e) => e.stopPropagation());
+    ta.addEventListener('keydown', (e) => { if (e.key === 'Escape') ta.blur(); e.stopPropagation(); });
+    ta.addEventListener('blur', () => this.commitText());
+    host.appendChild(ta);
+    s.editing = true;
+    this.redraw(page);
+    this.editing = { page, s, ta, isNew, from: s.text || '' };
+    fit();
+    ta.focus({ preventScroll: true });
+    if (!isNew) ta.setSelectionRange(ta.value.length, ta.value.length);
+  }
+  commitText() {
+    const e = this.editing;
+    if (!e) return;
+    this.editing = null;
+    const { page, s, ta, isNew, from } = e;
+    ta.remove();
+    delete s.editing;
+    const text = ta.value.replace(/\s+$/, '');
+    const list = this.pages[page]?.strokes;
+    if (!list) return;
+    if (isNew) {
+      if (text) { s.text = text; list.push(s); this.push({ type: 'add', page, stroke: s }); this.changed(); }
+    } else if (!text) {
+      const i = list.indexOf(s);
+      if (i >= 0) { list.splice(i, 1); this.push({ type: 'erase', page, removed: [{ s, i }] }); this.changed(); }
+    } else if (text !== from) {
+      s.text = text;
+      this.push({ type: 'txtedit', page, s, from: { text: from }, to: { text } });
+      this.changed();
+    }
+    this.redraw(page);
+  }
   // 사진을 다른 쪽으로: 마지막 쪽에서 아래로 보내면 새 쪽을 만듦
   moveImgPage(from, s, to) {
     if (to < 0) return;
@@ -360,13 +471,18 @@ export class InkPad {
     if (!host) return;
     const el = document.createElement('div');
     el.className = 'img-sel';
-    el.innerHTML = `<span class="img-bar">${page > 0 ? '<button type="button" data-a="up" title="이전 쪽으로 옮기기">⬆</button>' : ''}<button type="button" data-a="down" title="다음 쪽으로 옮기기 (마지막 쪽이면 새 쪽)">⬇</button><button type="button" data-a="zoom" title="크게 보기·저장">🔍</button><button type="button" data-a="del" title="사진 빼기">🗑</button></span><i class="rs" title="크기 조절"></i>`;
+    const txt = isTxt(s);
+    if (txt) txtLines(s); // 높이 최신으로
+    el.innerHTML = `<span class="img-bar">${page > 0 ? '<button type="button" data-a="up" title="이전 쪽으로 옮기기">⬆</button>' : ''}<button type="button" data-a="down" title="다음 쪽으로 옮기기 (마지막 쪽이면 새 쪽)">⬇</button>${txt ? '<button type="button" data-a="edit" title="글자 고치기">✏️</button>' : '<button type="button" data-a="zoom" title="크게 보기·저장">🔍</button>'}<button type="button" data-a="del" title="${txt ? '글상자 지우기' : '사진 빼기'}">🗑</button></span><i class="rs" title="${txt ? '폭 조절' : '크기 조절'}"></i>`;
     host.appendChild(el);
     this.sel = { el, page, s };
     const place = () => Object.assign(el.style, { left: s.x * this.scale + 'px', top: s.y * this.scale + 'px', width: s.w * this.scale + 'px', height: s.h * this.scale + 'px' });
     this.sel.place = place;
     place();
-    el.querySelector('[data-a=zoom]').onclick = () => this.opts.onImageOpen?.(s.pid);
+    const zb = el.querySelector('[data-a=zoom]');
+    if (zb) zb.onclick = () => this.opts.onImageOpen?.(s.pid);
+    const eb = el.querySelector('[data-a=edit]');
+    if (eb) eb.onclick = () => this.editText(page, s);
     // 다른 쪽으로 옮기기(위치·크기는 그대로)
     for (const [a, d] of [['up', -1], ['down', 1]]) {
       const b = el.querySelector(`[data-a=${a}]`);
@@ -392,7 +508,10 @@ export class InkPad {
       const sx = e.clientX, sy = e.clientY;
       const mv = (ev) => {
         const dx = (ev.clientX - sx) / this.scale, dy = (ev.clientY - sy) / this.scale;
-        if (resize) {
+        if (resize && txt) { // 글상자는 폭만 바꾸고 높이는 줄 수에 맞춤
+          s.w = Math.round(Math.max(80, Math.min(PAGE_W - from.x, from.w + dx)));
+          txtLines(s);
+        } else if (resize) {
           const w = Math.max(60, Math.min(PAGE_W - from.x, from.w + Math.max(dx, dy * from.w / from.h)));
           s.w = Math.round(w); s.h = Math.round(w * from.h / from.w);
         } else {
@@ -416,12 +535,24 @@ export class InkPad {
   }
 
   renderPages() {
+    this.commitText();
     this.deselect();
     this.pagesEl.innerHTML = '';
     this.pages.forEach((_, i) => {
       const el = document.createElement('div');
       el.className = 'paper ink-page';
-      el.innerHTML = `<canvas class="base"></canvas><canvas class="live"></canvas><span class="pno">${i + 1}</span>`;
+      const last = i === this.pages.length - 1;
+      el.innerHTML = `<canvas class="base"></canvas><canvas class="live"></canvas><span class="pno">${i + 1}</span>`
+        + `<button type="button" class="pg-ins" data-at="${i}" title="${i ? `${i}쪽과 ${i + 1}쪽 사이에` : '맨 앞에'} 빈 쪽 끼우기">＋ 쪽</button>`
+        + (last ? `<button type="button" class="pg-ins end" data-at="${i + 1}" title="맨 뒤에 빈 쪽 추가">＋ 쪽</button>` : '');
+      el.querySelectorAll('.pg-ins').forEach((b) => {
+        b.addEventListener('pointerdown', (e) => e.stopPropagation());
+        b.onclick = (e) => {
+          e.stopPropagation();
+          const at = this.addPage(true, +b.dataset.at);
+          this.pagesEl.children[at]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        };
+      });
       this.pagesEl.appendChild(el);
       this.bindPage(el, i);
     });
@@ -472,6 +603,7 @@ export class InkPad {
     let mode = null; // 'draw' | 'erase' | 'scroll'
     let lastY = 0;
     let removed = [];
+    let tapAt = null; // 글자 도구에서 손가락으로 누른 곳(움직이지 않고 떼면 입력)
 
     const pt = (e) => {
       const r = live.getBoundingClientRect();
@@ -488,6 +620,10 @@ export class InkPad {
       for (let i = list.length - 1; i >= 0; i--) {
         const s = list[i];
         if (isImg(s)) continue; // 사진은 지우개로 지우지 않음 (사진 옮기기 도구의 🗑)
+        if (isTxt(s)) { // 글상자는 문지른 곳이 상자 안이면 통째로 지움
+          if (x >= s.x && x <= s.x + s.w && y >= s.y && y <= s.y + (s.h || s.fs * TXT_LH)) { removed.push({ s, i }); list.splice(i, 1); hit = true; }
+          continue;
+        }
         const rr = r + s.w / 2;
         for (let k = 0; k < s.p.length; k += 3) {
           if (Math.abs(s.p[k] - x) < rr && Math.abs(s.p[k + 1] - y) < rr) {
@@ -510,10 +646,24 @@ export class InkPad {
         this.syncTools();
       }
       if (mode) return; // 이미 다른 포인터로 작업 중 (멀티터치 무시)
-      if (this.tool.t === 'select') { // 사진 고르기: 사진을 누르면 선택, 빈 곳은 선택 해제(손가락은 스크롤)
+      if (this.tool.t === 'text') { // 글자 넣기: 글상자를 누르면 고치기, 빈 곳은 새 글상자(손가락은 살짝 누르면 입력, 끌면 스크롤)
+        const p = pt(e);
+        if (e.pointerType === 'touch') {
+          mode = 'scroll';
+          lastY = e.clientY;
+          tapAt = { p, x: e.clientX, y: e.clientY, was: !!this.editing };
+          live.setPointerCapture(e.pointerId);
+          this.activeId = e.pointerId;
+          return;
+        }
+        e.preventDefault();
+        this.textAt(pageIndex, p);
+        return;
+      }
+      if (this.tool.t === 'select') { // 사진·글상자 고르기: 누르면 선택, 빈 곳은 선택 해제(손가락은 스크롤)
         const [x, y] = pt(e);
         const list = this.pages[pageIndex].strokes;
-        const hit = [...list].reverse().find((s) => isImg(s) && x >= s.x && x <= s.x + s.w && y >= s.y && y <= s.y + s.h);
+        const hit = [...list].reverse().find((s) => isBox(s) && x >= s.x && x <= s.x + s.w && y >= s.y && y <= s.y + s.h);
         if (hit) { e.preventDefault(); this.selectImg(pageIndex, hit); return; }
         this.deselect();
         if (e.pointerType !== 'touch') return;
@@ -548,6 +698,7 @@ export class InkPad {
       if (mode === 'scroll') {
         this.pagesEl.scrollTop -= e.clientY - lastY;
         lastY = e.clientY;
+        if (tapAt && Math.hypot(e.clientX - tapAt.x, e.clientY - tapAt.y) > 10) tapAt = null;
         return;
       }
       e.preventDefault();
@@ -564,6 +715,8 @@ export class InkPad {
 
     const up = (e) => {
       if (!mode || e.pointerId !== this.activeId) return;
+      if (mode === 'scroll' && tapAt && e.type === 'pointerup') { const { p, was } = tapAt; tapAt = null; mode = null; this.activeId = null; this.textAt(pageIndex, p, was); return; }
+      tapAt = null;
       if (mode === 'erase' && removed.length) {
         this.push({ type: 'erase', page: pageIndex, removed });
         this.changed();
