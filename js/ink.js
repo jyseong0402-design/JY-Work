@@ -264,7 +264,7 @@ export class InkPad {
 
   /* ---- 데이터 ---- */
   load(data) {
-    if (this.editing) { this.editing.ta.remove(); this.editing = null; } // 다른 메모로 바뀜: 입력 중이던 글상자는 버림
+    if (this.editing) { this.editing.ta.remove(); this.editing.grip?.remove(); this.editing = null; } // 다른 메모로 바뀜: 입력 중이던 글상자는 버림
     this.pages = data?.pages?.length ? data.pages.map((p) => ({ strokes: [...p.strokes], ls: p.ls || (p.strokes.length ? LINE : 0) })) : [{ strokes: [] }];
     this.undoStack = [];
     this.redoStack = [];
@@ -417,8 +417,16 @@ export class InkPad {
   // 펜 굵기(가늘게·보통·굵게)를 글자 크기로 사용
   txtSize() { return { 2: 22, 3.5: 28, 6: 40 }[this.tool.w] || 28; }
   // 글자 도구로 누름: 글상자 위 = 고치기, 입력 중에 바깥 = 입력 끝, 빈 곳 = 새 글상자
+  txtHit(page, [x, y]) {
+    return [...(this.pages[page]?.strokes || [])].reverse().find((s) => isTxt(s) && x >= s.x && x <= s.x + s.w && y >= s.y && y <= s.y + (s.h || s.fs * TXT_LH));
+  }
+  // 글상자 위치 (쪽 밖으로 너무 나가지 않게)
+  placeTxt(s, x, y) {
+    s.x = Math.round(Math.max(-s.w / 2, Math.min(PAGE_W - 40, x)));
+    s.y = Math.round(Math.max(0, Math.min(PAGE_H - s.fs, y)));
+  }
   textAt(page, [x, y], wasEditing = !!this.editing) {
-    const hit = [...this.pages[page].strokes].reverse().find((s) => isTxt(s) && x >= s.x && x <= s.x + s.w && y >= s.y && y <= s.y + (s.h || s.fs * TXT_LH));
+    const hit = this.txtHit(page, [x, y]);
     if (hit && hit === this.editing?.s) return; // 입력 중인 상자 안
     if (hit) { this.editText(page, hit); return; }
     if (wasEditing) { this.commitText(); return; }
@@ -452,9 +460,38 @@ export class InkPad {
     ta.addEventListener('keydown', (e) => { if (e.key === 'Escape') ta.blur(); e.stopPropagation(); });
     ta.addEventListener('blur', () => this.commitText());
     host.appendChild(ta);
+    // 입력 중 왼쪽 위 ✥ 손잡이를 끌면 글상자 옮기기 (손가락도 됨)
+    const grip = document.createElement('span');
+    grip.className = 'ink-txt-grip';
+    grip.textContent = '✥';
+    grip.title = '끌어서 옮기기';
+    const placeGrip = () => Object.assign(grip.style, { left: s.x * this.scale + 'px', top: s.y * this.scale + 'px' });
+    placeGrip();
+    grip.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); e.stopPropagation(); // 입력칸 포커스 유지
+      grip.setPointerCapture(e.pointerId);
+      const from = { x: s.x, y: s.y }, sx = e.clientX, sy = e.clientY;
+      const mv = (ev) => {
+        this.placeTxt(s, from.x + (ev.clientX - sx) / this.scale, from.y + (ev.clientY - sy) / this.scale);
+        Object.assign(ta.style, { left: s.x * this.scale + 'px', top: s.y * this.scale + 'px' });
+        placeGrip();
+      };
+      const end = () => {
+        grip.removeEventListener('pointermove', mv);
+        grip.removeEventListener('pointerup', end);
+        grip.removeEventListener('pointercancel', end);
+        // 이미 쪽에 있던 글상자만 되돌리기 기록 (새 글상자는 입력 끝날 때 최종 위치로 들어감)
+        if (!isNew && (s.x !== from.x || s.y !== from.y)) { this.push({ type: 'imgmove', page, s, from, to: { x: s.x, y: s.y } }); this.changed(); }
+        ta.focus({ preventScroll: true });
+      };
+      grip.addEventListener('pointermove', mv);
+      grip.addEventListener('pointerup', end);
+      grip.addEventListener('pointercancel', end);
+    });
+    host.appendChild(grip);
     s.editing = true;
     this.redraw(page);
-    this.editing = { page, s, ta, isNew, from: s.text || '' };
+    this.editing = { page, s, ta, grip, isNew, from: s.text || '' };
     fit();
     ta.focus({ preventScroll: true });
     if (!isNew) ta.setSelectionRange(ta.value.length, ta.value.length);
@@ -463,8 +500,9 @@ export class InkPad {
     const e = this.editing;
     if (!e) return;
     this.editing = null;
-    const { page, s, ta, isNew, from } = e;
+    const { page, s, ta, grip, isNew, from } = e;
     ta.remove();
+    grip?.remove();
     delete s.editing;
     const text = ta.value.replace(/\s+$/, '');
     const list = this.pages[page]?.strokes;
@@ -636,6 +674,7 @@ export class InkPad {
     let lastY = 0;
     let removed = [];
     let tapAt = null; // 글자 도구에서 손가락으로 누른 곳(움직이지 않고 떼면 입력)
+    let drag = null; // 글자 도구에서 펜·마우스로 끄는 글상자
 
     const pt = (e) => {
       const r = live.getBoundingClientRect();
@@ -689,6 +728,16 @@ export class InkPad {
           return;
         }
         e.preventDefault();
+        // 펜·마우스로 글상자를 누른 채 끌면 옮기기, 그냥 떼면 고치기
+        const hit = this.txtHit(pageIndex, p);
+        if (hit) {
+          if (this.editing) this.commitText();
+          mode = 'txtdrag';
+          drag = { s: hit, from: { x: hit.x, y: hit.y }, sx: e.clientX, sy: e.clientY, p, moved: false };
+          live.setPointerCapture(e.pointerId);
+          this.activeId = e.pointerId;
+          return;
+        }
         this.textAt(pageIndex, p);
         return;
       }
@@ -734,6 +783,14 @@ export class InkPad {
         return;
       }
       e.preventDefault();
+      if (mode === 'txtdrag') {
+        const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+        if (!drag.moved && Math.hypot(dx, dy) < 5) return;
+        drag.moved = true;
+        this.placeTxt(drag.s, drag.from.x + dx / this.scale, drag.from.y + dy / this.scale);
+        this.redraw(pageIndex);
+        return;
+      }
       const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
       for (const ev of evs.length ? evs : [e]) {
         const p = pt(ev);
@@ -749,6 +806,11 @@ export class InkPad {
       if (!mode || e.pointerId !== this.activeId) return;
       if (mode === 'scroll' && tapAt && e.type === 'pointerup') { const { p, was } = tapAt; tapAt = null; mode = null; this.activeId = null; this.textAt(pageIndex, p, was); return; }
       tapAt = null;
+      if (mode === 'txtdrag') {
+        const d = drag; drag = null; mode = null; this.activeId = null;
+        if (d.moved) { this.push({ type: 'imgmove', page: pageIndex, s: d.s, from: d.from, to: { x: d.s.x, y: d.s.y } }); this.changed(); } else this.editText(pageIndex, d.s);
+        return;
+      }
       if (mode === 'erase' && removed.length) {
         this.push({ type: 'erase', page: pageIndex, removed });
         this.changed();

@@ -329,6 +329,8 @@ form[data-tab=ink] [data-pane=ink], form[data-tab=text] [data-pane=text] { displ
 /* 글상자 입력칸(글자 도구) — 쪽 위에 그대로 겹쳐 보임 */
 .ink-page .ink-txt { position: absolute; z-index: 3; margin: 0; padding: 0; border: 0; outline: 1.5px dashed var(--primary); outline-offset: 3px; background: rgba(255, 255, 255, .55); resize: none; overflow: hidden; font-family: "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; white-space: pre-wrap; word-break: break-all; box-sizing: content-box; }
 .ink-page .ink-txt::placeholder { color: #a7a7a7; }
+.ink-page .ink-txt-grip { position: absolute; z-index: 4; width: 28px; height: 28px; transform: translate(calc(-100% - 8px), -6px); border-radius: 50%; background: var(--primary); color: #fff; display: grid; place-items: center; font-size: 16px; cursor: move; touch-action: none; user-select: none; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+.ink-pages[data-tool=text] .ink-page canvas.live { cursor: text; }
 .ink-pages[data-tool=text] canvas.live { cursor: text; }
 /* 찾기로 열었을 때 찾은 글상자 표시 */
 .ink-page .txt-hit { position: absolute; z-index: 2; pointer-events: none; border-radius: 6px; background: rgba(255, 196, 0, .35); box-shadow: 0 0 0 2px #f0a500; animation: txtHit 2.6s ease-out forwards; }

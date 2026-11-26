@@ -1,5 +1,5 @@
 // 오프라인 지원용 서비스워커: 앱 파일은 네트워크 우선(최신 유지), 끊기면 캐시 사용
-const CACHE = 'jywork-v76';
+const CACHE = 'jywork-v77';
 const ASSETS = ['./', './index.html', './css/style.css', './js/app.js', './js/store.js',
   './js/summarize.js', './js/ai.js', './js/excel.js', './js/ink.js', './js/icons.js', './js/inkdb.js', './js/sync.js', './js/version.js', './js/recur.js', './js/freight.js', './js/freight-ui.js', './js/closing.js', './js/closing-ui.js', './js/xlsxkit.js', './js/board.js', './js/closing-seed.js', './js/forms.js', './js/photos.js', './js/kpi.js', './js/kpicheck.js','./js/rdvault.js', './js/rdask.js', './js/weekly-seed.js', './js/vendor/jszip.mjs',
   './js/firebase-config.js', './js/vendor/firebase.mjs', './js/vendor/xlsx.full.min.js',
