@@ -88,6 +88,31 @@ const curTheme = () => { try { return localStorage.getItem('jy-theme') || 'auto'
 applyTheme(curTheme());
 $('#themeBtn')?.addEventListener('click', () => { const order = ['auto', 'light', 'dark']; applyTheme(order[(order.indexOf(curTheme()) + 1) % 3]); });
 $('#themeSeg')?.addEventListener('click', (e) => { const b = e.target.closest('[data-theme-set]'); if (b) applyTheme(b.dataset.themeSet); });
+// 🏠 홈 화면 구성: 설정에서 고른 항목만 보임 (이 기기 localStorage 'jy-home', 기본 = 달력·할일)
+const HOME_W = [['search', '🔎 검색창'], ['stats', '🔢 오늘·이번 주 숫자'], ['cal', '📅 달력·일정'], ['vn', '📈 베트남 요약'], ['closing', '📋 이번 달 월마감'], ['tasks', '✅ 할일'], ['memo', '📝 최근 메모']];
+const HOME_DEFAULT = ['cal', 'tasks'];
+const homeOn = () => { try { const v = JSON.parse(localStorage.getItem('jy-home') || 'null'); return Array.isArray(v) ? v : HOME_DEFAULT; } catch { return HOME_DEFAULT; } };
+function applyHome() {
+  const on = new Set(homeOn());
+  $$('[data-hw]').forEach((el) => el.classList.toggle('hw-off', !on.has(el.dataset.hw)));
+  const grid = $('#view-dashboard .home-grid');
+  if (grid) {
+    grid.classList.toggle('no-cal', !on.has('cal'));
+    grid.classList.toggle('no-side', !['vn', 'closing', 'tasks', 'memo'].some((k) => on.has(k)));
+  }
+  const box = $('#homeWidgets');
+  if (box) box.innerHTML = HOME_W.map(([k, n]) => `<label class="hw-item"><input type="checkbox" data-hw-set="${k}" ${on.has(k) ? 'checked' : ''}/> ${n}</label>`).join('') + '<button type="button" class="btn sm" id="hwReset">기본값(달력·할일)으로</button>';
+}
+$('#homeWidgets')?.addEventListener('change', (e) => {
+  const c = e.target.closest('[data-hw-set]');
+  if (!c) return;
+  const on = new Set(homeOn());
+  if (c.checked) on.add(c.dataset.hwSet); else on.delete(c.dataset.hwSet);
+  try { localStorage.setItem('jy-home', JSON.stringify(HOME_W.map(([k]) => k).filter((k) => on.has(k)))); } catch { /* 무시 */ }
+  applyHome();
+});
+$('#homeWidgets')?.addEventListener('click', (e) => { if (e.target.id === 'hwReset') { try { localStorage.removeItem('jy-home'); } catch { /* 무시 */ } applyHome(); } });
+applyHome();
 // 화면 위 긴 설명 문구는 접어 두고 제목 옆 ⓘ로 펼침 (화면별로 펼침 상태 기억)
 (() => {
   const KEY = 'jy-desc-open';

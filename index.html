@@ -49,14 +49,14 @@
             <button class="btn primary" data-new="meeting">+ 메모</button>
           </div>
         </header>
-        <form class="home-search" id="homeSearch">
+        <form class="home-search" id="homeSearch" data-hw="search">
           <input type="search" id="homeQ" placeholder="🔎 메모·일정·할일 검색 (예: 운반비, 예산, 김대리)" />
           <button class="btn" type="submit">검색</button>
           <button class="btn ghost" type="button" data-go-view="search" title="기간·종류 검색, 빠른 리포트, AI 질문">상세 검색</button>
         </form>
-        <div class="stats" id="stats"></div>
+        <div class="stats" id="stats" data-hw="stats"></div>
         <div class="home-grid">
-          <div class="card home-cal">
+          <div class="card home-cal" data-hw="cal">
             <div class="cal-head">
               <button class="btn ghost" id="calPrev" aria-label="이전 달">‹</button>
               <strong id="calTitle"></strong>
@@ -78,10 +78,10 @@
             </div>
           </div>
           <div class="home-side">
-            <div class="card home-vn" id="homeVn" hidden></div>
-            <div class="card"><div class="card-head"><h2>📋 이번 달 월마감</h2><button class="btn ghost sm" data-go-view="board">월마감 현황 →</button></div><div id="homeClosing"></div></div>
-            <div class="card"><div class="card-head"><h2>✅ 할일</h2><button class="btn ghost sm" data-go-view="tasks">전체 보기 →</button></div><div id="dashTasks"></div></div>
-            <div class="card"><div class="card-head"><h2>📝 최근 메모</h2><button class="btn ghost sm" data-go-view="meetings">메모 →</button></div><div id="dashMeetings"></div></div>
+            <div class="card home-vn" id="homeVn" data-hw="vn" hidden></div>
+            <div class="card" data-hw="closing"><div class="card-head"><h2>📋 이번 달 월마감</h2><button class="btn ghost sm" data-go-view="board">월마감 현황 →</button></div><div id="homeClosing"></div></div>
+            <div class="card" data-hw="tasks"><div class="card-head"><h2>✅ 할일</h2><button class="btn ghost sm" data-go-view="tasks">전체 보기 →</button></div><div id="dashTasks"></div></div>
+            <div class="card" data-hw="memo"><div class="card-head"><h2>📝 최근 메모</h2><button class="btn ghost sm" data-go-view="meetings">메모 →</button></div><div id="dashMeetings"></div></div>
           </div>
         </div>
       </section>
@@ -362,6 +362,11 @@
           <h2>🌓 화면 밝기</h2>
           <p class="muted sm">자동은 기기(윈도우·탭) 설정을 따릅니다. 고른 값은 이 기기에만 저장됩니다.</p>
           <div class="seg" id="themeSeg"><button type="button" data-theme-set="auto">🖥 자동</button><button type="button" data-theme-set="light">☀️ 라이트</button><button type="button" data-theme-set="dark">🌙 다크</button></div>
+        </div>
+        <div class="card">
+          <h2>🏠 홈 화면 구성</h2>
+          <p class="muted sm">홈에 보일 항목을 고르세요. 고른 값은 이 기기에만 저장됩니다 (PC·탭 따로).</p>
+          <div class="hw-list" id="homeWidgets"></div>
         </div>
         <div class="card">
           <h2>🔄 탭·PC 동기화</h2>
