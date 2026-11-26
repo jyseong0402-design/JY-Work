@@ -1311,3 +1311,24 @@ dialog.editor.drop-on .ed-note { outline: 3px dashed var(--primary); outline-off
 .hw-item input { width: 16px; height: 16px; margin: 0; accent-color: var(--primary); }
 #view-stock .st-sku tr.st-dup th, #view-stock .st-sku tr.st-dup td { color: var(--warn); }
 #view-stock .st-sku tr.st-dup small { font-size: 11px; margin-left: 4px; }
+/* 📦 수불재고 보고 구역 (1.39.0~) */
+#view-stock .st-h4 { margin: 14px 0 6px; font-size: 14px; color: var(--muted); }
+#view-stock .st-mini { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-bottom: 6px; }
+#view-stock .st-mini .kpi-card { margin-bottom: 0; padding: 10px 12px; background: var(--bg); box-shadow: none; }
+#view-stock .st-mini .kc-big { font-size: 20px; }
+#view-stock .st-store th small { color: var(--warn); }
+.st-stack { display: flex; align-items: flex-end; gap: 6px; height: 140px; border-bottom: 1px solid var(--line); margin: 14px 0 4px; }
+.st-stack .col { flex: 1; height: 100%; display: flex; flex-direction: column-reverse; max-width: 56px; margin: 0 auto; }
+.st-stack .col i { display: block; width: 100%; opacity: .85; }
+.st-stack-x { display: flex; gap: 6px; font-size: 11px; color: var(--muted); }
+.st-stack-x span { flex: 1; text-align: center; max-width: 56px; margin: 0 auto; }
+.st-stack-x span.on { color: var(--warn); font-weight: 700; }
+.st-legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; margin: 8px 0 10px; }
+.st-legend b { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.st-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+.st-bc-x span.ev { color: var(--warn); font-weight: 700; }
+.st-bc-x span.ev::after { content: '▲'; display: block; font-size: 9px; line-height: 1; }
+#view-stock .st-up { color: var(--ok); }
+#view-stock .st-dn { color: var(--danger); }
+.st-stack-x span { white-space: nowrap; overflow: hidden; }
+@media (max-width: 760px) { .st-stack-x { font-size: 9.5px; gap: 3px; } .st-stack { gap: 3px; } }

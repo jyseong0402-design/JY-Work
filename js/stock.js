@@ -7,6 +7,7 @@
 //  - 3. 거래처 지점별 실적(MTD): 매출액(원) 묶음의 합계 줄 = 채널·점포별 MTD 매출
 // 뽑은 숫자는 store 'stock' 항목(기준일별 하나)으로 저장 → 탭·PC 동기화. 원본 파일은 기기 밖으로 보내지 않음
 import { store } from './store.js';
+import { readExtra, extraFindings, extraReport, extraHtml, lossNow, eventDays } from './stockx.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -186,7 +187,10 @@ export async function parseStockFile(buf, fileName) {
   const rep = parseReport(rg);
   const cg = await read(SHEETS.cmp), sg = await read(SHEETS.sku), lg = await read(SHEETS.ledger), stg = await read(SHEETS.store);
   const date = rep.date || ymd(new Date());
+  // 1.39.0~ 점포 월·주간, 직납 미납, 로스 유형별, 증정, 행사 (stockx.js)
+  const x = await readExtra(read, date);
   return {
+    x,
     id: 'st' + date.replace(/-/g, ''),
     date, file: fileName, loadedAt: new Date().toISOString(),
     kpi: rep.kpi, total: rep.total || null, ch: rep.ch, dayHeads: rep.dayHeads || [], days: rep.days.filter((x) => x.d <= date),
@@ -283,9 +287,10 @@ function findings(s) {
     const aj = L.cur.filter((x) => x.aj > 0);
     if (aj.length) add('info', `창고 폐기(aj): ${aj.map((x) => `${x.item} ${f0(x.aj)}ea`).join(', ')}`);
   }
-  // 7) 직납 로스
+  // 7) 점포·미납·로스(유형별)·증정·행사 (stockx.js) — 로스 유형별 시트가 있으면 비교시트 직납 로스 대신
+  extraFindings(s, add);
   const lm = s.monthly?.loss || {}, m = monthOf(s);
-  if (lm[m] !== undefined) {
+  if (lm[m] !== undefined && lossNow(s)?.src !== 'type') {
     const base = s.monthly.lossKg?.[m] || s.monthly.kg?.[m];
     const prevR = lm[m - 1] !== undefined && (s.monthly.lossKg?.[m - 1] || s.monthly.kg?.[m - 1]) ? lm[m - 1] / (s.monthly.lossKg?.[m - 1] || s.monthly.kg?.[m - 1]) : null;
     const r = base ? lm[m] / base : null;
@@ -324,7 +329,8 @@ function reportText(s) {
     lines.push(`4) 창고 재고: 기말 ${f2(L.curT.endTon)}톤${cv !== null ? ` (약 ${f1(cv)}일분)` : ''}, ${m}월 출고 ${f2(L.curT.outTon)}톤 / 입고 ${f2(L.curT.inTon)}톤${!L.curT.inTon ? ' — 입고 일정 확인 필요' : ''}`);
   }
   const lm = s.monthly?.loss?.[m];
-  if (lm !== undefined) { const base = s.monthly.lossKg?.[m] || s.monthly.kg?.[m]; lines.push(`5) 직납 로스: ${m}월 ${f0(lm)}kg${base ? ` (판매물량 대비 ${f1((lm / base) * 100)}%)` : ''}`); }
+  if (lm !== undefined && lossNow(s)?.src !== 'type') { const base = s.monthly.lossKg?.[m] || s.monthly.kg?.[m]; lines.push(`5) 직납 로스: ${m}월 ${f0(lm)}kg${base ? ` (판매물량 대비 ${f1((lm / base) * 100)}%)` : ''}`); }
+  lines.push(...extraReport(s));
   return lines.join('\n');
 }
 
@@ -334,7 +340,7 @@ function niceStep(raw) {
   const p = 10 ** Math.floor(Math.log10(raw || 1)), r = raw / p;
   return (r <= 1 ? 1 : r <= 2 ? 2 : r <= 2.5 ? 2.5 : r <= 5 ? 5 : 10) * p;
 }
-function bars(vals, labels, { fmt = f1, hi = -1, unit = '', avg = null, showVals = null, tip = null } = {}) {
+function bars(vals, labels, { fmt = f1, hi = -1, unit = '', avg = null, showVals = null, tip = null, marks = null } = {}) {
   const max = Math.max(...vals, 0) || 1;
   const step = niceStep(max / 4), top = Math.ceil(max / step) * step;
   const ticks = []; for (let t = 0; t <= top + 1e-9; t += step) ticks.push(t);
@@ -348,7 +354,7 @@ function bars(vals, labels, { fmt = f1, hi = -1, unit = '', avg = null, showVals
       <div class="st-bc-bars">${vals.map((v, i) => `<div class="bc${i === hi ? ' hi' : ''}${v ? '' : ' zero'}" title="${esc(tip ? tip(i) : labels[i])}: ${fmt(v)}${unit ? ` ${esc(unit)}` : ''}"><div class="bar" style="height:${(v / top) * 100}%">${sv && v ? `<span>${fmt(v)}</span>` : ''}</div></div>`).join('')}</div>
     </div>
     <div></div>
-    <div class="st-bc-x${n > 15 ? ' dense' : ''}">${labels.map((l) => `<span>${esc(l)}</span>`).join('')}</div>
+    <div class="st-bc-x${n > 15 ? ' dense' : ''}">${labels.map((l, i) => `<span${marks?.has(i) ? ' class="ev" title="행사"' : ''}>${esc(l)}</span>`).join('')}</div>
   </div>`;
 }
 
@@ -359,8 +365,8 @@ function render(root, s) {
   const L = ledgerNow(s);
   const cv = L.curT ? cover(L.curT.endTon, L.curT.outTon, dayOf(s)) : null;
   const forecast = k.progress ? S.mtd / k.progress : 0;
-  const lm = s.monthly?.loss?.[m], lbase = s.monthly?.lossKg?.[m] || s.monthly?.kg?.[m];
-  const card = (t, v, sub, cls = '') => `<div class="card kpi-card st-card ${cls}"><div class="kc-t">${t}</div><div class="kc-big">${v}</div><div class="kc-sub muted sm">${sub}</div></div>`;
+  const LN = lossNow(s); // 로스: 유형별 시트(직납+창고+특정 폐기), 없으면 비교시트 직납 로스
+  const card =(t, v, sub, cls = '') => `<div class="card kpi-card st-card ${cls}"><div class="kc-t">${t}</div><div class="kc-big">${v}</div><div class="kc-sub muted sm">${sub}</div></div>`;
   const F = findings(s);
   const p = prevOf(s);
 
@@ -370,7 +376,7 @@ function render(root, s) {
   // 일자별
   const ds = s.days || [];
   const dayVals = ds.map((d) => Math.round(d.v[0] / 1e4) / 100);
-  const dayChart = ds.length ? bars(dayVals, ds.map((d) => String(+d.d.slice(8))), { fmt: f1, hi: ds.length - 1, unit: '백만원', avg: k.avg ? k.avg / 1e6 : dayVals.reduce((a, b) => a + b, 0) / dayVals.length, tip: (i) => md(ds[i].d) }) : '';
+  const dayChart = ds.length ? bars(dayVals, ds.map((d) => String(+d.d.slice(8))), { fmt: f1, hi: ds.length - 1, unit: '백만원', avg: k.avg ? k.avg / 1e6 : dayVals.reduce((a, b) => a + b, 0) / dayVals.length, tip: (i) => md(ds[i].d), marks: (() => { const ev = eventDays(s); return new Set(ds.map((d, i) => (ev.has(+d.d.slice(8)) ? i : -1)).filter((i) => i >= 0)); })() }) : '';
   const dayTable = ds.length ? `<table class="kt"><thead><tr><th>날짜</th>${(s.dayHeads || []).slice(0, 12).map((h, i) => `<th>${esc(h)}${i < 4 ? '<br><small>(백만원)</small>' : i < 8 ? '<br><small>(kg)</small>' : '<br><small>(원/kg)</small>'}</th>`).join('')}</tr></thead>
     <tbody>${[...ds].reverse().map((d) => `<tr><th>${md(d.d)}</th>${d.v.map((v, i) => `<td>${i < 4 ? mil(v) : i < 8 ? f1(v) : f0(v)}</td>`).join('')}</tr>`).join('')}</tbody></table>` : '';
   // 월별 추이
@@ -380,8 +386,9 @@ function render(root, s) {
     <tr><th>매출(백만원)</th>${mons.map((x) => `<td>${f1(M.sales[x])}</td>`).join('')}</tr>
     <tr><th>물량(kg)</th>${mons.map((x) => `<td>${f0(M.kg[x])}</td>`).join('')}</tr>
     <tr><th>단가(원/kg)</th>${mons.map((x) => `<td>${f0(M.price[x])}</td>`).join('')}</tr>
-    <tr><th>직납 로스(kg)</th>${mons.map((x) => `<td>${M.loss[x] !== undefined ? f0(M.loss[x]) : '-'}</td>`).join('')}</tr>
-    <tr><th>로스율</th>${mons.map((x) => { const b = M.lossKg?.[x] || M.kg[x]; return `<td>${M.loss[x] !== undefined && b ? `${f1((M.loss[x] / b) * 100)}%` : '-'}</td>`; }).join('')}</tr>
+    ${s.x?.lossType ? `<tr><th>로스(kg) <small class="muted">유형별</small></th>${mons.map((x) => { const v = s.x.lossType.months[x]; return `<td>${v ? f0(v.total) : '-'}</td>`; }).join('')}</tr>
+    <tr><th>로스율</th>${mons.map((x) => { const v = s.x.lossType.months[x]; return `<td>${v ? `${f1(v.rate * 100)}%` : '-'}</td>`; }).join('')}</tr>` : `<tr><th>직납 로스(kg)</th>${mons.map((x) => `<td>${M.loss[x] !== undefined ? f0(M.loss[x]) : '-'}</td>`).join('')}</tr>
+    <tr><th>로스율</th>${mons.map((x) => { const b = M.lossKg?.[x] || M.kg[x]; return `<td>${M.loss[x] !== undefined && b ? `${f1((M.loss[x] / b) * 100)}%` : '-'}</td>`; }).join('')}</tr>`}
   </tbody></table>` : '<p class="muted sm">비교시트가 없어 월별 추이를 못 읽었습니다.</p>';
   const monChart = mons.length ? bars(mons.map((x) => M.sales[x]), mons.map((x) => `${x}월`), { fmt: f1, hi: mons.indexOf(m), unit: '백만원' }) : '';
   // SKU 주간
@@ -409,18 +416,19 @@ function render(root, s) {
       ${card('월말 예상 매출', forecast ? `${mil(forecast)}<small>백만원</small>` : '-', M?.sales?.[m - 1] ? `전월 ${f1(M.sales[m - 1])}백만원 대비 ${ratePct(forecast / 1e6, M.sales[m - 1])}` : '현재 속도 기준')}
       ${card('판매 물량 (MTD)', `${f1((KG.mtd || 0) / 1000)}<small>톤</small>`, `평균 단가 ${f0(P.mtd)}원/kg (연 ${f0(P.ytd)})`)}
       ${card('창고 재고', L.curT ? `${f2(L.curT.endTon)}<small>톤</small>` : '-', cv !== null ? `약 ${f1(cv)}일분 · ${m}월 입고 ${f2(L.curT.inTon)}톤` : '수불부 없음', cv !== null && cv < 7 ? 'warn' : '')}
-      ${card(`${m}월 직납 로스`, lm !== undefined ? `${f0(lm)}<small>kg</small>` : '-', lm !== undefined && lbase ? `판매물량 대비 ${f1((lm / lbase) * 100)}%` : '')}
+      ${card(`${m}월 로스${LN?.src === 'type' ? '' : ' (직납)'}`, LN ? `${f0(LN.cur.total)}<small>kg</small>` : '-', LN ? `물량 대비 ${f1(LN.cur.rate * 100)}%${LN.prev ? ` · 전월 ${f1(LN.prev.rate * 100)}%` : ''}${LN.cur.oneplus?.loss ? ` · 1+1 ${f0(LN.cur.oneplus.loss)}kg 별도` : ''}` : '', LN?.prev && LN.cur.rate > LN.prev.rate ? 'warn' : '')}
     </div>
     <div class="card"><h3>🔎 특이사항 <small class="muted">${md(s.date)} 기준${p ? ` · 지난 보고 ${md(p.date)}` : ''}</small></h3><ul class="kf">${F.map((x) => `<li class="${x.lv}">${esc(x.t)}</li>`).join('')}</ul>
       ${s.missing?.length ? `<p class="muted sm">⚠ 못 찾은 시트: ${esc(s.missing.join(', '))}</p>` : ''}</div>
     <div class="card"><h3>📋 보고 문구 <small class="muted">수정해서 복사하세요 (저장은 안 됨)</small></h3><textarea class="st-text" id="stText" rows="11">${esc(reportText(s))}</textarea><div class="st-act"><button type="button" class="btn sm" id="stCopy">📋 복사</button></div></div>
     <div class="card"><h3>🛒 채널별 실적 <small class="muted">매출 백만원 · 물량 kg · 단가 원/kg</small></h3><div class="tbl-wrap"><table class="kt"><thead><tr><th>채널</th><th>당일</th><th>${m}월 누계</th><th>비중</th><th>누계 물량</th><th>누계 단가</th><th>연 누계</th><th>연 단가</th></tr></thead><tbody>
       <tr class="tot"><th>합계</th><td>${mil(S.day)}</td><td><b>${mil(S.mtd)}</b></td><td>100%</td><td>${f0(KG.mtd)}</td><td>${f0(P.mtd)}</td><td>${mil(S.ytd)}</td><td>${f0(P.ytd)}</td></tr>${chRows}</tbody></table></div></div>
-    <div class="card"><h3>📅 일자별 매출 <small class="muted">백만원 · 주황 = 기준일 · 점선 = 일평균 · 막대에 마우스를 올리면 금액</small></h3>${dayChart}<details><summary class="muted sm">일자별 표 보기</summary><div class="tbl-wrap">${dayTable}</div></details></div>
+    <div class="card"><h3>📅 일자별 매출 <small class="muted">백만원 · 주황 = 기준일 · 점선 = 일평균 · 날짜 아래 ▲ = 행사 · 막대에 마우스를 올리면 금액</small></h3>${dayChart}<details><summary class="muted sm">일자별 표 보기</summary><div class="tbl-wrap">${dayTable}</div></details></div>
     <div class="card"><h3>📈 월별 추이 <small class="muted">비교시트 기준 (이번 달은 진행 중)</small></h3>${monChart}<div class="tbl-wrap">${monTable}</div></div>
+    ${extraHtml(s)}
     <div class="card"><h3>🍄 SKU별 주간 판매 (kg)</h3><div class="tbl-wrap">${skuTable}</div></div>
     <div class="card"><h3>🏭 창고 수불 (${m}월, ea)</h3><div class="tbl-wrap">${ledTable}</div></div>
-    <div class="card"><h3>🏬 점포별 ${m}월 매출 <small class="muted">백만원</small></h3><div class="st-stores">${storeHtml}</div></div>
+    ${s.x?.storeM ? '' : `<div class="card"><h3>🏬 점포별 ${m}월 매출 <small class="muted">백만원</small></h3><div class="st-stores">${storeHtml}</div></div>`}
     <div class="card"><h3>🗒 메모</h3><textarea class="st-text" id="stNote" rows="4" placeholder="이번 주 확인할 것, 현지 답변 등">${esc(s.note || '')}</textarea></div>`;
   $('#stCopy', root).onclick = async () => { try { await navigator.clipboard.writeText($('#stText', root).value); ui.toast?.('복사했습니다.'); } catch { $('#stText', root).select(); document.execCommand('copy'); } };
   $('#stNote', root).addEventListener('change', (e) => store.upsert('stock', { id: s.id, note: e.target.value }));
