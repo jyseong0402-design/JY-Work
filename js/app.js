@@ -802,6 +802,7 @@ const autoTitle = (o) => `메모 ${fmt(o.date)}`;
 let inkBlocked = false, inkBlockedWarned = false;
 let curPhotos = []; // 지금 열린 메모의 사진 목록 [{id, name, at}] (사진 자체는 photos.js / sync.js)
 function saveMeeting({ final = false } = {}) {
+  if (final) pad.commitText?.(); // 입력 중이던 글상자도 닫을 때 저장
   clearTimeout(saveTimer);
   saveTimer = null;
   const o = read(fMeeting);
@@ -863,7 +864,8 @@ function setTab(tab) {
   $$('.ed-top [data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
   $('#sumToggle').classList.toggle('on', tab === 'sum' || !fMeeting.classList.contains('sum-collapsed') && wideScreen());
   if (tab !== 'sum') setPref('jy-ed-tab', tab);
-  if (tab === 'ink') requestAnimationFrame(() => pad.layout(true));
+  // 필기 탭을 처음 볼 때(아직 맨 위) 마지막으로 쓴 자리로 — 찾기 중이면 찾기 위치를 우선
+  if (tab === 'ink') requestAnimationFrame(() => { pad.layout(true); if (!pad.pagesEl.scrollTop && $('#inkFind').hidden) pad.scrollToLast(); });
 }
 const wideScreen = () => window.matchMedia('(min-width: 1100px)').matches;
 // T 버튼: 텍스트 ↔ 필기 전환
@@ -963,6 +965,8 @@ async function openMeeting(id, preset = {}, find = '') {
   // 예전 버전에서 켜진 전체화면이 남아 있으면 끔 (상단 알림창이 안 내려오는 원인)
   try { if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {}); } catch { /* 무시 */ }
   dlgMeeting.showModal();
+  // 키보드 글은 마지막 줄이 보이게 (커서는 옮기지 않음 — 폰 자판이 뜨지 않도록)
+  requestAnimationFrame(() => { const ta = fMeeting.elements.content; ta.scrollTop = ta.scrollHeight; });
   inkBlocked = false; inkBlockedWarned = false;
   if (id && m.inkPages) {
     inkBlocked = true; // 불러오기 전에는 저장하지 않음
@@ -1012,6 +1016,8 @@ function findMove(d) { findRun(true); if (!find.list.length) return; find.i = (f
 function findOpen() { $('#inkFind').hidden = false; $('#findBtn').classList.add('on'); const q = $('#findQ'); q.focus(); q.select(); if (q.value) findRun(true); }
 function findClose() { $('#inkFind').hidden = true; $('#findBtn')?.classList.remove('on'); pad.clearFind(); find.list = []; }
 $('#findBtn').onclick = () => ($('#inkFind').hidden ? findOpen() : findClose());
+$('#edFind').onclick = () => findOpen(); // 폰: ⋮ 메뉴 안 (도구줄 🔍·📷는 폰에서 숨김 — 제목 칸 자리)
+$('#edPhoto').onclick = () => $('#photoBtn').click();
 $('#findQ').addEventListener('input', () => findRun());
 $('#findQ').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); findMove(e.shiftKey ? -1 : 1); }

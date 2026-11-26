@@ -1381,3 +1381,14 @@ dialog.editor.drop-on .ed-note { outline: 3px dashed var(--primary); outline-off
 .ink-find .tbb:hover { background: rgba(255,255,255,.08); }
 .ink-page .txt-find { position: absolute; z-index: 2; pointer-events: none; border-radius: 6px; background: rgba(255, 214, 0, .28); box-shadow: 0 0 0 1.5px rgba(240, 165, 0, .7); }
 .ink-page .txt-find.on { background: rgba(255, 170, 0, .45); box-shadow: 0 0 0 2.5px #e07a00; }
+/* 폰: 메모 도구줄 🔍는 ⋮ 메뉴로 (제목 칸 넓게) (1.40.1~) */
+#moreMenu .phone-only { display: none; }
+@media (max-width: 760px) {
+  #findBtn { display: none; }
+  #moreMenu .phone-only { display: flex; }
+}
+/* 폰(700px 이하): 메모 도구줄을 비워 제목 칸 넓게 — 📷는 ⋮ 메뉴, 쪽 추가는 쪽 사이 「＋ 쪽」 */
+@media (max-width: 700px) {
+  #photoBtn, #inkLeft [data-act=page] { display: none; }
+}
+@media (min-width: 701px) { #edPhoto { display: none !important; } }

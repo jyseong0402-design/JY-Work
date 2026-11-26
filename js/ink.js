@@ -291,15 +291,44 @@ export class InkPad {
     this.undoStack = [];
     this.redoStack = [];
     this.dirty = false;
+    this.last = data?.last && data.last.p < this.pages.length ? { ...data.last } : null;
     this.renderPages();
     this.syncTools();
     this.pagesEl.scrollTop = 0;
+    if (data?.pages?.length) this.scrollToLast();
   }
   getData() {
     // 뒤쪽의 빈 페이지는 저장하지 않음
     const pages = this.pages.map((p) => ({ strokes: p.strokes, ls: p.ls }));
     while (pages.length > 1 && !pages[pages.length - 1].strokes.length) pages.pop();
-    return { pages };
+    const out = { pages };
+    if (this.last && this.last.p < pages.length) out.last = this.last;
+    return out;
+  }
+  // 마지막으로 쓴 자리 (쪽·높이) — 메모를 다시 열면 그 자리가 보이게. 저장된 자리가 없으면(예전 메모·클라우드) 마지막 쪽의 가장 아래 필기
+  markLast(p, y) { this.last = { p, y: Math.round(y) }; }
+  lastSpot() {
+    if (this.last && this.pages[this.last.p]) return this.last;
+    for (let p = this.pages.length - 1; p >= 0; p--) {
+      const st = this.pages[p].strokes;
+      if (!st.length) continue;
+      let y = 0;
+      for (const s of st) {
+        if (isImg(s) || isTxt(s)) { if (isTxt(s)) txtLines(s); y = Math.max(y, s.y + (s.h || 0)); }
+        else if (s.p) for (let i = 1; i < s.p.length; i += 3) y = Math.max(y, s.p[i]);
+      }
+      return { p, y };
+    }
+    return null;
+  }
+  // 마지막 자리가 화면 위쪽 2/3 지점에 오게 (아래에 이어 쓸 공간이 보이도록)
+  scrollToLast() {
+    const go = () => {
+      const t = this.lastSpot(), host = t && this.pagesEl.children[t.p];
+      if (!host || !this.scale) return;
+      this.pagesEl.scrollTop = Math.max(0, host.offsetTop + t.y * this.scale - this.pagesEl.clientHeight * 0.66);
+    };
+    requestAnimationFrame(() => requestAnimationFrame(go));
   }
   isEmpty() { return this.pages.every((p) => !p.strokes.length); }
   pageCount() { return this.getData().pages.filter((p) => p.strokes.length).length; }
@@ -396,6 +425,7 @@ export class InkPad {
     const s = { t: 'img', pid, x: Math.round((PAGE_W - w) / 2), y: Math.round(y), w: Math.round(w), h: Math.round(h) };
     this.pages[page].strokes.push(s);
     this.push({ type: 'add', page, stroke: s });
+    this.markLast(page, s.y + s.h);
     this.redraw(page);
     this.changed();
     if (select) { this.tool.t = 'select'; this.syncTools(); this.selectImg(page, s); }
@@ -557,7 +587,7 @@ export class InkPad {
     const list = this.pages[page]?.strokes;
     if (!list) return;
     if (isNew) {
-      if (text) { s.text = text; list.push(s); this.push({ type: 'add', page, stroke: s }); this.changed(); }
+      if (text) { s.text = text; list.push(s); this.push({ type: 'add', page, stroke: s }); txtLines(s); this.markLast(page, s.y + s.h); this.changed(); }
     } else if (!text) {
       const i = list.indexOf(s);
       if (i >= 0) { list.splice(i, 1); this.push({ type: 'erase', page, removed: [{ s, i }] }); this.changed(); }
@@ -866,6 +896,7 @@ export class InkPad {
       }
       if (mode === 'draw' && cur) {
         this.pages[pageIndex].strokes.push(cur);
+        { let my = 0; for (let k = 1; k < cur.p.length; k += 3) my = Math.max(my, cur.p[k]); this.markLast(pageIndex, my); }
         this.push({ type: 'add', page: pageIndex, stroke: cur });
         live.getContext('2d').clearRect(0, 0, live.width, live.height);
         drawStroke(this.ctxOf(pageIndex), cur, this.scale);
