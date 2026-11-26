@@ -1362,3 +1362,12 @@ dialog.editor.drop-on .ed-note { outline: 3px dashed var(--primary); outline-off
   #view-stock .st-store th, #view-stock .st-store td { padding-left: 6px; padding-right: 6px; }
   #view-stock .st-store tr.st-kid th { padding-left: 16px; }
 }
+/* 수불재고 맨 위 요약 카드: 폰에서는 3칸으로 작게 (1.39.3~) */
+@media (max-width: 760px) {
+  #stBody > .kpi-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-bottom: 8px; }
+  #stBody > .kpi-cards .kpi-card { padding: 8px 8px 7px; margin: 0; }
+  #stBody > .kpi-cards .kc-t { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #stBody > .kpi-cards .kc-big { font-size: 18px; line-height: 1.25; }
+  #stBody > .kpi-cards .kc-big small { font-size: 10px; margin-left: 2px; }
+  #stBody > .kpi-cards .kc-sub { font-size: 10.5px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+}
