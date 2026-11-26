@@ -366,7 +366,10 @@ function findingsHtml(F) {
   const li = (x) => `<li class="${x.lv}"><span class="st-cat">${catOf(x.t)}</span>${esc(x.t)}</li>`;
   const by = (lv) => F.filter((x) => x.lv === lv).sort((a, b) => catIdx(a.t) - catIdx(b.t));
   const bad = by('bad'), good = by('good'), info = by('info');
-  return `${bad.length ? `<h4 class="st-fh bad">🚨 확인 필요 ${bad.length}</h4><ul class="kf">${bad.map(li).join('')}</ul>` : '<p class="muted sm">확인이 필요한 항목이 없어요.</p>'}
+  // 확인 필요: 분야마다 첫 줄만 보이고 나머지는 '더 보기'
+  const seen = new Set(), top = [], more = [];
+  for (const x of bad) { const c = catOf(x.t); if (seen.has(c)) more.push(x); else { seen.add(c); top.push(x); } }
+  return `${bad.length ? `<h4 class="st-fh bad">🚨 확인 필요 ${bad.length}</h4><ul class="kf">${top.map(li).join('')}</ul>${more.length ? `<details class="st-finfo"><summary>🚨 확인 필요 ${more.length}개 더 보기</summary><ul class="kf">${more.map(li).join('')}</ul></details>` : ''}` : '<p class="muted sm">확인이 필요한 항목이 없어요.</p>'}
     ${good.length ? `<h4 class="st-fh good">✅ 좋아진 점 ${good.length}</h4><ul class="kf">${good.map(li).join('')}</ul>` : ''}
     ${info.length ? `<details class="st-finfo"><summary>ℹ 참고 ${info.length}개 보기</summary><ul class="kf">${info.map(li).join('')}</ul></details>` : ''}`;
 }
@@ -489,7 +492,7 @@ function render(root, s) {
     </div>
     <div class="card"><h3>🔎 특이사항 <small class="muted">${md(s.date)} 기준${p ? ` · 지난 보고 ${md(p.date)}` : ''}</small></h3>${findingsHtml(F)}
       ${s.missing?.length ? `<p class="muted sm">⚠ 못 찾은 시트: ${esc(s.missing.join(', '))}</p>` : ''}</div>
-    <div class="card"><h3>📋 보고 문구 <small class="muted">수정해서 복사하세요 (저장은 안 됨)</small></h3><textarea class="st-text" id="stText" rows="${reportText(s).split('\n').length + 1}">${esc(reportText(s))}</textarea><div class="st-act"><button type="button" class="btn sm" id="stCopy">📋 복사</button></div></div>
+    <div class="card"><h3>📋 보고 문구 <small class="muted">수정해서 복사하세요 (저장은 안 됨)</small></h3><textarea class="st-text" id="stText" rows="${Math.min(8, reportText(s).split('\n').length + 1)}">${esc(reportText(s))}</textarea><div class="st-act"><button type="button" class="btn sm" id="stCopy">📋 복사</button></div></div>
     <div class="card"><h3>🛒 채널별 실적 <small class="muted">매출 백만원 · 물량 kg · 단가 원/kg</small></h3><div class="tbl-wrap"><table class="kt"><thead><tr><th>채널</th><th>당일</th><th>${m}월 누계</th><th>비중</th><th>누계 물량</th><th>누계 단가</th><th>연 누계</th><th>연 단가</th></tr></thead><tbody>
       <tr class="tot"><th>합계</th><td>${mil(S.day)}</td><td><b>${mil(S.mtd)}</b></td><td>100%</td><td>${f0(KG.mtd)}</td><td>${f0(P.mtd)}</td><td>${mil(S.ytd)}</td><td>${f0(P.ytd)}</td></tr>${chRows}</tbody></table></div></div>
     <div class="card"><h3>📅 일자별 매출 <small class="muted">백만원 · 주황 = 기준일 · 점선 = 일평균 · 날짜 아래 ▲ = 행사 · 막대에 마우스를 올리면 금액</small></h3>${dayChart}<details><summary class="muted sm">일자별 표 보기</summary><div class="tbl-wrap">${dayTable}</div></details></div>
