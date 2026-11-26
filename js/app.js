@@ -10,6 +10,7 @@ import { initBoard, homeClosingHTML } from './board.js';
 import { initRdVault } from './rdvault.js';
 import { initRdAsk } from './rdask.js';
 import { initKpi } from './kpi.js';
+import { initStock, refreshStock } from './stock.js';
 import { inkdb } from './inkdb.js';
 import { sync, loadInk, saveInk, flushInk, parseConfig, getConfig, inkReport, restoreInk, savePhoto, getPhoto, removePhoto } from './sync.js';
 import { shrinkImage } from './photos.js';
@@ -58,12 +59,31 @@ function highlight(text, q) {
 
 /* ---------- 화면 전환 ---------- */
 function show(view) {
-  $$('.nav button').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
+  $$('.nav button[data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
+  // 하위 메뉴(베트남 → KPI·수불재고): 안쪽 화면이면 상위 버튼도 켜짐, 사이드바에선 펼쳐 둠
+  $$('.nav-group').forEach((g) => {
+    const inside = !!g.querySelector(`[data-view="${view}"]`);
+    g.classList.toggle('has-active', inside);
+    if (inside) g.classList.add('open');
+    g.classList.remove('pop');
+    g.querySelector('.nav-parent')?.setAttribute('aria-expanded', g.classList.contains('open'));
+  });
   $$('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + view));
   location.hash = view;
   window.scrollTo(0, 0);
+  if (view === 'stock') refreshStock();
 }
-$$('.nav button').forEach((b) => b.addEventListener('click', () => show(b.dataset.view)));
+$$('.nav button[data-view]').forEach((b) => b.addEventListener('click', () => show(b.dataset.view)));
+// 상위 메뉴 버튼: 넓은 사이드바는 펼치기/접기, 아이콘 레일·모바일 하단바는 위로 작은 메뉴(pop)
+$$('.nav-parent').forEach((b) => b.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const g = b.closest('.nav-group');
+  const rail = window.matchMedia('(max-width: 1099px)').matches;
+  if (rail) g.classList.toggle('pop');
+  else g.classList.toggle('open');
+  b.setAttribute('aria-expanded', g.classList.contains(rail ? 'pop' : 'open'));
+}));
+document.addEventListener('click', (e) => { if (!e.target.closest('.nav-group')) $$('.nav-group.pop').forEach((g) => g.classList.remove('pop')); });
 
 /* ---------- 항목 렌더링 ---------- */
 function eventItem(e, q) {
@@ -1395,6 +1415,7 @@ initBoard({ openAuto: (type) => openAutoType(type), setPrev: (type, file) => (ty
 initRdVault();
 initRdAsk();
 initKpi({ toast });
+initStock({ toast });
 
 /* ---------- 시작 ---------- */
 function renderAll() {

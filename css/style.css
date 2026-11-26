@@ -1195,3 +1195,57 @@ dialog.editor.drop-on .ed-note { outline: 3px dashed var(--primary); outline-off
 .cm-text { width: 100%; font: inherit; font-size: 14px; line-height: 1.55; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--text); resize: vertical; }
 .cm-ask { border: 1px dashed var(--warn); border-radius: 12px; padding: 10px 14px; }
 .cm-ask ol { margin: 8px 0; padding-left: 20px; font-size: 13.5px; display: grid; gap: 4px; }
+
+/* ===== 메뉴 하위 그룹 (📈 베트남 → KPI · 수불재고) ===== */
+.nav-group { display: flex; flex-direction: column; gap: 2px; position: relative; }
+.nav .nav-parent { width: 100%; }
+.nav-caret { margin-left: auto; font-style: normal; font-size: 11px; opacity: .7; transition: transform .15s; }
+.nav-group.open .nav-caret { transform: rotate(180deg); }
+.nav-group > .nav-sub { display: none; flex-direction: column; gap: 2px; padding-left: 16px; }
+.nav-group.open > .nav-sub { display: flex; }
+.nav .nav-sub button { padding: 8px 12px; font-size: 14px; }
+.nav-group.has-active > .nav-parent { color: #fff; font-weight: 600; }
+@media (max-width: 1099px) {
+  .nav-caret { display: none; }
+  .nav-group.open > .nav-sub { display: none; }
+  .nav-group.has-active > .nav-parent { background: var(--nav-active); }
+  .nav-group.pop > .nav-sub {
+    display: flex; position: absolute; left: calc(100% + 14px); top: 0; z-index: 40; min-width: 150px; padding: 6px;
+    background: var(--nav-bg); border: 1px solid rgba(255, 255, 255, .12); border-radius: 12px; box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+  }
+  .nav .nav-sub button { flex-direction: row; gap: 10px; font-size: 14px; padding: 11px 12px; align-items: center; }
+  .nav .nav-sub .ic { font-size: 18px; width: 22px; }
+}
+@media (max-width: 760px) {
+  .nav-group { flex: 1; }
+  .nav-group.pop > .nav-sub { left: 50%; top: auto; bottom: calc(100% + 8px); transform: translateX(-50%); }
+}
+
+/* ===== 📦 수불재고 ===== */
+#view-stock .kt tbody th { text-align: left; font-weight: 500; }
+#view-stock .kt tr.tot th, #view-stock .kt tr.tot td { font-weight: 700; background: var(--bg); }
+.st-card .kc-big small { font-size: 13px; font-weight: 500; margin-left: 3px; color: var(--muted); }
+.st-card.warn { border-color: var(--warn); }
+.st-card.warn .kc-big { color: var(--warn); }
+.st-chart { width: 100%; height: 190px; display: block; margin: 4px 0 6px; }
+.st-text { width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; line-height: 1.6; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--text); resize: vertical; }
+.st-act { display: flex; justify-content: flex-end; margin-top: 6px; }
+.st-sku tr.lv0 th, .st-sku tr.lv0 td { font-weight: 700; background: var(--bg); }
+.st-sku tr.lv1 th, .st-sku tr.lv1 td { font-weight: 600; }
+.st-sku tr.lv2 th { padding-left: 22px; color: var(--muted); }
+.st-sku td.plus { color: var(--ok); } .st-sku td.minus { color: var(--danger); }
+#view-stock tr.st-out th, #view-stock tr.st-out td { color: var(--danger); }
+#view-stock tr.st-low th, #view-stock tr.st-low td { color: var(--warn); }
+.st-stores { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+.st-gh { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+.st-grp ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.st-grp li { display: grid; grid-template-columns: 96px 1fr 44px; align-items: center; gap: 8px; font-size: 13px; }
+.st-grp li b { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+.st-bar { height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+.st-bar i { display: block; height: 100%; background: var(--primary); opacity: .75; }
+#view-stock .card h3 { margin: 0 0 10px; font-size: 16px; }
+#view-stock .card h3 small { font-weight: 400; font-size: 12px; margin-left: 4px; }
+#view-stock .kt thead th:first-child { text-align: left; }
+.st-stores > p { grid-column: 1 / -1; margin: 0; }
+#view-stock .tbl-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+#view-stock .card { min-width: 0; }

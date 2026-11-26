@@ -1,9 +1,9 @@
 // 데이터 저장소: 기기(localStorage)에 먼저 저장하고, 로그인하면 sync.js가 클라우드와 동기화합니다.
 const KEY = 'jywork-data-v1';
 const SETTINGS_KEY = 'jywork-settings-v1';
-export const KINDS = ['events', 'meetings', 'tasks', 'closing', 'kpi'];
+export const KINDS = ['events', 'meetings', 'tasks', 'closing', 'kpi', 'stock'];
 
-const empty = () => ({ events: [], meetings: [], tasks: [], closing: [], kpi: [], tombs: {} });
+const empty = () => ({ events: [], meetings: [], tasks: [], closing: [], kpi: [], stock: [], tombs: {} });
 
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 export const nowIso = () => new Date().toISOString();
