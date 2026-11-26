@@ -318,11 +318,27 @@ function reportText(s) {
 }
 
 /* ---------------- 그리기 ---------------- */
-function bars(vals, labels, { h = 150, fmt = f1, hi = -1, color = 'var(--primary)' } = {}) {
-  const max = Math.max(...vals, 0) || 1, n = vals.length, W = Math.max(320, n * 26), bw = W / n;
-  return `<svg viewBox="0 0 ${W} ${h + 34}" class="st-chart" preserveAspectRatio="none" role="img">
-    ${vals.map((v, i) => { const bh = (v / max) * h; return `<g><rect x="${i * bw + bw * 0.15}" y="${h - bh + 14}" width="${bw * 0.7}" height="${bh}" rx="2" fill="${i === hi ? 'var(--warn, #d9822b)' : color}" opacity="${v ? 0.9 : 0.25}"><title>${esc(labels[i])}: ${fmt(v)}</title></rect>${n <= 16 && v ? `<text x="${i * bw + bw / 2}" y="${h - bh + 10}" text-anchor="middle" font-size="10" fill="var(--muted)">${fmt(v)}</text>` : ''}<text x="${i * bw + bw / 2}" y="${h + 28}" text-anchor="middle" font-size="10" fill="var(--muted)">${esc(labels[i])}</text></g>`; }).join('')}
-  </svg>`;
+// 막대그래프 (HTML) — 화면 폭이 바뀌어도 글자가 늘어나지 않음. 왼쪽 세로축 눈금(단위), 가로 눈금선, 평균선(선택)
+function niceStep(raw) {
+  const p = 10 ** Math.floor(Math.log10(raw || 1)), r = raw / p;
+  return (r <= 1 ? 1 : r <= 2 ? 2 : r <= 2.5 ? 2.5 : r <= 5 ? 5 : 10) * p;
+}
+function bars(vals, labels, { fmt = f1, hi = -1, unit = '', avg = null, showVals = null, tip = null } = {}) {
+  const max = Math.max(...vals, 0) || 1;
+  const step = niceStep(max / 4), top = Math.ceil(max / step) * step;
+  const ticks = []; for (let t = 0; t <= top + 1e-9; t += step) ticks.push(t);
+  const n = vals.length, sv = showVals ?? n <= 16;
+  const tf = (t) => (step < 1 ? t.toFixed(step < 0.1 ? 2 : 1) : f0(t));
+  return `<div class="st-bc" role="img" aria-label="${esc(unit)} 막대그래프">
+    <div class="st-bc-y">${unit ? `<em>${esc(unit)}</em>` : ''}${ticks.map((t) => `<span style="bottom:${(t / top) * 100}%">${tf(t)}</span>`).join('')}</div>
+    <div class="st-bc-plot">
+      ${ticks.map((t) => `<i class="gl" style="bottom:${(t / top) * 100}%"></i>`).join('')}
+      ${avg !== null && avg > 0 ? `<i class="avg" style="bottom:${(avg / top) * 100}%"><b>평균 ${fmt(avg)}</b></i>` : ''}
+      <div class="st-bc-bars">${vals.map((v, i) => `<div class="bc${i === hi ? ' hi' : ''}${v ? '' : ' zero'}" title="${esc(tip ? tip(i) : labels[i])}: ${fmt(v)}${unit ? ` ${esc(unit)}` : ''}"><div class="bar" style="height:${(v / top) * 100}%">${sv && v ? `<span>${fmt(v)}</span>` : ''}</div></div>`).join('')}</div>
+    </div>
+    <div></div>
+    <div class="st-bc-x${n > 15 ? ' dense' : ''}">${labels.map((l) => `<span>${esc(l)}</span>`).join('')}</div>
+  </div>`;
 }
 
 function render(root, s) {
@@ -342,7 +358,8 @@ function render(root, s) {
     <td>${mil(c.sales.day)}</td><td><b>${mil(c.sales.mtd)}</b></td><td>${pct(c.sales.mtd, S.mtd)}</td><td>${f0(c.kg?.mtd)}</td><td>${c.price?.mtd ? f0(c.price.mtd) : '-'}</td><td>${mil(c.sales.ytd)}</td><td>${c.price?.ytd ? f0(c.price.ytd) : '-'}</td></tr>`).join('');
   // 일자별
   const ds = s.days || [];
-  const dayChart = ds.length ? bars(ds.map((d) => Math.round(d.v[0] / 1e4) / 100), ds.map((d) => String(+d.d.slice(8))), { fmt: f1, hi: ds.length - 1 }) : '';
+  const dayVals = ds.map((d) => Math.round(d.v[0] / 1e4) / 100);
+  const dayChart = ds.length ? bars(dayVals, ds.map((d) => String(+d.d.slice(8))), { fmt: f1, hi: ds.length - 1, unit: '백만원', avg: k.avg ? k.avg / 1e6 : dayVals.reduce((a, b) => a + b, 0) / dayVals.length, tip: (i) => md(ds[i].d) }) : '';
   const dayTable = ds.length ? `<table class="kt"><thead><tr><th>날짜</th>${(s.dayHeads || []).slice(0, 12).map((h, i) => `<th>${esc(h)}${i < 4 ? '<br><small>(백만원)</small>' : i < 8 ? '<br><small>(kg)</small>' : '<br><small>(원/kg)</small>'}</th>`).join('')}</tr></thead>
     <tbody>${[...ds].reverse().map((d) => `<tr><th>${md(d.d)}</th>${d.v.map((v, i) => `<td>${i < 4 ? mil(v) : i < 8 ? f1(v) : f0(v)}</td>`).join('')}</tr>`).join('')}</tbody></table>` : '';
   // 월별 추이
@@ -355,7 +372,7 @@ function render(root, s) {
     <tr><th>직납 로스(kg)</th>${mons.map((x) => `<td>${M.loss[x] !== undefined ? f0(M.loss[x]) : '-'}</td>`).join('')}</tr>
     <tr><th>로스율</th>${mons.map((x) => { const b = M.lossKg?.[x] || M.kg[x]; return `<td>${M.loss[x] !== undefined && b ? `${f1((M.loss[x] / b) * 100)}%` : '-'}</td>`; }).join('')}</tr>
   </tbody></table>` : '<p class="muted sm">비교시트가 없어 월별 추이를 못 읽었습니다.</p>';
-  const monChart = mons.length ? bars(mons.map((x) => M.sales[x]), mons.map((x) => `${x}월`), { fmt: f1, hi: mons.indexOf(m) }) : '';
+  const monChart = mons.length ? bars(mons.map((x) => M.sales[x]), mons.map((x) => `${x}월`), { fmt: f1, hi: mons.indexOf(m), unit: '백만원' }) : '';
   // SKU 주간
   const W = s.sku;
   const wN = W?.weeks?.length || 0, wShow = Math.min(8, wN), w0 = wN - wShow;
@@ -388,7 +405,7 @@ function render(root, s) {
     <div class="card"><h3>📋 보고 문구 <small class="muted">수정해서 복사하세요 (저장은 안 됨)</small></h3><textarea class="st-text" id="stText" rows="11">${esc(reportText(s))}</textarea><div class="st-act"><button type="button" class="btn sm" id="stCopy">📋 복사</button></div></div>
     <div class="card"><h3>🛒 채널별 실적 <small class="muted">매출 백만원 · 물량 kg · 단가 원/kg</small></h3><div class="tbl-wrap"><table class="kt"><thead><tr><th>채널</th><th>당일</th><th>${m}월 누계</th><th>비중</th><th>누계 물량</th><th>누계 단가</th><th>연 누계</th><th>연 단가</th></tr></thead><tbody>
       <tr class="tot"><th>합계</th><td>${mil(S.day)}</td><td><b>${mil(S.mtd)}</b></td><td>100%</td><td>${f0(KG.mtd)}</td><td>${f0(P.mtd)}</td><td>${mil(S.ytd)}</td><td>${f0(P.ytd)}</td></tr>${chRows}</tbody></table></div></div>
-    <div class="card"><h3>📅 일자별 매출 <small class="muted">백만원, 주황 = 기준일</small></h3>${dayChart}<details><summary class="muted sm">일자별 표 보기</summary><div class="tbl-wrap">${dayTable}</div></details></div>
+    <div class="card"><h3>📅 일자별 매출 <small class="muted">백만원 · 주황 = 기준일 · 점선 = 일평균 · 막대에 마우스를 올리면 금액</small></h3>${dayChart}<details><summary class="muted sm">일자별 표 보기</summary><div class="tbl-wrap">${dayTable}</div></details></div>
     <div class="card"><h3>📈 월별 추이 <small class="muted">비교시트 기준 (이번 달은 진행 중)</small></h3>${monChart}<div class="tbl-wrap">${monTable}</div></div>
     <div class="card"><h3>🍄 SKU별 주간 판매 (kg)</h3><div class="tbl-wrap">${skuTable}</div></div>
     <div class="card"><h3>🏭 창고 수불 (${m}월, ea)</h3><div class="tbl-wrap">${ledTable}</div></div>

@@ -1281,3 +1281,22 @@ dialog.editor.drop-on .ed-note { outline: 3px dashed var(--primary); outline-off
 .nav .nav-theme + .nav-ver { margin-top: 0; }
 @media (max-width: 760px) { .nav .nav-theme { display: none; } }
 @media (min-width: 761px) and (max-width: 1099px) { .nav .nav-theme { font-size: 11px; } }
+/* 수불재고 막대그래프 (HTML) */
+.st-bc { display: grid; grid-template-columns: 46px 1fr; grid-template-rows: 190px auto; column-gap: 6px; margin: 18px 0 8px; font-variant-numeric: tabular-nums; }
+.st-bc-y { position: relative; font-size: 11px; color: var(--muted); }
+.st-bc-y span { position: absolute; right: 0; transform: translateY(50%); line-height: 1; }
+.st-bc-y em { position: absolute; right: 0; top: -18px; font-style: normal; font-size: 10.5px; white-space: nowrap; }
+.st-bc-plot { position: relative; border-left: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.st-bc-plot .gl { position: absolute; left: 0; right: 0; height: 0; border-top: 1px solid color-mix(in srgb, var(--line) 70%, transparent); }
+.st-bc-plot .avg { position: absolute; left: 0; right: 0; height: 0; border-top: 1.5px dashed var(--warn); z-index: 2; pointer-events: none; }
+.st-bc-plot .avg b { position: absolute; right: 2px; top: -17px; font-size: 11px; font-weight: 600; color: var(--warn); background: var(--panel); padding: 0 4px; border-radius: 4px; }
+.st-bc-bars { position: absolute; inset: 0; display: flex; align-items: flex-end; gap: 4px; padding: 0 4px; }
+.st-bc-bars .bc { flex: 1; height: 100%; display: flex; align-items: flex-end; min-width: 0; }
+.st-bc-bars .bar { position: relative; width: 100%; max-width: 56px; margin: 0 auto; background: var(--primary); opacity: .85; border-radius: 3px 3px 0 0; }
+.st-bc-bars .bc:hover .bar { opacity: 1; }
+.st-bc-bars .bc.hi .bar { background: var(--warn); opacity: 1; }
+.st-bc-bars .bar span { position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); margin-bottom: 2px; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.st-bc-x { display: flex; gap: 4px; padding: 5px 4px 0; font-size: 11px; color: var(--muted); }
+.st-bc-x span { flex: 1; text-align: center; min-width: 0; overflow: hidden; white-space: nowrap; }
+@media (max-width: 760px) { .st-bc { grid-template-rows: 150px auto; } .st-bc-bars, .st-bc-x { gap: 2px; padding: 0 1px; } .st-bc-x { padding-top: 5px; font-size: 9.5px; } }
+@media (max-width: 760px) { .st-bc-x.dense span:nth-child(even) { visibility: hidden; } }
