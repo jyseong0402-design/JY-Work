@@ -11,6 +11,7 @@
   <link rel="apple-touch-icon" href="icons/icon.svg" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <link rel="stylesheet" href="css/style.css" />
+  <script>try { var t = localStorage.getItem("jy-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}</script>
 </head>
 <body>
   <div class="app">
@@ -29,6 +30,7 @@
       <button data-view="rd"><span class="ic">📥</span><span>RD 보관함</span></button>
       <button data-view="auto"><span class="ic">📊</span><span>자료생성</span></button>
       <button data-view="settings"><span class="ic">⚙️</span><span>설정</span></button>
+      <button type="button" class="nav-theme" id="themeBtn" title="화면 밝기: 자동 → 라이트 → 다크"></button>
       <button type="button" class="nav-ver" id="appVer" title="업데이트 내역 보기"></button>
     </nav>
 
@@ -76,6 +78,7 @@
             </div>
           </div>
           <div class="home-side">
+            <div class="card home-vn" id="homeVn" hidden></div>
             <div class="card"><div class="card-head"><h2>📋 이번 달 월마감</h2><button class="btn ghost sm" data-go-view="board">월마감 현황 →</button></div><div id="homeClosing"></div></div>
             <div class="card"><div class="card-head"><h2>✅ 할일</h2><button class="btn ghost sm" data-go-view="tasks">전체 보기 →</button></div><div id="dashTasks"></div></div>
             <div class="card"><div class="card-head"><h2>📝 최근 메모</h2><button class="btn ghost sm" data-go-view="meetings">메모 →</button></div><div id="dashMeetings"></div></div>
@@ -355,6 +358,11 @@
 
       <section id="view-settings" class="view">
         <header class="vh"><h1>설정 · 데이터</h1><button type="button" class="btn sm" id="setVer"></button></header>
+        <div class="card">
+          <h2>🌓 화면 밝기</h2>
+          <p class="muted sm">자동은 기기(윈도우·탭) 설정을 따릅니다. 고른 값은 이 기기에만 저장됩니다.</p>
+          <div class="seg" id="themeSeg"><button type="button" data-theme-set="auto">🖥 자동</button><button type="button" data-theme-set="light">☀️ 라이트</button><button type="button" data-theme-set="dark">🌙 다크</button></div>
+        </div>
         <div class="card">
           <h2>🔄 탭·PC 동기화</h2>
           <p class="muted sm">구글 계정으로 로그인하면 갤럭시 탭과 PC에서 같은 기록(일정·회의메모·펜 필기·할일)을 볼 수 있습니다. 인터넷이 끊겨도 기기에 먼저 저장되고, 연결되면 자동으로 맞춰집니다. 내 계정으로 로그인한 사람만 내 기록을 볼 수 있습니다.</p>

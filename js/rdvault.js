@@ -1,6 +1,7 @@
 // 📥 RD 보관함: 이번 달 RD를 이 기기(IndexedDB)에 월별로 보관하고, 그 RD로 만들 수 있는 백업자료를 한꺼번에 만듦
 // 외부 서버를 쓰지 않음(요금 없음). 파일은 이 기기 브라우저 안에만 저장됨
 import { loadXLSX } from './excel.js';
+import { store, todayStr } from './store.js';
 import { readPartnerLedgers, readAccountLedgers, readReceipts, readEnergyRd, readCapexSource, buildArAp, buildInternal, buildPacking, buildEnergy, buildRawMaterial, buildCapex, detectBook } from './closing.js';
 import { readAggregate, buildVerification } from './freight.js';
 
@@ -51,7 +52,7 @@ async function putSaved(kind, v) { const [db, key] = savedDb(kind); return tx(op
 async function classify(XLSX, name, buf) {
   const f = [{ name, buf }];
   const types = [];
-  let period = '', month = null, first = null;
+  let period = '', month = null, first = null, accts = null;
   try { if (readPartnerLedgers(XLSX, f).rows.length) types.push('partner'); } catch { /* 아님 */ }
   try {
     const a = readAccountLedgers(XLSX, f);
@@ -61,6 +62,10 @@ async function classify(XLSX, name, buf) {
       const p = (d) => `${d.getMonth() + 1}/${d.getDate()}`;
       period = `${ds[0].getFullYear()}.${p(ds[0])}~${p(ds[ds.length - 1])}`;
       month = ym(ds[ds.length - 1]); first = ym(ds[0]);
+      // 계정 목록(코드·이름) — 월마감 현황의 '필요파일' 자동 체크에 씀
+      const seen = new Map();
+      for (const r of a.rows) { if (seen.size >= 600) break; const c = String(r.acctCode || ''); if (c && !seen.has(c)) seen.set(c, String(r.cells['계정명'] ?? r.cells['계정과목'] ?? r.cells['계정'] ?? '').trim()); }
+      accts = [...seen].map(([c, n]) => `${c}|${n}`);
     }
   } catch { /* 아님 */ }
   try {
@@ -86,7 +91,7 @@ async function classify(XLSX, name, buf) {
     const g = readAggregate(XLSX, buf);
     if (g && g.cols?.length) { types.push('agg'); if (!month) month = `${g.year}-${String(g.month).padStart(2, '0')}`; if (!period) period = `${g.year}년 ${g.month}월`; }
   } catch { /* 아님 */ }
-  return { types, period, month, first };
+  return { types, period, month, first, accts };
 }
 
 
@@ -325,6 +330,58 @@ async function initRdFolder() {
   if (rdf.perm === 'granted') await rdfScan();
 }
 
+/* ---------- 📋 월마감 현황 '필요파일' 자동 체크 ----------
+   보관함에 M월 RD가 있으면 M+1월(일하는 달) 업무의 해당 필요파일을 '준비'로 표시 (이미 체크된 건 그대로, 해제는 안 함) */
+const NEED_TYPE = [
+  ['account', /계정별원장|계정원장/], ['partner', /거래처원장/], ['receipts', /기간별입고현황/],
+  ['agg', /운반비\s*집계/], ['capexSrc', /capex\s*actual/i], ['energy', /전력비.*사용\s*현황|에너지\s*사용\s*현황/],
+];
+const COMPANY = ['대흥', '송이애', '군자', '중부', '이천팜', '닥터애그'];
+const GENERIC = /^(ERP|RD|비용|수익|최근|개월|법인|제조|판관|시트|손익|재고|GL|INV|외상매출금|외상매입금|원재료|수불o|수불x|계정원장)$/i;
+function needMatches(name, type, files) {
+  const own = files.filter((f) => f.types.includes(type));
+  if (!own.length) return false;
+  // 회사 이름이 적혀 있으면 그 회사 파일이 하나라도 있어야
+  const comps = COMPANY.filter((c) => name.includes(c));
+  const pool = comps.length ? own.filter((f) => comps.some((c) => f.name.includes(c))) : own;
+  if (!pool.length) return false;
+  if (type !== 'account') return true;
+  // 계정별원장: 적힌 계정코드(6자리 이상)나 계정 이름이 파일의 계정 목록에 있어야 (목록이 없는 예전 파일은 통과)
+  const tail = name.split(/계정별원장|계정원장/)[1] || '';
+  const codes = (tail.match(/\d{6,}/g) || []);
+  const words = (tail.match(/[가-힣A-Za-z]{2,}/g) || []).filter((w) => !GENERIC.test(w) && !COMPANY.includes(w));
+  if (!codes.length && !words.length) return true;
+  return pool.some((f) => !f.accts || f.accts.some((a) => { const [c, n] = a.split('|'); return codes.some((x) => c.startsWith(x.slice(0, 8))) || words.some((w) => n.includes(w)); }));
+}
+const nextYm = (ym0) => { const [y, m] = ym0.split('-').map(Number); return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`; };
+function syncClosing() {
+  try {
+    const tasks = store.get().closing || [];
+    const byMonth = {};
+    for (const f of st.files) (byMonth[f.month] ||= []).push(f);
+    for (const [dataMonth, files] of Object.entries(byMonth)) {
+      const work = nextYm(dataMonth);
+      for (const t of tasks) {
+        const mk = t.marks?.[work] || {};
+        const add = {};
+        for (const n of t.needs || []) {
+          if (mk.recv?.[n.id] || mk.auto?.[n.id] === 'off') continue; // 사용자가 자동 체크를 끈 줄은 다시 켜지 않음
+          const nm = String(n.name || '');
+          const hit = NEED_TYPE.find(([type, re]) => re.test(nm) && needMatches(nm, type, files));
+          if (hit) add[n.id] = true;
+        }
+        if (!Object.keys(add).length) continue;
+        const marks = { ...(t.marks || {}) };
+        const m = { done: '', recv: {}, ...(marks[work] || {}) };
+        m.recv = { ...(m.recv || {}) }; m.auto = { ...(m.auto || {}) };
+        for (const id of Object.keys(add)) { m.recv[id] = todayStr(); m.auto[id] = 'RD 보관함'; }
+        marks[work] = m;
+        store.upsert('closing', { id: t.id, marks });
+      }
+    }
+  } catch (e) { console.warn('월마감 자동 체크 실패', e); }
+}
+
 /* ---------- 화면 ---------- */
 const st = { month: ym(new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1)), files: [], saved: {}, outs: [], busy: false };
 // 앱이 만든 파일 이름(ARAP_2611.xlsx 등)에서 그 파일의 달 → 보관함 달보다 같거나 최근이면 '지난달 파일'로 쓸 수 없음
@@ -336,6 +393,7 @@ async function load() {
   try { st.files = await rdAll(); } catch { st.files = []; }
   for (const o of OUTPUTS) { try { st.saved[o.kind] = await getSaved(o.kind); } catch { st.saved[o.kind] = null; } }
   render();
+  syncClosing();
 }
 
 function render() {
@@ -386,7 +444,7 @@ async function addFiles(list, { forceMonth, onlyKnown = false, quiet = false } =
     if (onlyKnown && (!c.types.length || span > 12)) { types[f.name] = []; continue; }
     // 날짜가 있는 RD(계정별원장·입고현황·집계)는 그 달에, 날짜가 없는 거래처원장은 보고 있는 달에 보관
     const month = forceMonth || c.month || st.month;
-    const rec = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, month, name: f.name, size: f.size, lastModified: f.lastModified || 0, types: c.types, period: c.period, addedAt: Date.now(), data: buf };
+    const rec = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, month, name: f.name, size: f.size, lastModified: f.lastModified || 0, types: c.types, period: c.period, accts: c.accts || null, addedAt: Date.now(), data: buf };
     // 같은 달·같은 이름은 바꿔 넣기
     for (const old of st.files.filter((x) => x.month === month && x.name === f.name)) await rdDel(old.id);
     await rdPut(rec);
@@ -399,6 +457,7 @@ async function addFiles(list, { forceMonth, onlyKnown = false, quiet = false } =
   if (!quiet) $('#rdMsg').textContent = msgs.join(' / ') + (moved ? ` — ${monthLabel(st.month)} 데이터 화면으로 이동했습니다` : '');
   st.files = await rdAll();
   render();
+  syncClosing();
   return { types };
 }
 

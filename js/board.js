@@ -75,7 +75,7 @@ function taskView(t, i) {
     ${needs.length ? `<div class="bd-needs"><div class="bd-need bd-need-h"><span></span><span>필요파일</span><span>부서</span><span>담당자</span><span></span></div>${needs.map(needOf).map((n) => `<label class="bd-need ${mk.recv?.[n.id] ? 'on' : ''}">
         <input type="checkbox" data-recv="${t.id}|${n.id}" ${mk.recv?.[n.id] ? 'checked' : ''}/>
         <span class="bd-nname">${n.rd ? '<span class="tag rd">RD</span> ' : ''}${esc(fill(n.name))}</span><span class="bd-dept">${n.dept ? `<span class="tag">${esc(n.dept)}</span>` : '<span class="muted">—</span>'}</span><span class="bd-prod">${esc(n.person) || '<span class="muted">—</span>'}</span>
-        <span class="bd-rdate">${mk.recv?.[n.id] ? `${n.rd ? '준비' : '받음'} ${md(mk.recv[n.id])}` : `<span class="muted">${n.rd ? '미준비' : '미수취'}</span>`}</span></label>`).join('')}</div>` : ''}
+        <span class="bd-rdate">${mk.recv?.[n.id] ? `${n.rd ? '준비' : '받음'} ${md(mk.recv[n.id])}${mk.auto?.[n.id] && mk.auto[n.id] !== 'off' ? ' <small class="bd-auto" title="RD 보관함에 이 RD가 있어 자동 체크됨">자동</small>' : ''}` : `<span class="muted">${n.rd ? '미준비' : '미수취'}</span>`}</span></label>`).join('')}</div>` : ''}
   </div>`;
 }
 
@@ -454,7 +454,11 @@ export function initBoard({ openAuto, setPrev } = {}) {
       setMark(item, (m) => { m.done = t.checked ? todayStr() : ''; });
     } else if (t.dataset.recv) {
       const [tid, nid] = t.dataset.recv.split('|');
-      setMark(store.find('closing', tid), (m) => { if (t.checked) m.recv[nid] = todayStr(); else delete m.recv[nid]; });
+      setMark(store.find('closing', tid), (m) => {
+        if (t.checked) m.recv[nid] = todayStr(); else delete m.recv[nid];
+        // RD 보관함이 자동 체크한 줄을 직접 끄면 다시 자동으로 켜지 않게 표시, 직접 켜면 자동 표시 없앰
+        if (m.auto?.[nid]) { m.auto = { ...m.auto }; if (t.checked) delete m.auto[nid]; else m.auto[nid] = 'off'; }
+      });
     }
   });
   box.addEventListener('click', async (e) => {

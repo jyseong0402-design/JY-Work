@@ -398,6 +398,20 @@ function render(root, s) {
   $('#stNote', root).addEventListener('change', (e) => store.upsert('stock', { id: s.id, note: e.target.value }));
 }
 
+// 홈 '베트남 요약' 카드용: 가장 최근 수불재고 보고의 핵심 숫자 + 빨간 특이사항 2개
+export function stockHomeSummary() {
+  const s = list()[0];
+  if (!s) return null;
+  const k = s.kpi || {}, S = s.total?.sales || {};
+  const L = ledgerNow(s);
+  return {
+    date: s.date, mtd: S.mtd || 0, bgt: S.mbgt || 0, progress: k.progress || 0,
+    forecast: k.progress ? (S.mtd || 0) / k.progress : 0,
+    endTon: L.curT?.endTon ?? null, cover: L.curT ? cover(L.curT.endTon, L.curT.outTon, dayOf(s)) : null,
+    alerts: findings(s).filter((x) => x.lv === 'bad').map((x) => x.t).sort((a, b) => /재고|소진|입고/.test(b) - /재고|소진|입고/.test(a)).slice(0, 2),
+  };
+}
+
 /* ---------------- 화면 ---------------- */
 const ui = { id: null, toast: null };
 function refresh() {

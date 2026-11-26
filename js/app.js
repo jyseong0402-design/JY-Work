@@ -9,8 +9,8 @@ import { setFreightPrev } from './freight-ui.js';
 import { initBoard, homeClosingHTML } from './board.js';
 import { initRdVault } from './rdvault.js';
 import { initRdAsk } from './rdask.js';
-import { initKpi } from './kpi.js';
-import { initStock, refreshStock } from './stock.js';
+import { initKpi, kpiHomeSummary } from './kpi.js';
+import { initStock, refreshStock, stockHomeSummary } from './stock.js';
 import { inkdb } from './inkdb.js';
 import { sync, loadInk, saveInk, flushInk, parseConfig, getConfig, inkReport, restoreInk, savePhoto, getPhoto, removePhoto } from './sync.js';
 import { shrinkImage } from './photos.js';
@@ -74,6 +74,39 @@ function show(view) {
   if (view === 'stock') refreshStock();
 }
 $$('.nav button[data-view]').forEach((b) => b.addEventListener('click', () => show(b.dataset.view)));
+// 🌓 화면 밝기: 자동(기기 설정) · 라이트 · 다크 — 이 기기 localStorage 'jy-theme', 첫 적용은 index.html 머리의 짧은 스크립트
+const THEMES = { auto: ['🖥', '자동'], light: ['☀️', '라이트'], dark: ['🌙', '다크'] };
+function applyTheme(t) {
+  if (!THEMES[t]) t = 'auto';
+  if (t === 'auto') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
+  try { localStorage.setItem('jy-theme', t); } catch { /* 무시 */ }
+  const b = $('#themeBtn');
+  if (b) b.innerHTML = `<span class="ic">${THEMES[t][0]}</span><span>${THEMES[t][1]}</span>`;
+  $$('#themeSeg [data-theme-set]').forEach((x) => x.classList.toggle('on', x.dataset.themeSet === t));
+}
+const curTheme = () => { try { return localStorage.getItem('jy-theme') || 'auto'; } catch { return 'auto'; } };
+applyTheme(curTheme());
+$('#themeBtn')?.addEventListener('click', () => { const order = ['auto', 'light', 'dark']; applyTheme(order[(order.indexOf(curTheme()) + 1) % 3]); });
+$('#themeSeg')?.addEventListener('click', (e) => { const b = e.target.closest('[data-theme-set]'); if (b) applyTheme(b.dataset.themeSet); });
+// 화면 위 긴 설명 문구는 접어 두고 제목 옆 ⓘ로 펼침 (화면별로 펼침 상태 기억)
+(() => {
+  const KEY = 'jy-desc-open';
+  let open;
+  try { open = new Set(JSON.parse(localStorage.getItem(KEY) || '[]')); } catch { open = new Set(); }
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify([...open])); } catch { /* 무시 */ } };
+  $$('.view > header.vh').forEach((h) => {
+    const p = h.querySelector(':scope > div > p.muted, :scope > p.muted');
+    const h1 = h.querySelector('h1');
+    if (!p || !h1 || p.textContent.trim().length < 40) return;
+    const id = h.closest('.view').id;
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'vh-info'; b.textContent = 'ⓘ'; b.title = '이 화면 설명 보기';
+    h1.appendChild(b);
+    const set = (o) => { p.hidden = !o; b.classList.toggle('on', o); b.setAttribute('aria-expanded', o); };
+    set(open.has(id));
+    b.onclick = (e) => { e.stopPropagation(); const o = p.hidden; set(o); if (o) open.add(id); else open.delete(id); save(); };
+  });
+})();
 // 상위 메뉴 버튼: 넓은 사이드바는 펼치기/접기, 아이콘 레일·모바일 하단바는 위로 작은 메뉴(pop)
 $$('.nav-parent').forEach((b) => b.addEventListener('click', (e) => {
   e.stopPropagation();
@@ -176,7 +209,31 @@ function renderDashboard() {
   $('#dashEvents').innerHTML = listHTML(weekEv.slice(0, 8), eventItem, '', '이번 주 남은 일정이 없습니다.');
   $('#dashTasks').innerHTML = listHTML(open.sort(byDue).slice(0, 8), taskItem, '', '미완료 할일이 없습니다 🎉');
   $('#homeClosing').innerHTML = homeClosingHTML();
+  renderHomeVn();
   $('#dashMeetings').innerHTML = listHTML([...meetings].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5), meetingItem, '', '아직 회의메모가 없습니다. “+ 회의메모”로 시작해보세요.');
+}
+
+// 🏠 홈 '베트남 요약' 카드: 최근 KPI 결산월 + 최근 수불재고 보고 (둘 다 없으면 숨김)
+function renderHomeVn() {
+  const box = $('#homeVn');
+  if (!box) return;
+  let K = null, S = null;
+  try { K = kpiHomeSummary(); } catch { /* 무시 */ }
+  try { S = stockHomeSummary(); } catch { /* 무시 */ }
+  box.hidden = !K && !S;
+  if (box.hidden) return;
+  const f1 = (v) => (Math.round(v * 10) / 10).toLocaleString('ko-KR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const pct = (a, b) => (b ? `${Math.round((a / b) * 100)}%` : '-');
+  const dl = (a, b) => { if (a === null || b === null) return ''; const d = a - b; return `<span class="${d >= 0 ? 'ok' : 'minus'}">${d >= 0 ? '▲' : '▼'}${f1(Math.abs(d))}</span>`; };
+  const md = (s) => { const [, m, d] = s.split('-'); return `${+m}/${+d}`; };
+  const k = K ? `<div class="hv-row" data-go-view="kpi"><div class="hv-h">📊 KPI <small>${K.month}월 결산</small></div>
+      <div class="hv-n"><b>${K.sales !== null ? f1(K.sales) : '-'}</b><small>백만원</small> ${dl(K.sales, K.prev)} <span class="muted sm">전월 대비</span></div>
+      <div class="hv-sub">${K.tgt ? `Target ${f1(K.tgt)} 대비 <b>${pct(K.sales, K.tgt)}</b>` : ''}${K.tgt && K.bgt ? ' · ' : ''}${K.bgt ? `BGT 대비 ${pct(K.sales, K.bgt)}` : ''}${K.ebitda !== null ? ` · 조정 EBITDA <b class="${K.ebitda >= 0 ? 'ok' : 'minus'}">${f1(K.ebitda)}</b>` : ''}</div></div>` : '';
+  const s = S ? `<div class="hv-row" data-go-view="stock"><div class="hv-h">📦 수불재고 <small>${md(S.date)} 기준</small></div>
+      <div class="hv-n"><b>${f1(S.mtd / 1e6)}</b><small>백만원</small> <span class="muted sm">이번 달 누계 · 진도 ${Math.round(S.progress * 100)}%</span></div>
+      <div class="hv-sub">월말 예상 ${f1(S.forecast / 1e6)}${S.bgt ? ` · 월 BGT 대비 ${pct(S.mtd, S.bgt)}` : ''}${S.endTon !== null ? ` · 창고 <b class="${S.cover !== null && S.cover < 7 ? 'minus' : ''}">${S.endTon.toFixed(2)}톤${S.cover !== null ? `(${f1(S.cover)}일분)` : ''}</b>` : ''}</div>
+      ${S.alerts.length ? `<ul class="hv-alert">${S.alerts.map((t) => `<li>⚠ ${esc(t)}</li>`).join('')}</ul>` : ''}</div>` : '';
+  box.innerHTML = `<div class="card-head"><h2>📈 베트남</h2></div>${k}${s}`;
 }
 
 /* ---------- 일정(달력) ---------- */

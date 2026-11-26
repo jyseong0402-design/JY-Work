@@ -20,7 +20,7 @@
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #111613;
     --panel: #19201c;
     --text: #e6eee9;
@@ -39,6 +39,12 @@
     --shadow: none;
     color-scheme: dark;
   }
+}
+/* 직접 고른 다크 (설정·메뉴의 🌓) — 위와 같은 값 */
+:root[data-theme="dark"] {
+  --bg: #111613; --panel: #19201c; --text: #e6eee9; --muted: #93a39a; --line: #27322b; --primary: #5cc98b; --primary-soft: #1c3327;
+  --nav-bg: #0d1a12; --nav-fg: #d5e6dc; --nav-sub: #7fcf9f; --nav-hover: #173022; --nav-active: #2a9157;
+  --danger: #ef6b6b; --ok: #41c486; --warn: #f0ae3c; --shadow: none; color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -909,6 +915,7 @@ dialog.dlg-make { width: min(1000px, calc(100vw - 24px)); padding: 0; }
 .wk-legend { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
 .wk-legend > span:not(.muted) { border-radius: 6px; padding: 1px 8px; font-size: 12px; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .wk-ev { filter: brightness(.92); } }
+:root[data-theme="dark"] .wk-ev { filter: brightness(.92); }
 /* 주간 보기일 때 달력을 넓게, 오른쪽 요약은 아래로 3칸 */
 .home-grid.wide { grid-template-columns: 1fr; }
 .home-grid.wide .home-side { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
@@ -1250,3 +1257,27 @@ dialog.editor.drop-on .ed-note { outline: 3px dashed var(--primary); outline-off
 #view-stock .tbl-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 #view-stock .card { min-width: 0; }
 .rd-fold-hr { border: 0; border-top: 1px dashed var(--line); margin: 12px 0; }
+/* 홈 '베트남 요약' 카드 */
+.home-vn .hv-row { padding: 10px 10px; border-radius: 10px; cursor: pointer; border: 1px solid transparent; }
+.home-vn .hv-row + .hv-row { margin-top: 6px; border-top-color: var(--line); }
+.home-vn .hv-row:hover { background: color-mix(in srgb, var(--primary) 8%, transparent); border-color: var(--line); }
+.home-vn .hv-h { font-size: 13px; color: var(--muted); font-weight: 600; }
+.home-vn .hv-h small { font-weight: 400; margin-left: 4px; }
+.home-vn .hv-n { margin: 2px 0; font-variant-numeric: tabular-nums; }
+.home-vn .hv-n b { font-size: 22px; }
+.home-vn .hv-n small { margin: 0 6px 0 2px; color: var(--muted); }
+.home-vn .hv-sub { font-size: 13px; color: var(--muted); }
+.home-vn .hv-sub b { color: var(--text); }
+.home-vn .hv-sub b.minus, .home-vn .minus { color: var(--danger); }
+.home-vn .ok { color: var(--ok); }
+.home-vn .hv-alert { list-style: none; margin: 6px 0 0; padding: 0; font-size: 12.5px; color: var(--danger); display: grid; gap: 2px; }
+.bd-auto { margin-left: 4px; padding: 0 5px; border-radius: 6px; font-size: 10.5px; background: color-mix(in srgb, var(--primary) 16%, transparent); color: var(--primary); }
+/* 화면 제목 옆 ⓘ (설명 접기·펼치기) */
+.vh h1 .vh-info { margin-left: 8px; width: 24px; height: 24px; padding: 0; border-radius: 50%; border: 1px solid var(--line); background: var(--panel); color: var(--muted); font-size: 14px; line-height: 22px; cursor: pointer; vertical-align: middle; }
+.vh h1 .vh-info:hover, .vh h1 .vh-info.on { color: var(--primary); border-color: var(--primary); }
+/* 메뉴 아래 🌓 화면 밝기 버튼 (버전 위) */
+.nav .nav-theme { margin-top: auto; font-size: 13px; color: var(--nav-sub); opacity: .85; }
+.nav .nav-theme:hover { opacity: 1; color: #fff; }
+.nav .nav-theme + .nav-ver { margin-top: 0; }
+@media (max-width: 760px) { .nav .nav-theme { display: none; } }
+@media (min-width: 761px) and (max-width: 1099px) { .nav .nav-theme { font-size: 11px; } }

@@ -1372,6 +1372,22 @@ function renderYtd(k, M, n) {
 /* ---------- 화면 ---------- */
 function list() { return [...(store.get().kpi || [])].sort((a, b) => b.year - a.year || String(a.title).localeCompare(String(b.title))); }
 
+// 홈 '베트남 요약' 카드용: 가장 최근 KPI 파일의 결산월 매출(백만원)·전월·BGT·Target·조정 EBITDA
+export function kpiHomeSummary() {
+  const k = [...(store.get().kpi || [])].filter((x) => x.month).sort((a, b) => b.year - a.year || b.month - a.month)[0];
+  if (!k) return null;
+  const m = k.month, M = model(k);
+  const at = (r, i) => (r && i >= 0 && typeof r.a?.[i] === 'number' ? r.a[i] : null);
+  const T = k.target ? tmodel(k.target) : null, ti = T ? tgtIdx(k.target) : 0;
+  const scen = k.target?.scen?.[ti];
+  return {
+    year: k.year, month: m,
+    sales: at(M.sales, m - 1), prev: at(M.sales, m - 2), bgt: typeof M.sales?.b?.[m - 1] === 'number' ? M.sales.b[m - 1] : null,
+    tgt: typeof T?.sales?.t?.[ti] === 'number' ? T.sales.t[ti] : null, scen: typeof scen === 'string' ? scen : scen?.name || '',
+    ebitda: at(M.ebitda, m - 1), ebitdaPrev: at(M.ebitda, m - 2),
+  };
+}
+
 /* ---------- 💰 지원금 수익 (aT 지원사업 등): 'Target … PL' 시트의 '지원' 항목 + 원장의 지원 관련 수익 ---------- */
 function subsidyRows(k) {
   const R = k.target?.rows || [];
