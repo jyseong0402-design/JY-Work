@@ -963,6 +963,59 @@ async function openPhoto(pid, list, onDelete) {
 }
 $('#pvClose').onclick = () => dlgPhoto.close();
 dlgPhoto.addEventListener('click', (e) => { if (e.target === dlgPhoto) dlgPhoto.close(); });
+/* ---------- 메모 공유·내보내기 (memoshare.js) ---------- */
+// 파일은 고를 때 미리 만들어 둠 → 📤 공유를 누르는 즉시 공유 창이 뜸(늦으면 브라우저가 막음)
+const dlgShare = $('#dlgShare');
+let shFiles = null, shJob = 0, shPages = [];
+const shKind = () => $('#shKinds input:checked')?.value || 'png';
+async function shPrepare() {
+  const job = ++shJob;
+  shFiles = null;
+  $('#shShare').disabled = $('#shDown').disabled = true;
+  $('#shStatus').textContent = '⏳ 만드는 중…';
+  try {
+    const { makeFiles, canShareFiles } = await import('./memoshare.js');
+    const title = fMeeting.elements.title.value.trim() || '메모';
+    const date = fMeeting.elements.date?.value || todayStr();
+    const files = await makeFiles(shPages, shKind(), `${title}_${date}`);
+    if (job !== shJob) return;
+    shFiles = files;
+    const mb = files.reduce((t, f) => t + f.size, 0) / 1048576;
+    const share = canShareFiles(files);
+    $('#shDown').disabled = false;
+    $('#shShare').disabled = !share;
+    $('#shShare').title = share ? '' : '이 기기·브라우저는 바로 공유를 지원하지 않습니다 (다운로드를 이용하세요)';
+    $('#shStatus').textContent = `✅ 준비됨 · 파일 ${files.length}개 · ${mb < 1 ? `${Math.max(1, Math.round(mb * 1024))}KB` : `${mb.toFixed(1)}MB`}${share ? '' : ' · 이 기기에서는 바로 공유가 안 되어 다운로드만 가능'}`;
+  } catch (err) {
+    if (job === shJob) $('#shStatus').textContent = `⚠ 만들지 못했습니다: ${err.message || err}`;
+  }
+}
+$('#edShare').onclick = () => {
+  pad.commitText?.();
+  shPages = pad.getData().pages.filter((p) => p.strokes.length);
+  if (!shPages.length) { toast('필기 쪽이 없습니다 — 펜 필기·글상자·사진이 있는 쪽만 내보낼 수 있습니다.'); return; }
+  $('#shInfo').textContent = `「${fMeeting.elements.title.value.trim() || '메모'}」 필기 ${shPages.length}쪽 · 노트 종이 모양 그대로 (빈 쪽 제외)`;
+  dlgShare.showModal();
+  shPrepare();
+};
+$('#shKinds').addEventListener('change', shPrepare);
+$('#shClose').onclick = () => { shJob++; dlgShare.close(); };
+$('#shDown').onclick = async () => {
+  if (!shFiles) return;
+  const { downloadFiles } = await import('./memoshare.js');
+  await downloadFiles(shFiles);
+  toast(shFiles.length > 1 ? `${shFiles.length}개 파일을 저장했습니다.` : `저장했습니다: ${shFiles[0].name}`);
+};
+$('#shShare').onclick = async () => {
+  if (!shFiles) return;
+  try {
+    await navigator.share({ files: shFiles, title: fMeeting.elements.title.value.trim() || '메모' });
+    dlgShare.close();
+  } catch (err) {
+    if (err?.name !== 'AbortError') toast(`공유하지 못했습니다 — ⬇ 다운로드를 이용해 주세요. (${err?.message || err})`);
+  }
+};
+
 $('#pvSave').onclick = () => {
   if (!pvCur) return;
   const a = document.createElement('a');

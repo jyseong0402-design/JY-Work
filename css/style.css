@@ -406,6 +406,17 @@ code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 1
 .seg button { border: 0; background: none; color: var(--muted); font: inherit; font-size: 14px; padding: 7px 14px; border-radius: 8px; cursor: pointer; min-height: 38px; }
 .seg button.on { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
 
+/* 메모 공유·내보내기 창 */
+.share-dlg { width: min(440px, calc(100vw - 32px)); border: 1px solid var(--line); border-radius: 14px; background: var(--panel); color: var(--text); padding: 20px; }
+.share-dlg::backdrop { background: rgba(0, 0, 0, .45); }
+.share-dlg h3 { margin: 0 0 4px; }
+.sh-kinds { display: grid; gap: 8px; margin: 14px 0 6px; }
+.sh-kinds label { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+.sh-kinds label:has(input:checked) { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 10%, transparent); }
+.sh-kinds input { flex: none; width: 18px; height: 18px; margin: 0; padding: 0; accent-color: var(--primary); }
+.sh-kinds label > span { flex: 1; text-align: left; }
+.sh-kinds small { display: block; color: var(--muted); font-size: 12px; }
+.sh-bar { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 /* 메모 자세히 목록 (탐색기처럼: 메모명·수정한 날짜·메모 날짜·쪽·태그) */
 .mtable-wrap { overflow-x: auto; }
 .mtable { width: 100%; border-collapse: collapse; font-size: 14px; }

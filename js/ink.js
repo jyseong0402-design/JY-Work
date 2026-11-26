@@ -50,6 +50,28 @@ function imgOf(pid, onload) {
   return e.img;
 }
 export const isImg = (s) => s.t === 'img';
+// 내보내기 전에 쪽 안 사진을 모두 불러옴 (못 받으면 최대 8초 뒤 자리 표시로)
+export function loadImages(strokes) {
+  return Promise.all(strokes.filter(isImg).map((s) => new Promise((res) => {
+    const t = setTimeout(res, 8000);
+    if (imgOf(s.pid, () => { clearTimeout(t); res(); })) { clearTimeout(t); res(); }
+  })));
+}
+// 화면과 같은 노트 종이(노란 바탕·가로줄·빨간 여백선)를 캔버스에 그림 — 공유·내보내기용
+export function drawPaper(ctx, scale, ls = LINE) {
+  const W = PAGE_W * scale, H = PAGE_H * scale;
+  ctx.save();
+  ctx.fillStyle = '#fbf3b1';
+  ctx.fillRect(0, 0, W, H);
+  const lw = Math.max(1, scale * 1.1);
+  ctx.fillStyle = '#a7b3b8';
+  for (let y = ls * scale; y <= H; y += ls * scale) ctx.fillRect(0, Math.round(y - lw), W, lw);
+  const mg = ls * 2.2 * scale;
+  ctx.fillStyle = '#e48d86';
+  ctx.fillRect(Math.round(mg - 4 * scale * 1.25), 0, lw, H);
+  ctx.fillRect(Math.round(mg), 0, lw, H);
+  ctx.restore();
+}
 function drawImg(ctx, s, scale, onload) {
   const img = imgOf(s.pid, onload);
   const [x, y, w, h] = [s.x * scale, s.y * scale, s.w * scale, s.h * scale];

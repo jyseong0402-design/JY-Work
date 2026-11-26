@@ -460,6 +460,7 @@
             <div class="menu" id="moreMenu" role="menu">
               <button type="button" id="edSeries" hidden>📒 노트 전체 기록 보기 <small>날짜별 목록·엑셀 저장·이름 바꾸기</small></button>
               <button type="button" id="edCopy">📋 요약 복사</button>
+              <button type="button" id="edShare">📤 공유·내보내기 <small>이미지·PDF로 카톡·메일 보내기, 다운로드</small></button>
               <hr />
               <button type="button" data-act="finger">☝️ 손가락으로 쓰기 <small class="lbl"></small></button>
               <button type="button" data-act="clear">🧹 필기 모두 지우기</button>
@@ -505,6 +506,21 @@
   </dialog>
 
   <!-- 메모 사진 크게 보기 -->
+  <dialog id="dlgShare" class="share-dlg">
+    <h3>📤 공유·내보내기</h3>
+    <p class="muted sm" id="shInfo"></p>
+    <div class="sh-kinds" id="shKinds">
+      <label><input type="radio" name="shKind" value="png" checked /> <span>🖼 이미지 <small>쪽마다 PNG 한 장씩</small></span></label>
+      <label><input type="radio" name="shKind" value="long" /> <span>🧾 긴 이미지 한 장 <small>모든 쪽을 세로로 이어 붙임</small></span></label>
+      <label><input type="radio" name="shKind" value="pdf" /> <span>📄 PDF <small>모든 쪽을 한 파일로 (보고·첨부용)</small></span></label>
+    </div>
+    <p class="muted sm" id="shStatus"></p>
+    <div class="sh-bar">
+      <button type="button" class="btn" id="shClose">닫기</button>
+      <button type="button" class="btn" id="shDown">⬇ 다운로드</button>
+      <button type="button" class="btn primary" id="shShare">📤 공유</button>
+    </div>
+  </dialog>
   <dialog id="dlgPhoto" class="photo-view">
     <img id="pvImg" alt="첨부 사진" />
     <div class="pv-bar">
