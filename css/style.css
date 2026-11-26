@@ -404,6 +404,24 @@ code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 1
 .seg button { border: 0; background: none; color: var(--muted); font: inherit; font-size: 14px; padding: 7px 14px; border-radius: 8px; cursor: pointer; min-height: 38px; }
 .seg button.on { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
 
+/* 메모 자세히 목록 (탐색기처럼: 메모명·수정한 날짜·메모 날짜·쪽·태그) */
+.mtable-wrap { overflow-x: auto; }
+.mtable { width: 100%; border-collapse: collapse; font-size: 14px; }
+.mtable th { position: sticky; top: 0; background: var(--bg); text-align: left; font-weight: 500; border-bottom: 1px solid var(--line); padding: 0; white-space: nowrap; }
+.mtable th button { all: unset; display: block; width: 100%; box-sizing: border-box; padding: 8px 10px; cursor: pointer; color: var(--muted); font-size: 13px; }
+.mtable th button:hover, .mtable th button.on { color: var(--text); }
+.mtable th.r button { text-align: right; }
+.mtable th.mt-extra { padding: 8px 10px; color: var(--muted); font-size: 13px; }
+.mtable td { padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; white-space: nowrap; color: var(--muted); }
+.mtable td.r { text-align: right; }
+.mtable tbody tr { cursor: pointer; }
+.mtable tbody tr:hover td { background: color-mix(in srgb, var(--primary) 10%, transparent); }
+.mtable .mt-name { color: var(--text); white-space: normal; display: flex; align-items: center; gap: 10px; min-width: 200px; }
+.mtable .mt-name b { font-weight: 500; }
+.mtable .mt-name small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+.mtable .mt-ic { flex: none; width: 26px; height: 26px; border-radius: 5px; display: grid; place-items: center; font-size: 14px; color: #fff; }
+.mtable .mt-extra { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 760px) { .mtable .mt-date, .mtable .mt-extra { display: none; } .mtable td, .mtable th button { padding-left: 6px; padding-right: 6px; } }
 .nb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 26px 22px; padding: 6px 2px 20px; }
 .nb { display: flex; flex-direction: column; align-items: stretch; cursor: pointer; background: none; border: 0; padding: 0; font: inherit; color: inherit; text-align: left; }
 .nb-cover { aspect-ratio: 3 / 3.7; border-radius: 6px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 2px 6px rgba(0, 0, 0, .18), 0 10px 24px rgba(0, 0, 0, .12); transition: transform .15s; position: relative; }

@@ -275,7 +275,41 @@ const inkHit = (m, q) => {
 };
 const pref = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
 const setPref = (k, v) => { try { localStorage.setItem(k, v); } catch { /* 무시 */ } };
-let mView = pref('jy-mview', 'grid');
+let mView = pref('jy-mview2', 'list'); // 1.33.0~ 기본 = 자세히 목록(탐색기처럼)
+let mSort = pref('jy-msort', 'upd-desc'); // 열 제목 누르면 정렬: name·upd·date·pages + -asc/-desc
+// 수정한 날짜: 탐색기처럼 "2026-11-19 오전 9:37"
+const fmtStamp = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(+d)) return '';
+  const h = d.getHours();
+  return `${todayStr(d)} ${h < 12 ? '오전' : '오후'} ${h % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+const M_COLS = [
+  ['name', '메모명', (m) => (m.title || '').toLowerCase()],
+  ['upd', '수정한 날짜', (m) => m.updatedAt || m.date || ''],
+  ['date', '메모 날짜', (m) => m.date || ''],
+  ['pages', '쪽', (m) => m.inkPages || 0],
+];
+function meetingTable(list, q) {
+  if (!list.length) return `<div class="empty">${q ? '검색 결과가 없습니다.' : '아직 메모가 없습니다.'}</div>`;
+  const [key, dir] = mSort.split('-');
+  const get = (M_COLS.find((c) => c[0] === key) || M_COLS[1])[2];
+  const sorted = [...list].sort((a, b) => { const x = get(a), y = get(b); const c = x < y ? -1 : x > y ? 1 : 0; return dir === 'asc' ? c : -c; });
+  const th = (k, label, cls = '') => `<th class="${cls}"><button type="button" data-msort="${k}" class="${key === k ? 'on' : ''}">${label}${key === k ? (dir === 'asc' ? ' ▲' : ' ▼') : ''}</button></th>`;
+  const rows = sorted.map((m) => {
+    const hit = inkHit(m, q);
+    const extra = [splitList(m.tags).join(', '), m.attendees].filter(Boolean).join(' · ');
+    const snip = hit ? `🔤 ${hit.p + 1}쪽: ${hit.t.replace(/\s*\n\s*/g, ' ').slice(0, 120)}` : q ? (m.summary || m.content || '').replace(/\s+/g, ' ').slice(0, 120) : '';
+    return `<tr data-open="meetingView" data-id="${m.id}"${hit ? ` data-find="${esc(q)}"` : ''}>
+      <td class="mt-name"><span class="mt-ic" style="background:${seriesColor(m.title || '')}">${m.inkPages ? '✍' : '📝'}</span><span><b>${highlight(m.title || '제목 없음', q)}</b>${snip ? `<small>${highlight(snip, q)}</small>` : ''}</span></td>
+      <td class="mt-upd">${fmtStamp(m.updatedAt)}</td>
+      <td class="mt-date">${fmt(m.date)}</td>
+      <td class="mt-pg r">${m.inkPages ? `${m.inkPages}쪽` : '-'}${m.photos?.length ? ` · 📷${m.photos.length}` : ''}</td>
+      <td class="mt-extra">${highlight(extra, q)}</td></tr>`;
+  }).join('');
+  return `<table class="mtable"><thead><tr>${th('name', '메모명')}${th('upd', '수정한 날짜', 'mt-upd')}${th('date', '메모 날짜', 'mt-date')}${th('pages', '쪽', 'r')}<th class="mt-extra">태그·참석자</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
 
 function renderMeetings() {
   $$('#mView [data-mv]').forEach((b) => b.classList.toggle('on', b.dataset.mv === mView));
@@ -286,8 +320,8 @@ function renderMeetings() {
   // 검색 중이거나 목록 보기면 목록
   if (words.length || mView === 'list') {
     const list = all.filter((m) => { const t = meetingText(m); return words.every((w) => hasWord(t, w)); }).sort(recent);
-    $('#meetingList').className = 'list';
-    $('#meetingList').innerHTML = listHTML(list, meetingItem, q, q ? '검색 결과가 없습니다.' : '아직 메모가 없습니다.');
+    $('#meetingList').className = 'mtable-wrap';
+    $('#meetingList').innerHTML = meetingTable(list, q);
     return;
   }
   // 최근에 고친 메모가 앞에
@@ -320,7 +354,17 @@ function migrateSeries() {
     }
   } finally { migrating = false; }
 }
-$('#mView').addEventListener('click', (e) => { const b = e.target.closest('[data-mv]'); if (b) { mView = b.dataset.mv; setPref('jy-mview', mView); renderMeetings(); } });
+$('#mView').addEventListener('click', (e) => { const b = e.target.closest('[data-mv]'); if (b) { mView = b.dataset.mv; setPref('jy-mview2', mView); renderMeetings(); } });
+// 자세히 목록 열 제목: 같은 열을 다시 누르면 오름/내림 바꿈 (이름은 가나다순부터, 나머지는 최근·큰 것부터)
+$('#meetingList').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-msort]');
+  if (!b) return;
+  e.stopPropagation();
+  const k = b.dataset.msort, [key, dir] = mSort.split('-');
+  mSort = `${k}-${key === k ? (dir === 'asc' ? 'desc' : 'asc') : k === 'name' ? 'asc' : 'desc'}`;
+  setPref('jy-msort', mSort);
+  renderMeetings();
+});
 
 /* ---------- 누적 노트 (날짜별 기록) ---------- */
 const dlgSeries = $('#dlgSeries');
