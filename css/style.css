@@ -1371,3 +1371,13 @@ dialog.editor.drop-on .ed-note { outline: 3px dashed var(--primary); outline-off
   #stBody > .kpi-cards .kc-big small { font-size: 10px; margin-left: 2px; }
   #stBody > .kpi-cards .kc-sub { font-size: 10.5px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 }
+/* 🔍 메모 안 찾기 (1.40.0~) */
+.ink-find { display: flex; align-items: center; gap: 6px; padding: 6px 10px; background: var(--bar, var(--panel)); color: var(--bar-fg, var(--text)); border-bottom: 1px solid rgba(255,255,255,.08); }
+.ink-find[hidden] { display: none; }
+.ink-find input { flex: 1; min-width: 0; max-width: 420px; height: 34px; padding: 4px 10px; border-radius: 8px; border: 1px solid #3a3e48; background: #2a2c32; color: var(--bar-fg, var(--text)); font: inherit; font-size: 14px; color-scheme: dark; }
+.ink-find .find-n { font-size: 12.5px; color: var(--bar-dim, var(--muted)); white-space: nowrap; min-width: 56px; }
+.ink-find .find-n.none { color: var(--danger); }
+.ink-find .tbb { width: 32px; height: 32px; font-size: 13px; color: var(--bar-fg, var(--text)); background: none; border: 0; border-radius: 8px; cursor: pointer; }
+.ink-find .tbb:hover { background: rgba(255,255,255,.08); }
+.ink-page .txt-find { position: absolute; z-index: 2; pointer-events: none; border-radius: 6px; background: rgba(255, 214, 0, .28); box-shadow: 0 0 0 1.5px rgba(240, 165, 0, .7); }
+.ink-page .txt-find.on { background: rgba(255, 170, 0, .45); box-shadow: 0 0 0 2.5px #e07a00; }

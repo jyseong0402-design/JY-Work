@@ -486,6 +486,7 @@
           <button type="button" class="tbb" data-tab="text" data-icon="text" title="키보드로 입력 (다시 누르면 필기)"></button>
         </div>
         <div class="tb-right">
+          <button type="button" class="tbb" id="findBtn" data-icon="search" title="메모 안에서 찾기 (Ctrl+F)"></button>
           <button type="button" class="tbb" id="photoBtn" data-icon="photo" title="사진 넣기 (PC는 붙여넣기·끌어놓기도 됨)"></button>
           <input type="file" id="photoIn" accept="image/*" multiple hidden />
           <button type="button" class="tbb" id="sumToggle" data-icon="ai" title="요약·AI"><i class="dot" id="sumDot"></i></button>
@@ -512,6 +513,13 @@
         <label>참석자<input name="attendees" placeholder="쉼표로 구분" /></label>
         <label>태그<input name="tags" placeholder="예: 프로젝트A, 예산" /></label>
         <datalist id="seriesList"></datalist>
+      </div>
+      <div class="ink-find" id="inkFind" hidden>
+        <input type="search" id="findQ" placeholder="메모 안에서 찾기 (글상자·키보드 글)" autocomplete="off" />
+        <span class="find-n" id="findN"></span>
+        <button type="button" class="tbb" id="findPrev" title="이전 (Shift+Enter)">▲</button>
+        <button type="button" class="tbb" id="findNext" title="다음 (Enter)">▼</button>
+        <button type="button" class="tbb" id="findClose" title="닫기 (Esc)">✕</button>
       </div>
       <button type="button" class="focus-exit" id="focusExit" title="넓게 보기 끝내기">⤡ 나가기</button>
       <div class="ed-body">

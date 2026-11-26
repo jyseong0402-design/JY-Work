@@ -435,6 +435,33 @@ export class InkPad {
     return false;
   }
 
+  /* ---- 🔍 메모 안 찾기: 글상자 글자 (띄어쓰기 무시) ---- */
+  findTexts(q) {
+    const k = String(q || '').toLowerCase().replace(/\s+/g, '');
+    if (!k) return [];
+    const out = [];
+    this.pages.forEach((pg, p) => pg.strokes.forEach((s) => { if (isTxt(s) && s.text && s.text.toLowerCase().replace(/\s+/g, '').includes(k)) out.push({ p, s }); }));
+    return out.sort((a, b) => a.p - b.p || a.s.y - b.s.y || a.s.x - b.s.x);
+  }
+  // 찾은 글상자 모두 노랗게, idx번째는 진하게 + 그 자리로 스크롤
+  showFind(list, idx) {
+    this.clearFind();
+    if (!this.scale) return;
+    list.forEach((m, i) => {
+      const host = this.pagesEl.children[m.p];
+      if (!host) return;
+      txtLines(m.s);
+      const el = document.createElement('div');
+      el.className = `txt-find${i === idx ? ' on' : ''}`;
+      Object.assign(el.style, { left: m.s.x * this.scale - 5 + 'px', top: m.s.y * this.scale - 3 + 'px', width: m.s.w * this.scale + 10 + 'px', height: m.s.h * this.scale + 6 + 'px' });
+      host.appendChild(el);
+    });
+    const cur = list[idx];
+    const host = cur && this.pagesEl.children[cur.p];
+    if (host) this.pagesEl.scrollTo({ top: Math.max(0, host.offsetTop + cur.s.y * this.scale - this.pagesEl.clientHeight / 3), behavior: 'smooth' });
+  }
+  clearFind() { this.pagesEl?.querySelectorAll('.txt-find').forEach((e) => e.remove()); }
+
   /* ---- 글상자 입력·고치기 ---- */
   // 펜 굵기(가늘게·보통·굵게)를 글자 크기로 사용
   txtSize() { return { 2: 22, 3.5: 28, 6: 40 }[this.tool.w] || 28; }

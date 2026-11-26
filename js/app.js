@@ -975,7 +975,66 @@ async function openMeeting(id, preset = {}, find = '') {
   if (curPhotos.length) placeLoosePhotos();
 }
 
+/* ---------- 🔍 메모 안 찾기: 필기 쪽 글상자 + 키보드 입력 글 ---------- */
+const find = { list: [], i: 0 };
+function findRun(keep = false) {
+  const q = $('#findQ').value;
+  const ink = pad.findTexts(q).map((m) => ({ k: 'ink', m }));
+  const ta = fMeeting.elements.content, txt = [];
+  const kq = q.trim().toLowerCase();
+  if (kq) { const v = (ta.value || '').toLowerCase(); for (let i = v.indexOf(kq); i >= 0 && txt.length < 300; i = v.indexOf(kq, i + 1)) txt.push({ k: 'text', i, n: kq.length }); }
+  find.list = [...ink, ...txt];
+  if (!keep) find.i = 0;
+  find.i = Math.max(0, Math.min(find.i, find.list.length - 1));
+  findShow();
+}
+function findShow() {
+  const n = find.list.length, cur = find.list[find.i];
+  const q = $('#findQ').value.trim();
+  $('#findN').textContent = !q ? '' : n ? `${find.i + 1} / ${n}${cur.k === 'text' ? ' · 키보드 글' : ` · ${cur.m.p + 1}쪽`}` : '없음';
+  $('#findN').classList.toggle('none', !!q && !n);
+  const inkList = find.list.filter((x) => x.k === 'ink').map((x) => x.m);
+  if (!cur) { pad.clearFind(); return; }
+  if (cur.k === 'ink') {
+    if (fMeeting.dataset.tab !== 'ink') setTab('ink');
+    requestAnimationFrame(() => requestAnimationFrame(() => pad.showFind(inkList, inkList.indexOf(cur.m))));
+  } else {
+    pad.clearFind();
+    if (fMeeting.dataset.tab !== 'text') setTab('text');
+    const ta = fMeeting.elements.content;
+    // 글자 위치를 선택해 보여 줌 (선택 표시는 입력칸에 커서가 있어야 보여서 잠깐 옮김)
+    ta.focus({ preventScroll: true }); ta.setSelectionRange(cur.i, cur.i + cur.n);
+    const line = ta.value.slice(0, cur.i).split('\n').length - 1;
+    ta.scrollTop = Math.max(0, line * (parseFloat(getComputedStyle(ta).lineHeight) || 24) - ta.clientHeight / 3);
+  }
+}
+function findMove(d) { findRun(true); if (!find.list.length) return; find.i = (find.i + d + find.list.length) % find.list.length; findShow(); }
+function findOpen() { $('#inkFind').hidden = false; $('#findBtn').classList.add('on'); const q = $('#findQ'); q.focus(); q.select(); if (q.value) findRun(true); }
+function findClose() { $('#inkFind').hidden = true; $('#findBtn')?.classList.remove('on'); pad.clearFind(); find.list = []; }
+$('#findBtn').onclick = () => ($('#inkFind').hidden ? findOpen() : findClose());
+$('#findQ').addEventListener('input', () => findRun());
+$('#findQ').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); findMove(e.shiftKey ? -1 : 1); }
+  else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); findClose(); }
+});
+// 키보드 글에서 찾은 낱말이 선택된 채로 Enter → 줄바꿈 대신 다음 찾기 (선택을 바꿨거나 찾기가 닫혀 있으면 평소대로)
+fMeeting.elements.content.addEventListener('keydown', (e) => {
+  if ($('#inkFind').hidden) return;
+  const cur = find.list[find.i], ta = e.target;
+  const onMatch = cur?.k === 'text' && ta.selectionStart === cur.i && ta.selectionEnd === cur.i + cur.n;
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); findClose(); return; }
+  if (e.key === 'Enter' && onMatch) { e.preventDefault(); findMove(e.shiftKey ? -1 : 1); }
+});
+$('#findPrev').onclick = () => findMove(-1);
+$('#findNext').onclick = () => findMove(1);
+$('#findClose').onclick = findClose;
+// 메모가 열려 있을 때 Ctrl+F(⌘F) = 메모 안 찾기 (브라우저 찾기는 글상자를 못 찾음)
+document.addEventListener('keydown', (e) => {
+  if (dlgMeeting.open && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') { e.preventDefault(); findOpen(); }
+});
+
 function closeMeeting() {
+  findClose();
   if (fMeeting.classList.contains('focus')) setFocus(false);
   const m = saveMeeting({ final: true });
   dlgMeeting.close();
