@@ -1249,3 +1249,4 @@ dialog.editor.drop-on .ed-note { outline: 3px dashed var(--primary); outline-off
 .st-stores > p { grid-column: 1 / -1; margin: 0; }
 #view-stock .tbl-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 #view-stock .card { min-width: 0; }
+.rd-fold-hr { border: 0; border-top: 1px dashed var(--line); margin: 12px 0; }
