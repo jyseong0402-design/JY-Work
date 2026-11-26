@@ -131,15 +131,20 @@ function parseSku(g, keep = 12) {
     const b = g.txt(r, 2), cat = g.txt(r, 3), sku = g.txt(r, 4);
     const name = sku || cat || b;
     if (!name) continue;
-    if (rows.length && /Total/i.test(b) && rows.some((x) => x.lv === 0)) break; // 다음 표(박스 등) 시작
+    // B열 제목이 또 나오면 다음 표('일평균 판매중량' 등) 시작 → 첫 표(판매중량 Total)만 읽음
+    if (b && rows.some((x) => x.lv === 0)) break;
     const v = cols.map((x) => num(g.at(r, x.c)));
-    rows.push({ name, lv: sku ? 2 : cat ? 1 : 0, v });
+    rows.push({ name, lv: sku ? 2 : cat ? 1 : 0, v, cat: sku ? (cat || [...rows].reverse().find((x) => x.lv === 1)?.name || '') : '' });
   }
   // 판매가 있는 마지막 주까지
   const tot = rows.find((x) => x.lv === 0) || rows[0];
   let last = -1; tot?.v.forEach((v, i) => { if (v > 0) last = i; });
   const from = Math.max(0, last - keep + 1);
-  return { weeks: cols.slice(from, last + 1).map((x) => x.d), rows: rows.map((x) => ({ ...x, v: x.v.slice(from, last + 1).map((n) => Math.round(n * 10) / 10) })) };
+  // 시트 점검: 같은 SKU가 두 품목군에 들어 있으면(예: king oyster 300이 팽이·새송이 둘 다) 소계·합계에 두 번 더해짐
+  const byName = {};
+  rows.filter((x) => x.lv === 2).forEach((x) => (byName[x.name] ||= []).push(x.cat));
+  const dups = Object.entries(byName).filter(([, cs]) => new Set(cs).size > 1).map(([name, cats]) => ({ name, cats: [...new Set(cats)] }));
+  return { weeks: cols.slice(from, last + 1).map((x) => x.d), rows: rows.map((x) => ({ ...x, v: x.v.slice(from, last + 1).map((n) => Math.round(n * 10) / 10) })), dups };
 }
 
 // 수불부: A=월, B=품목, E 기초, F 입고ea, H 입고ton, I aj폐기, M 출고ea, O 출고ton, P 검역, Q 기말ea, S 기말ton
@@ -260,6 +265,12 @@ function findings(s) {
       add(Math.abs(rate(tot.v[i], tot.v[i - 1]) ?? 0) >= 15 ? (tot.v[i] > tot.v[i - 1] ? 'good' : 'bad') : 'info', `주간 판매(${md(s.sku.weeks[i])}~ 주) ${f0(tot.v[i])}kg — 전주 ${f0(tot.v[i - 1])}kg 대비 ${ratePct(tot.v[i], tot.v[i - 1])}`);
       const movers = s.sku.rows.filter((x) => x.lv === 2 && (x.v[i] + x.v[i - 1]) >= 100).map((x) => ({ n: x.name, d: x.v[i] - x.v[i - 1] })).sort((x, y) => Math.abs(y.d) - Math.abs(x.d)).slice(0, 3);
       if (movers.length) add('info', `SKU 주간 변동 큰 순: ${movers.map((x) => `${x.n} ${sgn(x.d, f0)}kg`).join(', ')}`);
+      // 시트 점검: 같은 SKU가 두 품목군에 있음 → 그 품목군 소계·전체 합계에 중복으로 더해짐
+      for (const d of s.sku.dups || []) {
+        const r = s.sku.rows.find((x) => x.lv === 2 && x.name === d.name);
+        const extra = r ? r.v[i] * (d.cats.length - 1) : 0;
+        add('bad', `SKU 시트 확인 필요: ${d.name}이(가) ${d.cats.join('·')} 두 품목군에 모두 있어 소계·합계에 중복 계산${extra ? ` (지난주 ${f0(extra)}kg 많게 잡힘 → 실제 합계 약 ${f0(tot.v[i] - extra)}kg)` : ''} — 베트남팀에 시트 수정 요청`);
+      }
     }
   }
   // 6) 창고 재고
@@ -378,7 +389,7 @@ function render(root, s) {
   const wN = W?.weeks?.length || 0, wShow = Math.min(8, wN), w0 = wN - wShow;
   const wi = W ? skuWeekIdx(s) : -1; // 마지막으로 다 끝난 주
   const skuTable = wN ? `<table class="kt st-sku"><thead><tr><th>품목 · SKU</th>${W.weeks.slice(w0).map((d, j) => `<th>${md(d)}~${w0 + j > wi ? '<br><small>(진행 중)</small>' : ''}</th>`).join('')}<th>전주 대비</th></tr></thead><tbody>
-    ${W.rows.filter((r) => r.v.some((v) => v > 0)).map((r) => { const a = r.v[wi], b = r.v[wi - 1]; return `<tr class="lv${r.lv}"><th>${esc(r.name)}</th>${r.v.slice(w0).map((v) => `<td>${v ? f0(v) : '-'}</td>`).join('')}<td class="${a > b ? 'plus' : a < b ? 'minus' : ''}">${b ? ratePct(a, b) : '-'}</td></tr>`; }).join('')}
+    ${W.rows.filter((r) => r.v.some((v) => v > 0)).map((r) => { const a = r.v[wi], b = r.v[wi - 1]; const dup = r.lv === 2 && (W.dups || []).some((d) => d.name === r.name); return `<tr class="lv${r.lv}${dup ? ' st-dup' : ''}"><th>${esc(r.name)}${dup ? ' <small title="같은 SKU가 두 품목군에 있어 소계에 중복 계산됨 (원본 시트 확인)">⚠ 중복</small>' : ''}</th>${r.v.slice(w0).map((v) => `<td>${v ? f0(v) : '-'}</td>`).join('')}<td class="${a > b ? 'plus' : a < b ? 'minus' : ''}">${b ? ratePct(a, b) : '-'}</td></tr>`; }).join('')}
   </tbody></table><p class="muted sm">주 = 일요일~토요일. 전주 대비 = 다 끝난 마지막 주(${wi >= 0 ? md(W.weeks[wi]) : '-'}~)와 그 전 주</p>` : '<p class="muted sm">SKU 주간 시트를 못 읽었습니다.</p>';
   // 창고 수불
   const ledRow = (x) => { const c = cover(x.endEa, x.outEa, dayOf(s)); return `<tr class="${x.endEa <= 0 && x.outEa > 0 ? 'st-out' : c !== null && c < 7 ? 'st-low' : ''}"><th>${esc(x.item)}</th><td>${f0(x.open)}</td><td>${f0(x.inEa)}</td><td>${f0(x.outEa)}</td><td>${x.aj ? f0(x.aj) : '-'}</td><td><b>${f0(x.endEa)}</b></td><td>${f2(x.endTon)}</td><td>${c === null ? '-' : f1(c)}</td></tr>`; };

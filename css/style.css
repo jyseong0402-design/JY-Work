@@ -1309,3 +1309,5 @@ dialog.editor.drop-on .ed-note { outline: 3px dashed var(--primary); outline-off
 .hw-item { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border: 1px solid var(--line); border-radius: 999px; cursor: pointer; font-size: 14px; }
 .hw-item:has(input:checked) { border-color: var(--primary); background: var(--primary-soft); color: var(--primary); font-weight: 600; }
 .hw-item input { width: 16px; height: 16px; margin: 0; accent-color: var(--primary); }
+#view-stock .st-sku tr.st-dup th, #view-stock .st-sku tr.st-dup td { color: var(--warn); }
+#view-stock .st-sku tr.st-dup small { font-size: 11px; margin-left: 4px; }
