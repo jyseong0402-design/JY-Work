@@ -381,6 +381,38 @@ export class InkPad {
   }
   deselect() { this.sel?.el.remove(); this.sel = null; }
 
+  /* ---- 글상자 찾기 ---- */
+  // 찾기용 목록: [{ p: 쪽 번호(0부터), t: 글자 }]
+  textBoxes() {
+    const out = [];
+    this.pages.forEach((pg, p) => pg.strokes.forEach((s) => { if (isTxt(s) && s.text) out.push({ p, t: s.text }); }));
+    return out;
+  }
+  // 찾는 말이 든 글상자로 이동해 잠깐 반짝임 (띄어쓰기 무시)
+  reveal(q) {
+    const words = String(q || '').toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length) return false;
+    const has = (t) => { const a = t.toLowerCase(), b = a.replace(/\s+/g, ''); return words.some((w) => a.includes(w) || b.includes(w.replace(/\s+/g, ''))); };
+    for (let p = 0; p < this.pages.length; p++) {
+      const s = this.pages[p].strokes.find((x) => isTxt(x) && x.text && has(x.text));
+      if (!s) continue;
+      const go = () => {
+        const host = this.pagesEl.children[p];
+        if (!host || !this.scale) return;
+        txtLines(s);
+        this.pagesEl.scrollTop = Math.max(0, host.offsetTop + s.y * this.scale - this.pagesEl.clientHeight / 3);
+        const el = document.createElement('div');
+        el.className = 'txt-hit';
+        Object.assign(el.style, { left: s.x * this.scale - 6 + 'px', top: s.y * this.scale - 4 + 'px', width: s.w * this.scale + 12 + 'px', height: s.h * this.scale + 8 + 'px' });
+        host.appendChild(el);
+        setTimeout(() => el.remove(), 2600);
+      };
+      requestAnimationFrame(() => requestAnimationFrame(go)); // 쪽 크기가 정해진 뒤
+      return true;
+    }
+    return false;
+  }
+
   /* ---- 글상자 입력·고치기 ---- */
   // 펜 굵기(가늘게·보통·굵게)를 글자 크기로 사용
   txtSize() { return { 2: 22, 3.5: 28, 6: 40 }[this.tool.w] || 28; }

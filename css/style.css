@@ -330,6 +330,10 @@ form[data-tab=ink] [data-pane=ink], form[data-tab=text] [data-pane=text] { displ
 .ink-page .ink-txt { position: absolute; z-index: 3; margin: 0; padding: 0; border: 0; outline: 1.5px dashed var(--primary); outline-offset: 3px; background: rgba(255, 255, 255, .55); resize: none; overflow: hidden; font-family: "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; white-space: pre-wrap; word-break: break-all; box-sizing: content-box; }
 .ink-page .ink-txt::placeholder { color: #a7a7a7; }
 .ink-pages[data-tool=text] canvas.live { cursor: text; }
+/* 찾기로 열었을 때 찾은 글상자 표시 */
+.ink-page .txt-hit { position: absolute; z-index: 2; pointer-events: none; border-radius: 6px; background: rgba(255, 196, 0, .35); box-shadow: 0 0 0 2px #f0a500; animation: txtHit 2.6s ease-out forwards; }
+@keyframes txtHit { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
+.sub .ink-hit { color: var(--muted); }
 /* 쪽 사이 '＋ 쪽' 끼우기 버튼(쪽 위 틈 / 마지막 쪽 아래) */
 .ink-pages > .ink-page:first-child { margin-top: 22px; }
 .ink-page .pg-ins { position: absolute; left: 50%; top: -11px; transform: translate(-50%, -50%); z-index: 2; height: 20px; padding: 0 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--muted); font-size: 11px; line-height: 18px; cursor: pointer; opacity: .6; }

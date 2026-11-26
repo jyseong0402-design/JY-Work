@@ -79,10 +79,12 @@ function eventItem(e, q) {
 function meetingItem(m, q) {
   const tags = splitList(m.tags).map((t) => `<span class="tag">${esc(t)}</span>`).join('');
   const sum = m.summary || (m.content || '').slice(0, 140) || (m.inkPages ? '필기 메모' : '');
-  return `<div class="item" data-open="meetingView" data-id="${m.id}">
+  const hit = inkHit(m, q); // 필기 쪽 글상자에서 찾은 경우: 그 글과 쪽을 보여 주고, 열 때 그 자리로 이동
+  return `<div class="item" data-open="meetingView" data-id="${m.id}"${hit ? ` data-find="${esc(q)}"` : ''}>
     <div class="when">${fmt(m.date)}</div>
     <div class="body"><div class="title">${highlight(m.title, q)}</div>
       <div class="sub">${highlight(sum, q)}</div>
+      ${hit ? `<div class="sub ink-hit">🔤 ${hit.p + 1}쪽: ${highlight(hit.t.replace(/\s*\n\s*/g, ' ').slice(0, 120), q)}</div>` : ''}
       <div>${tags}${m.decisions?.length ? `<span class="tag green">결정 ${m.decisions.length}</span>` : ''}${m.actions?.length ? `<span class="tag red">할일 ${m.actions.length}</span>` : ''}${m.inkPages ? `<span class="tag yellow">✍️ 필기 ${m.inkPages}쪽</span>` : ''}${m.photos?.length ? `<span class="tag gray">📷 ${m.photos.length}</span>` : ''}${m.summary ? '' : '<span class="tag gray">요약 전</span>'}</div>
     </div></div>`;
 }
@@ -263,7 +265,14 @@ $('#calToday').onclick = () => {
 };
 
 /* ---------- 회의메모 목록 (노트 표지 / 목록) ---------- */
-const meetingText = (m) => [m.series, m.title, m.attendees, m.tags, m.content, m.summary, (m.decisions || []).join(' '), (m.keywords || []).join(' ')].join(' ').toLowerCase();
+const meetingText = (m) => [m.series, m.title, m.attendees, m.tags, m.content, m.summary, (m.decisions || []).join(' '), (m.keywords || []).join(' '), (m.inkText || []).map((x) => x.t).join(' ')].join(' ').toLowerCase();
+// 띄어쓰기를 무시하고도 찾음 ("11월15일" ↔ "11월 15일")
+const hasWord = (t, w) => t.includes(w) || t.replace(/\s+/g, '').includes(w);
+// 필기 쪽 글상자 중 찾는 말이 든 첫 글상자 { p, t }
+const inkHit = (m, q) => {
+  const words = String(q || '').toLowerCase().split(/\s+/).filter(Boolean);
+  return words.length ? (m.inkText || []).find((x) => words.some((w) => hasWord(x.t.toLowerCase(), w))) : null;
+};
 const pref = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
 const setPref = (k, v) => { try { localStorage.setItem(k, v); } catch { /* 무시 */ } };
 let mView = pref('jy-mview', 'grid');
@@ -276,7 +285,7 @@ function renderMeetings() {
   const recent = (a, b) => (b.updatedAt || b.date || '').localeCompare(a.updatedAt || a.date || '');
   // 검색 중이거나 목록 보기면 목록
   if (words.length || mView === 'list') {
-    const list = all.filter((m) => words.every((w) => meetingText(m).includes(w))).sort(recent);
+    const list = all.filter((m) => { const t = meetingText(m); return words.every((w) => hasWord(t, w)); }).sort(recent);
     $('#meetingList').className = 'list';
     $('#meetingList').innerHTML = listHTML(list, meetingItem, q, q ? '검색 결과가 없습니다.' : '아직 메모가 없습니다.');
     return;
@@ -405,7 +414,7 @@ function query({ q = '', kind = 'all', from = '', to = '' }) {
       const d = k === 'tasks' ? x.due || (x.createdAt || '').slice(0, 10) : x.date;
       if ((from || to) && !inRange(d, from, to)) return false;
       const t = itemText(k, x).toLowerCase();
-      return words.every((w) => t.includes(w));
+      return words.every((w) => hasWord(t, w));
     });
   }
   out.events.sort(byDate); out.meetings.sort(byDate); out.tasks.sort(byDue);
@@ -675,7 +684,9 @@ function saveMeeting({ final = false } = {}) {
   const inkChanged = pad.dirty;
   const inkPages = inkChanged ? pad.pageCount() : (prev?.inkPages || 0);
   const inkRev = inkChanged ? (inkPages ? new Date().toISOString() : '') : (prev?.inkRev || '');
-  const item = { ...o, inkPages, inkRev, photos: curPhotos.map((p) => ({ ...p })), decisions: lines(o.decisions), actions: textToActions(o.actions), keywords: splitList(o.keywords) };
+  // 필기 쪽 글상자 글자는 찾기용으로 메모 목록에도 함께 저장(동기화됨)
+  const inkText = inkChanged ? pad.textBoxes() : (prev?.inkText || []);
+  const item = { ...o, inkPages, inkRev, inkText, photos: curPhotos.map((p) => ({ ...p })), decisions: lines(o.decisions), actions: textToActions(o.actions), keywords: splitList(o.keywords) };
   const sig = JSON.stringify(item);
   let m = prev;
   if (sig !== lastSaved || inkChanged) {
@@ -787,7 +798,7 @@ if (0) fMeeting.elements.series.addEventListener('change', () => {
   renderPrevBox();
 });
 
-async function openMeeting(id, preset = {}) {
+async function openMeeting(id, preset = {}, find = '') {
   if (dlgMeeting.open) saveMeeting({ final: true });
   const m = id ? store.find('meetings', id) : { date: todayStr(), ...preset };
   fill(fMeeting, { ...m, decisions: (m.decisions || []).join('\n'), actions: actionsToText(m.actions), keywords: (m.keywords || []).join(', ') });
@@ -812,7 +823,7 @@ async function openMeeting(id, preset = {}) {
     let ink = null;
     try { ink = await loadInk(m); } catch { /* 아래에서 안내 */ }
     const n = (ink?.pages || []).reduce((t, p) => t + (p.strokes?.length || 0), 0);
-    if (n) { pad.load(ink); inkBlocked = false; } else toast('⚠ 필기를 불러오지 못했습니다 — 원래 필기를 지키려고 이 메모의 필기 저장을 멈췄습니다. 설정 → ✍️ 필기 점검');
+    if (n) { pad.load(ink); inkBlocked = false; if (find) { setTab('ink'); pad.reveal(find); } } else toast('⚠ 필기를 불러오지 못했습니다 — 원래 필기를 지키려고 이 메모의 필기 저장을 멈췄습니다. 설정 → ✍️ 필기 점검');
     if (!m.content) setTab('ink');
   }
   if (curPhotos.length) placeLoosePhotos();
@@ -1069,7 +1080,7 @@ document.addEventListener('click', (e) => {
   if (op) {
     const { open, id } = op.dataset;
     if (open === 'event') openEvent(id, null, op.dataset.occ);
-    if (open === 'meetingView') openMeeting(id); // 요약 창 없이 바로 메모장으로
+    if (open === 'meetingView') openMeeting(id, {}, op.dataset.find); // 요약 창 없이 바로 메모장으로 (찾기로 열면 그 글상자로)
     if (open === 'task') openTask(id);
     return;
   }
