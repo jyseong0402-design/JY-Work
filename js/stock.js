@@ -7,7 +7,7 @@
 //  - 3. 거래처 지점별 실적(MTD): 매출액(원) 묶음의 합계 줄 = 채널·점포별 MTD 매출
 // 뽑은 숫자는 store 'stock' 항목(기준일별 하나)으로 저장 → 탭·PC 동기화. 원본 파일은 기기 밖으로 보내지 않음
 import { store } from './store.js';
-import { readExtra, extraFindings, extraReport, extraHtml, lossNow, eventDays } from './stockx.js';
+import { readExtra, extraFindings, extraReport, extraHtml, lossNow, eventDays, storeOpen } from './stockx.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -358,6 +358,75 @@ function bars(vals, labels, { fmt = f1, hi = -1, unit = '', avg = null, showVals
   </div>`;
 }
 
+/* ---- 특이사항: 빨강(확인 필요) → 초록(좋아진 점) → 참고(접힘), 줄마다 분야 표시 ---- */
+const CAT = [['미납', /^(롯데마트|이마트|케이마켓).*직납/], ['로스', /^(로스|특정 폐기|직납 로스|로스가)/], ['재고', /^(창고|재고)/], ['점포', /점포/], ['SKU', /^(SKU|주간 판매)/], ['증정', /^증정/], ['행사', /^행사/], ['매출', /./]];
+const catOf = (t) => CAT.find(([, re]) => re.test(t))[0];
+const catIdx = (t) => CAT.findIndex(([, re]) => re.test(t));
+function findingsHtml(F) {
+  const li = (x) => `<li class="${x.lv}"><span class="st-cat">${catOf(x.t)}</span>${esc(x.t)}</li>`;
+  const by = (lv) => F.filter((x) => x.lv === lv).sort((a, b) => catIdx(a.t) - catIdx(b.t));
+  const bad = by('bad'), good = by('good'), info = by('info');
+  return `${bad.length ? `<h4 class="st-fh bad">🚨 확인 필요 ${bad.length}</h4><ul class="kf">${bad.map(li).join('')}</ul>` : '<p class="muted sm">확인이 필요한 항목이 없어요.</p>'}
+    ${good.length ? `<h4 class="st-fh good">✅ 좋아진 점 ${good.length}</h4><ul class="kf">${good.map(li).join('')}</ul>` : ''}
+    ${info.length ? `<details class="st-finfo"><summary>ℹ 참고 ${info.length}개 보기</summary><ul class="kf">${info.map(li).join('')}</ul></details>` : ''}`;
+}
+
+/* ---- 구역 바로가기·접기 (접은 구역은 이 기기에 기억: localStorage 'jy-stfold') ---- */
+const NAV = [['특이사항', /특이사항/], ['보고 문구', /보고 문구/], ['채널', /채널별/], ['일자별', /일자별/], ['월별', /월별 추이/], ['점포 월', /점포별 월/], ['점포 주간', /점포별 주간/], ['미납', /직납 발주/], ['로스', /로스/], ['증정', /증정/], ['행사', /행사/], ['SKU', /SKU/], ['창고', /창고 수불/], ['메모', /메모/]];
+const foldSet = () => { try { return new Set(JSON.parse(localStorage.getItem('jy-stfold') || '[]')); } catch { return new Set(); } };
+const saveFold = (set) => { try { localStorage.setItem('jy-stfold', JSON.stringify([...set])); } catch { /* 무시 */ } };
+function decorate(root) {
+  const folded = foldSet();
+  const cards = [...root.children].filter((c) => c.classList.contains('card') && c.querySelector(':scope > h3'));
+  const chips = [];
+  for (const c of cards) {
+    const h = c.querySelector(':scope > h3');
+    const t = h.firstChild?.textContent || h.textContent;
+    const nav = NAV.find(([, re]) => re.test(t));
+    if (!nav) continue;
+    const key = nav[0];
+    c.dataset.sec = key;
+    c.id = `st-sec-${NAV.indexOf(nav)}`;
+    h.classList.add('st-foldable');
+    h.insertAdjacentHTML('afterbegin', '<span class="st-fold-ic" aria-hidden="true">▾</span>');
+    h.title = '눌러서 접기·펼치기';
+    if (folded.has(key)) c.classList.add('st-folded');
+    chips.push(`<button type="button" data-jump="${c.id}">${key}</button>`);
+  }
+  root.insertAdjacentHTML('afterbegin', `<nav class="st-nav" aria-label="수불재고 구역 바로가기">${chips.join('')}<button type="button" class="st-nav-all" data-foldall>모두 펼치기</button></nav>`);
+  root.onclick = (e) => {
+    const jump = e.target.closest('[data-jump]');
+    if (jump) { const c = root.querySelector('#' + jump.dataset.jump); if (c) { if (c.classList.contains('st-folded')) { c.classList.remove('st-folded'); const f = foldSet(); f.delete(c.dataset.sec); saveFold(f); } c.scrollIntoView({ behavior: 'smooth', block: 'start' }); } return; }
+    if (e.target.closest('[data-foldall]')) { root.querySelectorAll('.st-folded').forEach((c) => c.classList.remove('st-folded')); saveFold(new Set()); return; }
+    // 점포 표: 채널 줄 → 그 채널 점포 펼치기/접기, '모든 점포 펼치기'
+    const g = e.target.closest('[data-stg]');
+    if (g) {
+      const key = g.dataset.stg, open = !storeOpen.has(key);
+      if (open) storeOpen.add(key); else storeOpen.delete(key);
+      g.closest('table').querySelectorAll('tr[data-stk]').forEach((r) => { if (r.dataset.stk === key && !r.classList.contains('st-out') && !r.classList.contains('st-low')) r.hidden = !open; });
+      const b = g.querySelector('.st-tg'); if (b) { b.textContent = open ? '▾' : '▸'; b.setAttribute('aria-expanded', open); }
+      return;
+    }
+    const all = e.target.closest('[data-stall]');
+    if (all) {
+      const card = all.closest('.card'), rows = card.querySelectorAll('tr[data-stg]');
+      const anyClosed = [...rows].some((r) => !storeOpen.has(r.dataset.stg));
+      rows.forEach((r) => { if (anyClosed) storeOpen.add(r.dataset.stg); else storeOpen.delete(r.dataset.stg); const b = r.querySelector('.st-tg'); if (b) b.textContent = anyClosed ? '▾' : '▸'; });
+      card.querySelectorAll('tr[data-stk]').forEach((r) => { if (!r.classList.contains('st-out') && !r.classList.contains('st-low')) r.hidden = !anyClosed; });
+      all.textContent = anyClosed ? '모든 점포 접기' : '모든 점포 펼치기';
+      return;
+    }
+    // 구역 제목 → 접기·펼치기 (제목 안 버튼·링크는 제외)
+    const h = e.target.closest('h3.st-foldable');
+    if (h && !e.target.closest('button, a, input, select, textarea')) {
+      const c = h.closest('.card'), f = foldSet();
+      c.classList.toggle('st-folded');
+      if (c.classList.contains('st-folded')) f.add(c.dataset.sec); else f.delete(c.dataset.sec);
+      saveFold(f);
+    }
+  };
+}
+
 function render(root, s) {
   const k = s.kpi || {}, T = s.total || {};
   const S = T.sales || {}, KG = T.kg || {}, P = T.price || {};
@@ -418,18 +487,19 @@ function render(root, s) {
       ${card('창고 재고', L.curT ? `${f2(L.curT.endTon)}<small>톤</small>` : '-', cv !== null ? `약 ${f1(cv)}일분 · ${m}월 입고 ${f2(L.curT.inTon)}톤` : '수불부 없음', cv !== null && cv < 7 ? 'warn' : '')}
       ${card(`${m}월 로스${LN?.src === 'type' ? '' : ' (직납)'}`, LN ? `${f0(LN.cur.total)}<small>kg</small>` : '-', LN ? `물량 대비 ${f1(LN.cur.rate * 100)}%${LN.prev ? ` · 전월 ${f1(LN.prev.rate * 100)}%` : ''}${LN.cur.oneplus?.loss ? ` · 1+1 ${f0(LN.cur.oneplus.loss)}kg 별도` : ''}` : '', LN?.prev && LN.cur.rate > LN.prev.rate ? 'warn' : '')}
     </div>
-    <div class="card"><h3>🔎 특이사항 <small class="muted">${md(s.date)} 기준${p ? ` · 지난 보고 ${md(p.date)}` : ''}</small></h3><ul class="kf">${F.map((x) => `<li class="${x.lv}">${esc(x.t)}</li>`).join('')}</ul>
+    <div class="card"><h3>🔎 특이사항 <small class="muted">${md(s.date)} 기준${p ? ` · 지난 보고 ${md(p.date)}` : ''}</small></h3>${findingsHtml(F)}
       ${s.missing?.length ? `<p class="muted sm">⚠ 못 찾은 시트: ${esc(s.missing.join(', '))}</p>` : ''}</div>
-    <div class="card"><h3>📋 보고 문구 <small class="muted">수정해서 복사하세요 (저장은 안 됨)</small></h3><textarea class="st-text" id="stText" rows="11">${esc(reportText(s))}</textarea><div class="st-act"><button type="button" class="btn sm" id="stCopy">📋 복사</button></div></div>
+    <div class="card"><h3>📋 보고 문구 <small class="muted">수정해서 복사하세요 (저장은 안 됨)</small></h3><textarea class="st-text" id="stText" rows="${reportText(s).split('\n').length + 1}">${esc(reportText(s))}</textarea><div class="st-act"><button type="button" class="btn sm" id="stCopy">📋 복사</button></div></div>
     <div class="card"><h3>🛒 채널별 실적 <small class="muted">매출 백만원 · 물량 kg · 단가 원/kg</small></h3><div class="tbl-wrap"><table class="kt"><thead><tr><th>채널</th><th>당일</th><th>${m}월 누계</th><th>비중</th><th>누계 물량</th><th>누계 단가</th><th>연 누계</th><th>연 단가</th></tr></thead><tbody>
       <tr class="tot"><th>합계</th><td>${mil(S.day)}</td><td><b>${mil(S.mtd)}</b></td><td>100%</td><td>${f0(KG.mtd)}</td><td>${f0(P.mtd)}</td><td>${mil(S.ytd)}</td><td>${f0(P.ytd)}</td></tr>${chRows}</tbody></table></div></div>
     <div class="card"><h3>📅 일자별 매출 <small class="muted">백만원 · 주황 = 기준일 · 점선 = 일평균 · 날짜 아래 ▲ = 행사 · 막대에 마우스를 올리면 금액</small></h3>${dayChart}<details><summary class="muted sm">일자별 표 보기</summary><div class="tbl-wrap">${dayTable}</div></details></div>
-    <div class="card"><h3>📈 월별 추이 <small class="muted">비교시트 기준 (이번 달은 진행 중)</small></h3>${monChart}<div class="tbl-wrap">${monTable}</div></div>
+    <div class="card"><h3>📈 월별 추이 <small class="muted">매출·물량·단가 = 비교시트${s.x?.lossType ? ' · 로스 = 2-2 특정 로스 유형별 분류' : ''} · 이번 달은 진행 중</small></h3>${monChart}<div class="tbl-wrap">${monTable}</div></div>
     ${extraHtml(s)}
     <div class="card"><h3>🍄 SKU별 주간 판매 (kg)</h3><div class="tbl-wrap">${skuTable}</div></div>
     <div class="card"><h3>🏭 창고 수불 (${m}월, ea)</h3><div class="tbl-wrap">${ledTable}</div></div>
     ${s.x?.storeM ? '' : `<div class="card"><h3>🏬 점포별 ${m}월 매출 <small class="muted">백만원</small></h3><div class="st-stores">${storeHtml}</div></div>`}
     <div class="card"><h3>🗒 메모</h3><textarea class="st-text" id="stNote" rows="4" placeholder="이번 주 확인할 것, 현지 답변 등">${esc(s.note || '')}</textarea></div>`;
+  decorate(root);
   $('#stCopy', root).onclick = async () => { try { await navigator.clipboard.writeText($('#stText', root).value); ui.toast?.('복사했습니다.'); } catch { $('#stText', root).select(); document.execCommand('copy'); } };
   $('#stNote', root).addEventListener('change', (e) => store.upsert('stock', { id: s.id, note: e.target.value }));
 }

@@ -1332,3 +1332,33 @@ dialog.editor.drop-on .ed-note { outline: 3px dashed var(--primary); outline-off
 #view-stock .st-dn { color: var(--danger); }
 .st-stack-x span { white-space: nowrap; overflow: hidden; }
 @media (max-width: 760px) { .st-stack-x { font-size: 9.5px; gap: 3px; } .st-stack { gap: 3px; } }
+/* 수불재고 편의성 (1.39.1~): 구역 바로가기·접기, 특이사항 묶음, 점포 표 접기 */
+.st-nav { position: sticky; top: 0; z-index: 6; display: flex; gap: 6px; overflow-x: auto; padding: 8px 2px; margin: 0 0 10px; background: var(--bg); scrollbar-width: thin; }
+.st-nav button { flex: none; border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 999px; padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.st-nav button:hover { border-color: var(--primary); color: var(--primary); }
+.st-nav .st-nav-all { margin-left: auto; color: var(--muted); }
+#view-stock h3.st-foldable { cursor: pointer; user-select: none; }
+#view-stock .st-fold-ic { display: inline-block; width: 16px; color: var(--muted); font-size: 12px; transition: transform .15s; }
+#view-stock .card.st-folded .st-fold-ic { transform: rotate(-90deg); }
+#view-stock .card.st-folded > :not(h3) { display: none !important; }
+#view-stock .card.st-folded > h3 { margin-bottom: 0; }
+#view-stock .card { scroll-margin-top: 56px; }
+.st-fh { margin: 4px 0 6px; font-size: 14px; }
+.st-fh.bad { color: var(--danger); } .st-fh.good { color: var(--ok); }
+.st-cat { display: inline-block; min-width: 34px; margin-right: 8px; padding: 0 6px; border-radius: 6px; font-size: 11px; text-align: center; background: color-mix(in srgb, var(--muted) 18%, transparent); color: var(--muted); }
+.st-finfo summary { cursor: pointer; color: var(--muted); font-size: 13px; margin: 6px 0; }
+#view-stock .st-store tr.st-grp-row { cursor: pointer; }
+#view-stock .st-store tr.st-grp-row:hover th { color: var(--primary); }
+.st-tg { border: 0; background: none; color: var(--muted); width: 18px; padding: 0; margin-right: 4px; cursor: pointer; font-size: 12px; }
+#view-stock .st-store tr.st-kid th { padding-left: 26px; font-weight: 400; }
+#view-stock .st-store th:first-child, #view-stock .st-store td:first-child { position: sticky; left: 0; z-index: 1; background: var(--panel); }
+#view-stock .st-store tr.tot th:first-child { background: var(--bg); }
+.st-all { float: right; margin: -4px 0 6px; }
+.st-lag { margin: 0 0 8px; padding: 6px 10px; border-radius: 8px; font-size: 13px; background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); }
+#view-stock .st-store th small.st-n { color: var(--muted); font-weight: 400; }
+.st-all { float: none; display: block; margin: 0 0 6px auto; }
+@media (max-width: 760px) {
+  #view-stock .st-store th:first-child { min-width: 104px; max-width: 124px; white-space: normal; word-break: keep-all; }
+  #view-stock .st-store th, #view-stock .st-store td { padding-left: 6px; padding-right: 6px; }
+  #view-stock .st-store tr.st-kid th { padding-left: 16px; }
+}

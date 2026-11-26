@@ -373,17 +373,26 @@ export function extraReport(s) {
 const tdChg = (r) => `<td class="${r === null ? '' : r < -0.05 ? 'st-dn' : r > 0.05 ? 'st-up' : ''}">${chgTxt(r)}</td>`;
 function heat(v, max) { if (!max || !v) return ''; const a = Math.round((v / max) * 26); return ` style="background:color-mix(in srgb, var(--primary) ${a}%, transparent)"`; }
 
+// 점포 표: 처음엔 채널 줄만, 채널 줄을 누르면 점포가 펼쳐짐 (경고 점포는 접혀 있어도 보임). 펼친 채널은 화면을 다시 그려도 기억
+export const storeOpen = new Set();
+const grpRow = (tbl, g, label, cells, n) => `<tr class="tot st-grp-row" data-stg="${esc(tbl + '|' + g)}"><th><button type="button" class="st-tg" aria-expanded="${storeOpen.has(tbl + '|' + g)}">${storeOpen.has(tbl + '|' + g) ? '▾' : '▸'}</button>${esc(label)}${n ? ` <small class="st-n">점포 ${n}</small>` : ''}</th>${cells}</tr>`;
+const kidRow = (tbl, g, flag, cls, label, cells) => `<tr class="st-kid${cls}" data-stk="${esc(tbl + '|' + g)}"${flag || storeOpen.has(tbl + '|' + g) ? '' : ' hidden'}><th>${label}</th>${cells}</tr>`;
+const allBtn = (tbl) => `<button type="button" class="btn sm st-all" data-stall="${tbl}">모든 점포 펼치기</button>`;
+
 function storeMonthHtml(s) {
   const S = storeRows(s);
   if (!S) return '';
-  const head = `<tr><th>채널 · 점포</th>${S.show.map((mm) => `<th>${mm}월${mm === S.m ? '<br><small>(진행 중)</small>' : ''}</th>`).join('')}<th>${S.m}월 월말 예상</th><th>전월 대비</th><th>3개월 평균 대비</th></tr>`;
-  const body = S.rows.filter((r) => r.k !== 'top' || /^전체$/.test(r.n)).filter((r) => r.k !== 'store' || r.vals.some((v) => v)).map((r) => {
-    const mx = Math.max(...r.vals);
-    const cls = r.k === 'store' ? '' : 'tot';
-    const flag = r.k === 'store' && r.prev >= 300000 && r.cur === 0 ? ' st-out' : '';
-    return `<tr class="${cls}${flag}"><th>${r.k === 'store' ? `<span class="muted sm">${esc(r.g)}</span> ` : ''}${esc(r.n)}</th>${r.vals.map((v) => `<td${r.k === 'store' ? heat(v, mx) : ''}>${v ? mil(v) : '-'}</td>`).join('')}<td>${r.proj ? mil(r.proj) : '-'}</td>${tdChg(r.dPrev)}${tdChg(r.dAvg)}</tr>`;
+  // 폰에서도 보이게 핵심 열(월말 예상·전월 대비)을 앞으로
+  const head = `<tr><th>채널 · 점포</th><th>${S.m}월 월말 예상</th><th>전월 대비</th><th>3개월 평균 대비</th>${S.show.map((mm) => `<th>${mm}월${mm === S.m ? '<br><small>(진행 중)</small>' : ''}</th>`).join('')}</tr>`;
+  const rows = S.rows.filter((r) => r.k !== 'top' || /^전체$/.test(r.n)).filter((r) => r.k === 'top' || r.vals.some((v) => v) || r.proj); // 보이는 달에 매출 없는 채널·점포는 뺌
+  const cells = (r, heatOn) => { const mx = Math.max(...r.vals); return `<td><b>${r.proj ? mil(r.proj) : '-'}</b></td>${tdChg(r.dPrev)}${tdChg(r.dAvg)}${r.vals.map((v) => `<td${heatOn ? heat(v, mx) : ''}>${v ? mil(v) : '-'}</td>`).join('')}`; };
+  const body = rows.map((r) => {
+    if (r.k === 'top') return `<tr class="tot"><th>${esc(r.n)}</th>${cells(r, false)}</tr>`;
+    if (r.k === 'grp') return grpRow('m', r.n, r.n, cells(r, false), rows.filter((x) => x.k === 'store' && x.g === r.n).length);
+    const stop = r.prev >= 300000 && r.cur === 0, drop = r.cur > 0 && r.prev >= 1000000 && r.dPrev !== null && r.dPrev <= -0.3;
+    return kidRow('m', r.g, stop || drop, stop ? ' st-out' : drop ? ' st-low' : '', `${esc(r.n)}${stop ? ' <small>⚠ 이번 달 0</small>' : drop ? ' <small>⚠ −30% 이상</small>' : ''}`, cells(r, true));
   }).join('');
-  return `<div class="card"><h3>🏬 점포별 월 추이 <small class="muted">1-1 점포별 월매출 · 백만원 · 진할수록 그 점포의 큰 달 · 이번 달은 월말 예상(누계 ÷ 영업일 진도)으로 비교</small></h3><div class="tbl-wrap"><table class="kt st-store">${head}${body}</table></div></div>`;
+  return `<div class="card"><h3>🏬 점포별 월 추이 <small class="muted">1-1 점포별 월매출 · 백만원 · 채널 줄을 누르면 점포 · 진할수록 그 점포의 큰 달 · 이번 달은 월말 예상(누계 ÷ 영업일 진도)으로 비교</small></h3>${allBtn('m')}<div class="tbl-wrap"><table class="kt st-store">${head}${body}</table></div></div>`;
 }
 
 function storeWeekHtml(s) {
@@ -392,14 +401,16 @@ function storeWeekHtml(s) {
   const ws = W.weeks.slice(-6);
   const done = ws.filter((w) => wkDone(x, w.wk, s.date));
   const a = done[done.length - 1], b = done[done.length - 2];
-  const head = `<tr><th>채널 · 점포</th>${ws.map((w) => `<th>${wkLabel(x, w.wk)}${wkDone(x, w.wk, s.date) ? '' : '<br><small>(진행 중)</small>'}</th>`).join('')}<th>지난주 대비</th></tr>`;
-  const body = W.cols.map((c, i) => ({ c, i })).filter(({ c, i }) => (c.k !== 'top' || /^전체$/.test(c.n)) && (c.k !== 'store' || ws.some((w) => w.v[i]))).map(({ c, i }) => {
-    const vals = ws.map((w) => w.v[i]);
-    const r = a && b ? chg(a.v[i], b.v[i]) : null;
-    const dec = c.k === 'store' && done.length >= 3 && (() => { const [p, q, t] = done.slice(-3).map((w) => w.v[i]); return p >= 300000 && q < p && t < q; })();
-    return `<tr class="${c.k === 'store' ? '' : 'tot'}${dec ? ' st-low' : ''}"><th>${c.k === 'store' ? `<span class="muted sm">${esc(c.g)}</span> ` : ''}${esc(c.n)}${dec ? ' <small>⚠ 2주 연속 감소</small>' : ''}</th>${vals.map((v) => `<td>${v ? mil(v) : '-'}</td>`).join('')}${tdChg(r)}</tr>`;
+  const head = `<tr><th>채널 · 점포</th><th>지난주 대비</th>${ws.map((w) => `<th>${wkLabel(x, w.wk)}${wkDone(x, w.wk, s.date) ? '' : '<br><small>(진행 중)</small>'}</th>`).join('')}</tr>`;
+  const list = W.cols.map((c, i) => ({ c, i })).filter(({ c, i }) => (c.k !== 'top' || /^전체$/.test(c.n)) && (c.k === 'top' || ws.some((w) => w.v[i])));
+  const cells = (i) => `${tdChg(a && b ? chg(a.v[i], b.v[i]) : null)}${ws.map((w) => `<td>${w.v[i] ? mil(w.v[i]) : '-'}</td>`).join('')}`;
+  const body = list.map(({ c, i }) => {
+    if (c.k === 'top') return `<tr class="tot"><th>${esc(c.n)}</th>${cells(i)}</tr>`;
+    if (c.k === 'grp') return grpRow('w', c.n, c.n, cells(i), list.filter(({ c: z }) => z.k === 'store' && z.g === c.n).length);
+    const dec = done.length >= 3 && (() => { const [p, q, t] = done.slice(-3).map((w) => w.v[i]); return p >= 300000 && q < p && t < q; })();
+    return kidRow('w', c.g, dec, dec ? ' st-low' : '', `${esc(c.n)}${dec ? ' <small>⚠ 2주 연속 감소</small>' : ''}`, cells(i));
   }).join('');
-  return `<div class="card"><h3>📅 점포별 주간 매출 <small class="muted">1-2 점포별 주간매출 · 백만원 · 주 = 일~토</small></h3><div class="tbl-wrap"><table class="kt st-store">${head}${body}</table></div></div>`;
+  return `<div class="card"><h3>📅 점포별 주간 매출 <small class="muted">1-2 점포별 주간매출 · 백만원 · 주 = 일~토 · 지난주 = ${a ? wkLabel(x, a.wk) : '-'} 주</small></h3>${allBtn('w')}<div class="tbl-wrap"><table class="kt st-store">${head}${body}</table></div></div>`;
 }
 
 function ordersHtml(s) {
@@ -414,7 +425,7 @@ function ordersHtml(s) {
     return `<h4 class="st-h4">${esc(o.name)} 직납</h4>${card}<div class="tbl-wrap"><table class="kt"><tr><th>kg</th>${ws.map((w) => `<th>${wkLabel(x, w.wk)}${wkDone(x, w.wk, s.date) ? '' : '<br><small>(진행 중)</small>'}</th>`).join('')}</tr>
       ${row('발주', (w) => f0(w.order))}${row('출고', (w) => f0(w.ship))}${row('미납', (w) => f0(Math.max(0, w.order - w.ship)), (w) => (w.order - w.ship > w.order * 0.1 ? 'st-dn' : ''))}${row('이행률', (w) => pc1(w.ship / w.order), (w) => (w.ship / w.order < 0.9 ? 'st-dn' : 'st-up'))}</table></div>`;
   }).join('');
-  return `<div class="card"><h3>📦 직납 발주 대비 출고 (미납) <small class="muted">2-1 (직납)발주-입고량 차이 · 최근 8주 · 이행률 = 출고 ÷ 발주, 90% 미만 빨강</small></h3>${blocks}</div>`;
+  return `<div class="card"><h3>📦 직납 발주 대비 출고 (미납) <small class="muted">2-1 (직납)발주-입고량 차이 · 최근 8주 · 이행률 = 출고 ÷ 발주, 90% 미만 빨강 · 지난주 = 다 끝난 마지막 주</small></h3>${blocks}</div>`;
 }
 
 const LT = [['direct', '직납', '#378ADD'], ['wh', '창고', '#888780'], ['spec', '특정 폐기', '#D85A30'], ['oneplus', '1+1', '#EF9F27']];
@@ -459,9 +470,12 @@ function giftsHtml(s) {
   const W = x.storeW, ti = W ? W.cols.findIndex((c) => c.k === 'top') : -1;
   const sale = (wk) => (W && ti >= 0 ? W.weeks.find((w) => w.wk === wk)?.v?.[ti] || 0 : 0);
   const g = G[G.length - 1];
+  // 다른 표의 지난주(다 끝난 주)보다 증정 시트가 늦으면 알림
+  const lastDone = Math.max(0, ...((W?.weeks || []).filter((w) => wkDone(x, w.wk, s.date)).map((w) => w.wk)));
+  const lagNote = lastDone > g.wk ? `<p class="st-lag">⚠ ${wkLabel(x, lastDone)} 주 증정은 아직 시트에 없어요 — 마지막 입력 ${wkLabel(x, g.wk)} 주 기준</p>` : '';
   const krw = (z) => num(z.lotte?.krw) + num(z.emart?.krw), kg = (z) => num(z.lotte?.kg) + num(z.emart?.kg);
   const stores = [...(g.lotte?.stores || []).map((z) => ({ ...z, g: '롯데' })), ...(g.emart?.stores || []).map((z) => ({ ...z, g: '이마트' }))].filter((z) => z.krw).sort((a, b) => b.krw - a.krw);
-  return `<div class="card"><h3>🎁 증정·시식 <small class="muted">매장별 증정품 매입 · 원 · 주차별</small></h3>
+  return `<div class="card"><h3>🎁 증정·시식 <small class="muted">매장별 증정품 매입 · 원 · 주차별</small></h3>${lagNote}
     <div class="kpi-cards st-mini"><div class="card kpi-card st-card"><div class="kc-t">${wkLabel(x, g.wk)} 주 증정</div><div class="kc-big">${mil(krw(g))}<small>백만원</small></div><div class="kc-sub muted sm">롯데 ${mil(g.lotte?.krw)} · 이마트 ${mil(g.emart?.krw)}</div></div><div class="card kpi-card st-card"><div class="kc-t">증정 물량</div><div class="kc-big">${f1(kg(g))}<small>kg</small></div><div class="kc-sub muted sm">${sale(g.wk) ? `주간 매출 대비 ${pc1(krw(g) / sale(g.wk))}` : ''}</div></div></div>
     <div class="tbl-wrap"><table class="kt"><tr><th>주</th>${G.map((z) => `<th>${wkLabel(x, z.wk)}</th>`).join('')}</tr>
       <tr><th>증정 금액(원)</th>${G.map((z) => `<td>${f0(krw(z))}</td>`).join('')}</tr><tr><th>물량(kg)</th>${G.map((z) => `<td>${f1(kg(z))}</td>`).join('')}</tr>
